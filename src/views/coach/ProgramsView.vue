@@ -1,0 +1,482 @@
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { supabase } from '@/lib/supabase'
+import type { Program } from '@/types/database'
+
+const router = useRouter()
+const authStore = useAuthStore()
+
+// State
+const programs = ref<Program[]>([])
+const loading = ref(true)
+const searchQuery = ref('')
+const showCreateModal = ref(false)
+
+// Program form state
+const programForm = ref({
+  name: '',
+  description: '',
+  duration_weeks: 4,
+  difficulty: '' as 'beginner' | 'intermediate' | 'advanced' | '',
+  sport_id: null as string | null
+})
+
+const saving = ref(false)
+const errorMessage = ref('')
+
+// Computed
+const filteredPrograms = computed(() => {
+  if (!searchQuery.value) return programs.value
+  
+  const query = searchQuery.value.toLowerCase()
+  return programs.value.filter(program => 
+    program.name.toLowerCase().includes(query) ||
+    (program.description && program.description.toLowerCase().includes(query))
+  )
+})
+
+const hasPrograms = computed(() => programs.value.length > 0)
+
+onMounted(async () => {
+  await loadPrograms()
+})
+
+async function loadPrograms() {
+  if (!authStore.user) return
+  
+  try {
+    loading.value = true
+    
+    const { data, error } = await supabase
+      .from('programs')
+      .select('*')
+      .eq('coach_id', authStore.user.id)
+      .order('created_at', { ascending: false })
+    
+    if (error) throw error
+    
+    programs.value = data || []
+  } catch (e) {
+    console.error('Error loading programs:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+function openCreateModal() {
+  // Reset form
+  programForm.value = {
+    name: '',
+    description: '',
+    duration_weeks: 4,
+    difficulty: '',
+    sport_id: null
+  }
+  errorMessage.value = ''
+  showCreateModal.value = true
+}
+
+function closeCreateModal() {
+  showCreateModal.value = false
+  errorMessage.value = ''
+}
+
+async function createProgram() {
+  if (!authStore.user || !programForm.value.name) return
+  
+  try {
+    saving.value = true
+    errorMessage.value = ''
+    
+    // Create the program
+    const { data: program, error } = await supabase
+      .from('programs')
+      .insert({
+        coach_id: authStore.user.id,
+        name: programForm.value.name,
+        description: programForm.value.description || null,
+        duration_weeks: programForm.value.duration_weeks,
+        difficulty: programForm.value.difficulty || null,
+        sport_id: programForm.value.sport_id,
+        is_template: true,
+        is_published: false
+      })
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Navigate to program builder to add weeks/workouts
+    router.push(`/programs/${program.id}/edit`)
+  } catch (e) {
+    console.error('Error creating program:', e)
+    errorMessage.value = e instanceof Error ? e.message : 'Failed to create program'
+  } finally {
+    saving.value = false
+  }
+}
+
+function editProgram(programId: string) {
+  router.push(`/programs/${programId}/edit`)
+}
+
+async function duplicateProgram(program: Program) {
+  if (!authStore.user) return
+  
+  try {
+    // Create duplicate program
+    const { data: newProgram, error: programError } = await supabase
+      .from('programs')
+      .insert({
+        coach_id: authStore.user.id,
+        name: `${program.name} (Copy)`,
+        description: program.description,
+        duration_weeks: program.duration_weeks,
+        difficulty: program.difficulty,
+        sport_id: program.sport_id,
+        is_template: program.is_template,
+        is_published: false
+      })
+      .select()
+      .single()
+    
+    if (programError) throw programError
+    
+    // Fetch weeks from original program
+    const { data: weeks, error: weeksError } = await supabase
+      .from('program_weeks')
+      .select('*')
+      .eq('program_id', program.id)
+      .order('week_number')
+    
+    if (weeksError) throw weeksError
+    
+    // Copy weeks and workouts
+    if (weeks && weeks.length > 0) {
+      for (const week of weeks) {
+        // Create new week
+        const { data: newWeek, error: weekError } = await supabase
+          .from('program_weeks')
+          .insert({
+            program_id: newProgram.id,
+            week_number: week.week_number,
+            name: week.name,
+            notes: week.notes
+          })
+          .select()
+          .single()
+        
+        if (weekError) throw weekError
+        
+        // Get workouts from this week
+        const { data: workouts, error: workoutsError } = await supabase
+          .from('workouts')
+          .select('*, exercises(*)')
+          .eq('program_week_id', week.id)
+        
+        if (workoutsError) throw workoutsError
+        
+        // Copy workouts
+        if (workouts) {
+          for (const workout of workouts) {
+            const { data: newWorkout, error: workoutError } = await supabase
+              .from('workouts')
+              .insert({
+                coach_id: authStore.user.id,
+                program_week_id: newWeek.id,
+                name: workout.name,
+                description: workout.description,
+                day_of_week: workout.day_of_week,
+                estimated_duration_min: workout.estimated_duration_min,
+                workout_type: workout.workout_type,
+                is_template: workout.is_template
+              })
+              .select()
+              .single()
+            
+            if (workoutError) throw workoutError
+            
+            // Copy exercises
+            if (workout.exercises && workout.exercises.length > 0) {
+              const exerciseCopies = workout.exercises.map((ex: any) => ({
+                workout_id: newWorkout.id,
+                name: ex.name,
+                description: ex.description,
+                order_index: ex.order_index,
+                sets: ex.sets,
+                reps: ex.reps,
+                weight_kg: ex.weight_kg,
+                duration_seconds: ex.duration_seconds,
+                distance_meters: ex.distance_meters,
+                rpe: ex.rpe,
+                intensity_percent: ex.intensity_percent,
+                target_time_seconds: ex.target_time_seconds,
+                rest_seconds: ex.rest_seconds,
+                notes: ex.notes,
+                video_url: ex.video_url
+              }))
+              
+              const { error: exercisesError } = await supabase
+                .from('exercises')
+                .insert(exerciseCopies)
+              
+              if (exercisesError) throw exercisesError
+            }
+          }
+        }
+      }
+    }
+    
+    // Reload programs list
+    await loadPrograms()
+    alert(`Program duplicated! "${newProgram.name}" has been created.`)
+  } catch (e) {
+    console.error('Error duplicating program:', e)
+    alert('Failed to duplicate program')
+  }
+}
+</script>
+
+<template>
+  <div class="pb-20">
+    <!-- Header -->
+    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
+      <div class="flex items-center justify-between">
+        <h1 class="font-display text-xl font-bold text-gray-900">Programs</h1>
+        <button
+          @click="openCreateModal"
+          class="btn-primary px-4 py-2 text-sm"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          New Program
+        </button>
+      </div>
+    </div>
+
+    <!-- Search bar (only show if has programs) -->
+    <div v-if="hasPrograms" class="p-4">
+      <div class="relative">
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search programs..."
+          class="input pl-10"
+        />
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </div>
+    </div>
+
+    <!-- Loading state -->
+    <div v-if="loading" class="p-6">
+      <div class="space-y-4">
+        <div v-for="i in 3" :key="i" class="animate-pulse">
+          <div class="p-4 bg-gray-50 rounded-xl">
+            <div class="h-5 bg-gray-200 rounded w-3/4 mb-2"></div>
+            <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div v-else-if="!hasPrograms" class="p-6 text-center">
+      <div class="max-w-sm mx-auto">
+        <div class="w-20 h-20 mx-auto mb-4 bg-summit-100 rounded-full flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-summit-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h2 class="font-semibold text-lg text-gray-900 mb-2">No programs yet</h2>
+        <p class="text-gray-600 mb-6">
+          Create your first training program with multiple weeks and structured workouts
+        </p>
+        <button
+          @click="openCreateModal"
+          class="btn-primary w-full"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Create Your First Program
+        </button>
+      </div>
+    </div>
+
+    <!-- Programs list -->
+    <div v-else class="p-4 space-y-3">
+      <div
+        v-for="program in filteredPrograms"
+        :key="program.id"
+        class="card p-4 hover:shadow-md transition-shadow"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div 
+            @click="editProgram(program.id)"
+            class="flex-1 min-w-0 cursor-pointer"
+          >
+            <h3 class="font-semibold text-gray-900 mb-1">
+              {{ program.name }}
+            </h3>
+            <p v-if="program.description" class="text-sm text-gray-600 mb-2 line-clamp-2">
+              {{ program.description }}
+            </p>
+            <div class="flex flex-wrap gap-2 text-xs text-gray-500">
+              <span class="inline-flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                {{ program.duration_weeks }} week{{ program.duration_weeks !== 1 ? 's' : '' }}
+              </span>
+              <span v-if="program.difficulty" class="inline-flex items-center gap-1 capitalize">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                {{ program.difficulty }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="flex gap-1 flex-shrink-0">
+            <button
+              @click.stop="duplicateProgram(program)"
+              class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Duplicate program"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
+            <button
+              @click.stop="editProgram(program.id)"
+              class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Edit program"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- No results from search -->
+      <div v-if="filteredPrograms.length === 0" class="text-center py-8 text-gray-500">
+        <p>No programs found matching "{{ searchQuery }}"</p>
+      </div>
+    </div>
+
+    <!-- Create Program Modal -->
+    <div
+      v-if="showCreateModal"
+      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50"
+      @click.self="closeCreateModal"
+    >
+      <div class="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col animate-slide-up">
+        <!-- Header -->
+        <div class="p-4 border-b border-feed-border flex items-center justify-between flex-shrink-0">
+          <h2 class="font-semibold text-lg">Create Program</h2>
+          <button
+            @click="closeCreateModal"
+            class="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Content -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+          <!-- Error message -->
+          <div v-if="errorMessage" class="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+            {{ errorMessage }}
+          </div>
+
+          <!-- Program name -->
+          <div>
+            <label class="label">Program Name *</label>
+            <input
+              v-model="programForm.name"
+              type="text"
+              placeholder="e.g., 4-Week Speed Development Block"
+              class="input"
+              required
+            />
+          </div>
+
+          <!-- Description -->
+          <div>
+            <label class="label">Description</label>
+            <textarea
+              v-model="programForm.description"
+              rows="3"
+              placeholder="Brief overview of the program..."
+              class="input resize-none"
+            ></textarea>
+          </div>
+
+          <!-- Duration -->
+          <div>
+            <label class="label">Duration (weeks) *</label>
+            <input
+              v-model.number="programForm.duration_weeks"
+              type="number"
+              min="1"
+              max="52"
+              class="input"
+              required
+            />
+          </div>
+
+          <!-- Difficulty -->
+          <div>
+            <label class="label">Difficulty Level</label>
+            <select v-model="programForm.difficulty" class="input">
+              <option value="">Select level...</option>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
+            </select>
+          </div>
+
+          <!-- Info box -->
+          <div class="p-3 bg-summit-50 border border-summit-200 rounded-xl text-sm text-summit-800">
+            <p class="font-medium mb-1">💡 Next Step</p>
+            <p>After creating the program, you'll build out each week and assign workouts to specific days.</p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-feed-border flex-shrink-0 space-y-2">
+          <button
+            @click="createProgram"
+            :disabled="!programForm.name || saving"
+            class="btn-primary w-full"
+          >
+            <span v-if="saving" class="flex items-center gap-2 justify-center">
+              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Creating...
+            </span>
+            <span v-else>Create & Build Program</span>
+          </button>
+          <button
+            @click="closeCreateModal"
+            class="btn-secondary w-full"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

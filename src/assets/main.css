@@ -1,0 +1,271 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   CoachHub Base Styles
+   ============================================ */
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+  
+  body {
+    @apply font-body text-gray-900 bg-feed-bg antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-semibold tracking-tight;
+  }
+}
+
+/* ============================================
+   CoachHub Component Classes
+   ============================================ */
+
+@layer components {
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 
+           font-medium text-sm rounded-xl
+           transition-all duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-primary {
+    @apply btn bg-summit-800 text-white 
+           hover:bg-summit-700 active:bg-summit-900
+           focus:ring-summit-500;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-white text-summit-800 border border-summit-200
+           hover:bg-summit-50 active:bg-summit-100
+           focus:ring-summit-500;
+  }
+  
+  .btn-accent {
+    @apply btn bg-peak-500 text-white
+           hover:bg-peak-600 active:bg-peak-700
+           focus:ring-peak-400;
+  }
+  
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-700
+           hover:bg-gray-100 active:bg-gray-200
+           focus:ring-gray-400;
+  }
+  
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+  
+  .btn-icon {
+    @apply p-2.5;
+  }
+
+  /* Form Inputs */
+  .input {
+    @apply w-full px-4 py-3 
+           bg-white border border-gray-200 rounded-xl
+           text-gray-900 placeholder-gray-400
+           transition-all duration-200
+           focus:outline-none focus:border-summit-500 focus:ring-2 focus:ring-summit-500/20
+           disabled:bg-gray-50 disabled:cursor-not-allowed;
+  }
+  
+  .input-error {
+    @apply border-red-400 focus:border-red-500 focus:ring-red-500/20;
+  }
+  
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1.5;
+  }
+  
+  .helper-text {
+    @apply text-xs text-gray-500 mt-1;
+  }
+  
+  .error-text {
+    @apply text-xs text-red-600 mt-1;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-feed-card rounded-2xl shadow-card
+           border border-feed-border/50
+           overflow-hidden;
+  }
+  
+  .card-hover {
+    @apply card transition-shadow duration-200
+           hover:shadow-card-hover;
+  }
+
+  /* Post Card Specific */
+  .post-card {
+    @apply card mb-4;
+  }
+  
+  .post-header {
+    @apply flex items-center gap-3 p-4;
+  }
+  
+  .post-avatar {
+    @apply w-10 h-10 rounded-full object-cover
+           ring-2 ring-white shadow-sm;
+  }
+  
+  .post-media {
+    @apply w-full aspect-square object-cover bg-gray-100;
+  }
+  
+  .post-actions {
+    @apply flex items-center gap-1 p-3;
+  }
+  
+  .post-action-btn {
+    @apply p-2 rounded-full transition-colors duration-150
+           hover:bg-gray-100 active:bg-gray-200;
+  }
+  
+  .post-content {
+    @apply px-4 pb-4;
+  }
+
+  /* Avatar Sizes */
+  .avatar-xs {
+    @apply w-6 h-6 rounded-full object-cover;
+  }
+  
+  .avatar-sm {
+    @apply w-8 h-8 rounded-full object-cover;
+  }
+  
+  .avatar-md {
+    @apply w-10 h-10 rounded-full object-cover;
+  }
+  
+  .avatar-lg {
+    @apply w-14 h-14 rounded-full object-cover;
+  }
+  
+  .avatar-xl {
+    @apply w-20 h-20 rounded-full object-cover;
+  }
+
+  /* Navigation */
+  .nav-item {
+    @apply flex flex-col items-center gap-1 p-2
+           text-gray-500 transition-colors duration-150
+           hover:text-summit-700;
+  }
+  
+  .nav-item-active {
+    @apply text-summit-800;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5
+           text-xs font-medium rounded-full;
+  }
+  
+  .badge-pb {
+    @apply badge bg-peak-100 text-peak-700;
+  }
+  
+  .badge-coach {
+    @apply badge bg-summit-100 text-summit-700;
+  }
+  
+  .badge-verified {
+    @apply badge bg-green-100 text-green-700;
+  }
+
+  /* Workout Card (in carousel) */
+  .workout-card-overlay {
+    @apply absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent
+           flex flex-col justify-end p-6 text-white;
+  }
+  
+  .workout-stat {
+    @apply flex items-center gap-2 text-sm;
+  }
+  
+  .workout-exercise-highlight {
+    @apply bg-white/10 backdrop-blur-sm rounded-xl p-3 mt-3;
+  }
+  
+  .pb-badge {
+    @apply inline-flex items-center gap-1 px-2 py-1
+           bg-peak-500 text-white text-xs font-semibold rounded-full;
+  }
+
+  /* Loading States */
+  .skeleton {
+    @apply animate-pulse bg-gray-200 rounded;
+  }
+  
+  .skeleton-text {
+    @apply skeleton h-4 w-full;
+  }
+  
+  .skeleton-avatar {
+    @apply skeleton rounded-full;
+  }
+
+  /* Dividers */
+  .divider {
+    @apply border-t border-gray-100;
+  }
+}
+
+/* ============================================
+   CoachHub Utilities
+   ============================================ */
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .gradient-summit {
+    @apply bg-gradient-to-br from-summit-700 via-summit-800 to-summit-900;
+  }
+  
+  .gradient-peak {
+    @apply bg-gradient-to-br from-peak-400 via-peak-500 to-peak-600;
+  }
+  
+  .gradient-mixed {
+    @apply bg-gradient-to-br from-summit-700 via-summit-800 to-peak-600;
+  }
+  
+  /* Hide scrollbar but allow scrolling */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Safe area insets for mobile */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
