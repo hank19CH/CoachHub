@@ -64,6 +64,12 @@ const router = createRouter({
 
     // Coach-specific routes
     {
+      path: '/coach/hub',
+      name: 'coach-hub',
+      component: () => import('@/views/coach/CoachHubView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
       path: '/athletes',
       name: 'athletes',
       component: () => import('@/views/coach/AthletesView.vue'),
