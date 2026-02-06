@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import BottomNav from './BottomNav.vue'
+import BottomNav from '@/components/layout/BottomNav.vue'  // FIXED: Using absolute path
 import TopHeader from './TopHeader.vue'
 
 const route = useRoute()
