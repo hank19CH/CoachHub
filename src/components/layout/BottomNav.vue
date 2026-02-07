@@ -6,70 +6,47 @@ import { useAuthStore } from '@/stores/auth'
 const route = useRoute()
 const authStore = useAuthStore()
 
-const navItems = computed(() => {
-  const base = [
-    {
-      name: 'feed',
-      path: '/',
-      label: 'Home',
-      icon: 'home'
-    },
-    {
-      name: 'hub',
-      path: authStore.isCoach ? '/coach/hub' : '/explore',
-      label: authStore.isCoach ? 'Hub' : 'Explore',
-      icon: authStore.isCoach ? 'grid' : 'search'
-    },
-    {
-      name: 'create',
-      path: '/create',
-      label: 'Create',
-      icon: 'plus',
-      isCreate: true
-    },
-  ]
-
-  // Add role-specific nav items
-  if (authStore.isCoach) {
-    base.push({
-      name: 'athletes',
-      path: '/athletes',
-      label: 'Athletes',
-      icon: 'users'
-    })
-  } else if (authStore.isAthlete) {
-    base.push({
-      name: 'workouts',
-      path: '/workouts',
-      label: 'Workouts',
-      icon: 'activity'
-    })
-  } else {
-    base.push({
-      name: 'notifications',
-      path: '/notifications',
-      label: 'Activity',
-      icon: 'heart'
-    })
-  }
-
-  // Profile always last
-  base.push({
-    name: 'my-profile',
+// CLEAN 5-TAB STRUCTURE - Same for all users, different destinations based on role
+const navItems = computed(() => [
+  {
+    name: 'feed',
+    path: '/',
+    label: 'Home',
+    icon: 'home'
+  },
+  {
+    name: 'hub',
+    path: authStore.isCoach ? '/coach/hub' : '/athlete/hub',
+    label: 'Hub',
+    icon: 'grid'
+  },
+  {
+    name: 'create',
+    path: '/create',
+    label: 'Create',
+    icon: 'plus',
+    isCreate: true
+  },
+  {
+    name: 'notifications',
+    path: '/notifications',
+    label: 'Activity',
+    icon: 'bell'
+  },
+  {
+    name: 'profile',
     path: '/profile',
     label: 'Profile',
     icon: 'user'
-  })
-
-  return base
-})
+  }
+])
 
 function isActive(itemName: string, itemPath: string) {
   if (itemName === 'feed') {
     return route.path === '/'
   }
   if (itemName === 'hub') {
-    return route.path.startsWith('/coach/hub') || route.path.startsWith('/explore')
+    return route.path.startsWith('/coach/hub') || route.path.startsWith('/athlete/hub')
   }
   return route.path.startsWith(itemPath)
 }
@@ -106,32 +83,17 @@ function isActive(itemName: string, itemPath: string) {
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
             </svg>
 
-            <!-- Search icon -->
-            <svg v-else-if="item.icon === 'search'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-
-            <!-- Grid icon (for coach hub) -->
+            <!-- Grid icon (Hub for both coaches and athletes) -->
             <svg v-else-if="item.icon === 'grid'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
             </svg>
 
-            <!-- Users icon (for coaches) -->
-            <svg v-else-if="item.icon === 'users'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            <!-- Bell icon (Notifications) -->
+            <svg v-else-if="item.icon === 'bell'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
             </svg>
 
-            <!-- Activity icon (for athletes) -->
-            <svg v-else-if="item.icon === 'activity'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-
-            <!-- Heart icon (notifications) -->
-            <svg v-else-if="item.icon === 'heart'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-            </svg>
-
-            <!-- User icon (profile) -->
+            <!-- User icon (Profile) -->
             <svg v-else-if="item.icon === 'user'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>

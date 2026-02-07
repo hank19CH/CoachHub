@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { acceptInvitation, checkExistingRelationship } from '@/services/invites'
 
 const router = useRouter()
 const route = useRoute()
@@ -25,9 +26,27 @@ async function handleSubmit() {
   const result = await authStore.signIn(email.value, password.value)
 
   if (result.success) {
-    // Redirect to intended page or feed
-    const redirect = route.query.redirect as string
-    router.push(redirect || '/')
+    // Handle pending invite after login
+    const storedInvite = sessionStorage.getItem('pending_invite')
+    if (storedInvite && authStore.profile?.user_type === 'athlete') {
+      try {
+        const invite = JSON.parse(storedInvite)
+        const existing = await checkExistingRelationship(invite.coach_id, authStore.profile.id)
+        if (!existing) {
+          await acceptInvitation(invite.coach_id, authStore.profile.id, invite.invite_code)
+        }
+        sessionStorage.removeItem('pending_invite')
+        router.push('/athlete/hub')
+      } catch (err) {
+        console.error('Error accepting invitation after login:', err)
+        sessionStorage.removeItem('pending_invite')
+        router.push('/')
+      }
+    } else {
+      // Normal login flow
+      const redirect = route.query.redirect as string
+      router.push(redirect || '/')
+    }
   } else {
     errorMessage.value = result.error || 'Sign in failed'
   }

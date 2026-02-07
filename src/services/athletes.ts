@@ -207,3 +207,24 @@ export async function searchAthletes(
 
   return data as AthleteWithProfile[]
 }
+
+/**
+ * Service object for use in components that expect an object-style API
+ */
+export const athletesService = {
+  /**
+   * Get coach athletes as flat profile objects (id, display_name, username, avatar_url)
+   * Used by AssignWorkoutModal and similar components
+   */
+  async getCoachAthletes(coachId: string): Promise<Profile[]> {
+    const relations = await fetchCoachAthletes(coachId)
+    return relations.map((r) => r.athlete)
+  },
+
+  fetchCoachAthletes,
+  getOrCreateInviteCode,
+  createInviteCode,
+  acceptInviteCode,
+  removeAthlete,
+  searchAthletes,
+}

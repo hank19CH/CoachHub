@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { acceptInvitation, checkExistingRelationship } from '@/services/invites'
 import type { UserType } from '@/types/database'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 // Form state
 const step = ref(1) // 1 = user type, 2 = details
 const userType = ref<UserType | null>(null)
+const pendingInvite = ref<{ coach_id: string; invite_code: string; coach_name: string } | null>(null)
 const email = ref('')
 const password = ref('')
 const confirmPassword = ref('')
@@ -61,6 +64,20 @@ const canSubmit = computed(() => {
   )
 })
 
+// Check for invite flow on mount
+onMounted(() => {
+  const storedInvite = sessionStorage.getItem('pending_invite')
+  if (storedInvite) {
+    pendingInvite.value = JSON.parse(storedInvite)
+  }
+
+  // Auto-select athlete type if coming from invite
+  if (route.query.invite === 'true' && route.query.userType === 'athlete') {
+    userType.value = 'athlete'
+    step.value = 2
+  }
+})
+
 // Methods
 function selectUserType(type: UserType) {
   userType.value = type
@@ -87,7 +104,30 @@ async function handleSubmit() {
   )
 
   if (result.success) {
-    router.push('/')
+    // Handle pending invite after successful signup
+    if (pendingInvite.value && authStore.profile?.id) {
+      try {
+        const existing = await checkExistingRelationship(
+          pendingInvite.value.coach_id,
+          authStore.profile.id
+        )
+        if (!existing) {
+          await acceptInvitation(
+            pendingInvite.value.coach_id,
+            authStore.profile.id,
+            pendingInvite.value.invite_code
+          )
+        }
+        sessionStorage.removeItem('pending_invite')
+        router.push('/athlete/hub')
+      } catch (err) {
+        console.error('Error accepting invitation after signup:', err)
+        sessionStorage.removeItem('pending_invite')
+        router.push('/')
+      }
+    } else {
+      router.push('/')
+    }
   } else {
     errorMessage.value = result.error || 'Signup failed'
   }

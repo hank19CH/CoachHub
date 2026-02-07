@@ -1,293 +1,201 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+// Type definition for tool items
+interface ToolItem {
+  name: string
+  description: string
+  path: string
+  icon: string
+  color: string
+  badge?: string  // Optional badge property
+}
+
+interface ToolSection {
+  category: string
+  items: ToolItem[]
+}
+
+// Coach tools organized by category
+const tools: ToolSection[] = [
+  {
+    category: 'Athletes',
+    items: [
+      {
+        name: 'Athletes',
+        description: 'Manage your athlete roster',
+        path: '/athletes',
+        icon: 'users',
+        color: 'bg-blue-500'
+      },
+      {
+        name: 'Invite Athlete',
+        description: 'Add new athletes',
+        path: '/athletes?invite=true',
+        icon: 'user-plus',
+        color: 'bg-green-500'
+      }
+    ]
+  },
+  {
+    category: 'Programming',
+    items: [
+      {
+        name: 'Workouts',
+        description: 'Build & manage workouts',
+        path: '/workouts',
+        icon: 'clipboard',
+        color: 'bg-valencia-600'
+      },
+      {
+        name: 'Programs',
+        description: '4-12 week training plans',
+        path: '/programs',
+        icon: 'calendar',
+        color: 'bg-summit-600'
+      }
+    ]
+  },
+  {
+    category: 'Assignments',
+    items: [
+      {
+        name: 'Assign Workout',
+        description: 'Schedule workouts to athletes',
+        path: '/coach/assign/workout',
+        icon: 'send',
+        color: 'bg-indigo-500',
+        badge: 'Coming Soon'
+      },
+      {
+        name: 'Assign Program',
+        description: 'Assign full programs',
+        path: '/coach/assign/program',
+        icon: 'package',
+        color: 'bg-purple-500',
+        badge: 'Coming Soon'
+      }
+    ]
+  },
+  {
+    category: 'Analytics',
+    items: [
+      {
+        name: 'Performance',
+        description: 'Track athlete progress',
+        path: '/coach/analytics',
+        icon: 'trending-up',
+        color: 'bg-emerald-500',
+        badge: 'Phase 2'
+      },
+      {
+        name: 'Reports',
+        description: 'Generate reports',
+        path: '/coach/reports',
+        icon: 'file-text',
+        color: 'bg-amber-500',
+        badge: 'Phase 2'
+      }
+    ]
+  }
+]
+
+function navigateTo(path: string) {
+  router.push(path)
+}
+</script>
+
 <template>
   <div class="min-h-screen bg-gray-50 pb-20">
     <!-- Header -->
-    <div class="bg-white border-b sticky top-0 z-10">
-      <div class="max-w-7xl mx-auto px-4 py-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h1 class="text-2xl font-bold text-gray-900">Coach Hub</h1>
-            <p class="text-sm text-gray-600 mt-1">Your coaching command center</p>
-          </div>
-        </div>
+    <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <div class="max-w-lg mx-auto px-4 py-4">
+        <h1 class="text-2xl font-bold text-gray-900">Coach Hub</h1>
+        <p class="text-sm text-gray-600 mt-1">Your coaching tools</p>
       </div>
     </div>
 
-    <!-- Content -->
-    <div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
-      <!-- Loading State -->
-      <div v-if="loading" class="flex justify-center py-12">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-summit-600"></div>
+    <!-- Tools Grid -->
+    <div class="max-w-lg mx-auto px-4 py-6 space-y-8">
+      <div v-for="section in tools" :key="section.category">
+        <!-- Category Header -->
+        <h2 class="text-lg font-semibold text-gray-900 mb-3">
+          {{ section.category }}
+        </h2>
+
+        <!-- Tools Grid -->
+        <div class="grid grid-cols-2 gap-3">
+          <button
+            v-for="tool in section.items"
+            :key="tool.name"
+            @click="navigateTo(tool.path)"
+            class="relative bg-white rounded-xl border border-gray-200 p-4 text-left hover:shadow-md transition-all active:scale-95"
+            :disabled="tool.badge !== undefined"
+            :class="tool.badge ? 'opacity-60 cursor-not-allowed' : 'hover:border-summit-300'"
+          >
+            <!-- Badge -->
+            <div v-if="tool.badge" class="absolute top-2 right-2 text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+              {{ tool.badge }}
+            </div>
+
+            <!-- Icon -->
+            <div :class="tool.color" class="w-12 h-12 rounded-lg flex items-center justify-center mb-3">
+              <!-- Users icon -->
+              <svg v-if="tool.icon === 'users'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+
+              <!-- User Plus icon -->
+              <svg v-else-if="tool.icon === 'user-plus'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+              </svg>
+
+              <!-- Clipboard icon -->
+              <svg v-else-if="tool.icon === 'clipboard'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+
+              <!-- Calendar icon -->
+              <svg v-else-if="tool.icon === 'calendar'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+
+              <!-- Send icon -->
+              <svg v-else-if="tool.icon === 'send'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+
+              <!-- Package icon -->
+              <svg v-else-if="tool.icon === 'package'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+
+              <!-- Trending Up icon -->
+              <svg v-else-if="tool.icon === 'trending-up'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+
+              <!-- File Text icon -->
+              <svg v-else-if="tool.icon === 'file-text'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+
+            <!-- Tool Name -->
+            <h3 class="font-semibold text-gray-900 mb-1">
+              {{ tool.name }}
+            </h3>
+
+            <!-- Tool Description -->
+            <p class="text-xs text-gray-600">
+              {{ tool.description }}
+            </p>
+          </button>
+        </div>
       </div>
-
-      <template v-else>
-        <!-- Stats Cards -->
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <!-- Athletes Card -->
-          <div class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-600 font-medium">Total Athletes</p>
-                <p class="text-3xl font-bold text-gray-900 mt-2">{{ stats.totalAthletes }}</p>
-              </div>
-              <div class="w-12 h-12 bg-summit-100 rounded-lg flex items-center justify-center">
-                <svg class="w-6 h-6 text-summit-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <!-- Programs Card -->
-          <div class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-600 font-medium">Active Programs</p>
-                <p class="text-3xl font-bold text-gray-900 mt-2">{{ stats.totalPrograms }}</p>
-              </div>
-              <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <!-- Workouts Card -->
-          <div class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-600 font-medium">Workout Templates</p>
-                <p class="text-3xl font-bold text-gray-900 mt-2">{{ stats.totalWorkouts }}</p>
-              </div>
-              <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <!-- This Week Card -->
-          <div class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-600 font-medium">This Week</p>
-                <p class="text-3xl font-bold text-gray-900 mt-2">{{ stats.completedThisWeek }}</p>
-                <p class="text-xs text-gray-500 mt-1">Workouts completed</p>
-              </div>
-              <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Quick Actions -->
-        <div class="bg-white rounded-lg p-6 shadow-sm">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
-          <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <router-link
-              to="/athletes"
-              class="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-summit-500 hover:bg-summit-50 transition group"
-            >
-              <div class="w-10 h-10 bg-summit-100 rounded-lg flex items-center justify-center group-hover:bg-summit-200 transition">
-                <svg class="w-5 h-5 text-summit-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-              <div>
-                <p class="font-medium text-gray-900">Add Athlete</p>
-                <p class="text-xs text-gray-500">Invite new athlete</p>
-              </div>
-            </router-link>
-
-            <router-link
-              to="/programs/new"
-              class="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition group"
-            >
-              <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center group-hover:bg-blue-200 transition">
-                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-              <div>
-                <p class="font-medium text-gray-900">New Program</p>
-                <p class="text-xs text-gray-500">Create program</p>
-              </div>
-            </router-link>
-
-            <router-link
-              to="/workouts"
-              class="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition group"
-            >
-              <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center group-hover:bg-green-200 transition">
-                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-              <div>
-                <p class="font-medium text-gray-900">New Workout</p>
-                <p class="text-xs text-gray-500">Create workout</p>
-              </div>
-            </router-link>
-
-            <router-link
-              to="/create"
-              class="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition group"
-            >
-              <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center group-hover:bg-purple-200 transition">
-                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </div>
-              <div>
-                <p class="font-medium text-gray-900">New Post</p>
-                <p class="text-xs text-gray-500">Share update</p>
-              </div>
-            </router-link>
-          </div>
-        </div>
-
-        <!-- Navigation Cards -->
-        <div class="grid gap-4 md:grid-cols-3">
-          <!-- Athletes Section -->
-          <router-link
-            to="/athletes"
-            class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border-l-4 border-summit-500"
-          >
-            <div class="flex items-start justify-between">
-              <div>
-                <h3 class="text-lg font-semibold text-gray-900">Athletes</h3>
-                <p class="text-sm text-gray-600 mt-1">Manage your athlete roster</p>
-                <p class="text-2xl font-bold text-summit-600 mt-4">{{ stats.totalAthletes }}</p>
-              </div>
-              <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </router-link>
-
-          <!-- Programs Section -->
-          <router-link
-            to="/programs"
-            class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border-l-4 border-blue-500"
-          >
-            <div class="flex items-start justify-between">
-              <div>
-                <h3 class="text-lg font-semibold text-gray-900">Programs</h3>
-                <p class="text-sm text-gray-600 mt-1">View and create programs</p>
-                <p class="text-2xl font-bold text-blue-600 mt-4">{{ stats.totalPrograms }}</p>
-              </div>
-              <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </router-link>
-
-          <!-- Workouts Section -->
-          <router-link
-            to="/workouts"
-            class="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border-l-4 border-green-500"
-          >
-            <div class="flex items-start justify-between">
-              <div>
-                <h3 class="text-lg font-semibold text-gray-900">Workouts</h3>
-                <p class="text-sm text-gray-600 mt-1">Workout templates library</p>
-                <p class="text-2xl font-bold text-green-600 mt-4">{{ stats.totalWorkouts }}</p>
-              </div>
-              <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </router-link>
-        </div>
-      </template>
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useAuthStore } from '@/stores/auth'
-import { supabase } from '@/lib/supabase'
-
-const authStore = useAuthStore()
-
-const loading = ref(true)
-const stats = ref({
-  totalAthletes: 0,
-  totalPrograms: 0,
-  totalWorkouts: 0,
-  completedThisWeek: 0
-})
-
-async function loadStats() {
-  try {
-    loading.value = true
-    const coachId = authStore.profile?.id
-
-    if (!coachId) return
-
-    // Fetch total athletes
-    const { count: athleteCount } = await supabase
-      .from('coach_athlete_relationships')
-      .select('*', { count: 'exact', head: true })
-      .eq('coach_id', coachId)
-      .eq('status', 'accepted')
-
-    stats.value.totalAthletes = athleteCount || 0
-
-    // Fetch total programs
-    const { count: programCount } = await supabase
-      .from('programs')
-      .select('*', { count: 'exact', head: true })
-      .eq('coach_id', coachId)
-
-    stats.value.totalPrograms = programCount || 0
-
-    // Fetch total workouts (standalone templates only)
-    const { count: workoutCount } = await supabase
-      .from('workouts')
-      .select('*', { count: 'exact', head: true })
-      .eq('coach_id', coachId)
-      .is('program_week_id', null)
-
-    stats.value.totalWorkouts = workoutCount || 0
-
-    // Fetch completed workouts this week
-    const startOfWeek = new Date()
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
-    startOfWeek.setHours(0, 0, 0, 0)
-
-    const { count: completedCount } = await supabase
-      .from('workout_logs')
-      .select('*', { count: 'exact', head: true })
-      .gte('completed_at', startOfWeek.toISOString())
-      .eq('status', 'completed')
-      .in('athlete_id', await getAthleteIds(coachId))
-
-    stats.value.completedThisWeek = completedCount || 0
-
-  } catch (error) {
-    console.error('Error loading stats:', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function getAthleteIds(coachId: string): Promise<string[]> {
-  const { data } = await supabase
-    .from('coach_athlete_relationships')
-    .select('athlete_id')
-    .eq('coach_id', coachId)
-    .eq('status', 'accepted')
-
-  return data?.map(r => r.athlete_id) || []
-}
-
-onMounted(() => {
-  loadStats()
-})
-</script>

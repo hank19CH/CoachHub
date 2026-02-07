@@ -39,51 +39,77 @@
           Invite Athlete
         </button>
       </div>
-      </div>
-      <!-- Athlete Cards -->
-<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-  <div
-    v-for="athleteRelation in filteredAthletes"
-    :key="athleteRelation.id"
-    class="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition cursor-pointer"
-  >
-    <div class="flex items-start gap-3">
-      <!-- Avatar -->
-      <img
-        :src="athleteRelation.athlete.avatar_url || 'https://via.placeholder.com/48'"
-        :alt="athleteRelation.athlete.display_name"
-        class="w-12 h-12 rounded-full object-cover"
-      />
-      
-      <!-- Info -->
-      <div class="flex-1 min-w-0">
-        <h3 class="font-semibold text-gray-900 truncate">{{ athleteRelation.athlete.display_name }}</h3>
-        <p class="text-sm text-gray-500">@{{ athleteRelation.athlete.username }}</p>
-        <p class="text-xs text-gray-400 mt-1">
-          Last active: {{ formatDate(athleteRelation.last_workout_date) }}
-        </p>
-      </div>
 
-      <!-- Quick Actions -->
-      <button class="text-gray-400 hover:text-gray-600">
-        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-        </svg>
-      </button>
+      <!-- Athlete Cards -->
+      <div v-else class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div
+          v-for="athleteRelation in filteredAthletes"
+          :key="athleteRelation.id"
+          class="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition"
+        >
+          <div class="flex items-start gap-3">
+            <!-- Avatar -->
+            <img
+              :src="athleteRelation.athlete.avatar_url || 'https://via.placeholder.com/48'"
+              :alt="athleteRelation.athlete.display_name"
+              class="w-12 h-12 rounded-full object-cover"
+            />
+            
+            <!-- Info -->
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-gray-900 truncate">{{ athleteRelation.athlete.display_name }}</h3>
+              <p class="text-sm text-gray-500">@{{ athleteRelation.athlete.username }}</p>
+              <p class="text-xs text-gray-400 mt-1">
+                Last active: {{ formatDate(athleteRelation.last_workout_date) }}
+              </p>
+            </div>
+
+            <!-- Quick Actions Dropdown -->
+            <button 
+              @click="toggleActionsMenu(athleteRelation.athlete.id)"
+              class="text-gray-400 hover:text-gray-600"
+            >
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Assign Workout Button -->
+          <div class="mt-3 pt-3 border-t border-gray-100">
+            <button
+              @click="openAssignModal(athleteRelation.athlete.id)"
+              class="w-full px-4 py-2 text-sm font-medium text-summit-600 hover:bg-summit-50 rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              Assign Workout
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
-</div>
 
     <!-- Invite Modal -->
-<InviteAthleteModal
-  v-if="showInviteModal"
-  @close="showInviteModal = false"
-/>
+    <InviteAthleteModal
+      v-if="showInviteModal"
+      @close="showInviteModal = false"
+    />
+
+    <!-- Assign Workout Modal -->
+    <AssignWorkoutModal
+      :is-open="showAssignModal"
+      :preselected-athlete-id="selectedAthleteForAssignment"
+      @close="closeAssignModal"
+      @assigned="handleAssignmentCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import InviteAthleteModal from '@/components/InviteAthleteModal.vue'
+import AssignWorkoutModal from '@/components/AssignWorkoutModal.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchCoachAthletes, type AthleteWithProfile } from '@/services/athletes'
@@ -94,6 +120,10 @@ const loading = ref(true)
 const athletes = ref<AthleteWithProfile[]>([])
 const searchQuery = ref('')
 const showInviteModal = ref(false)
+
+// Assignment modal state
+const showAssignModal = ref(false)
+const selectedAthleteForAssignment = ref<string | null>(null)
 
 const filteredAthletes = computed(() => {
   if (!searchQuery.value) return athletes.value
@@ -117,6 +147,28 @@ const formatDate = (date: string | null) => {
   return d.toLocaleDateString()
 }
 
+// Assignment modal functions
+function openAssignModal(athleteId: string) {
+  selectedAthleteForAssignment.value = athleteId
+  showAssignModal.value = true
+}
+
+function closeAssignModal() {
+  showAssignModal.value = false
+  selectedAthleteForAssignment.value = null
+}
+
+function handleAssignmentCreated(assignmentIds: string[]) {
+  console.log('Successfully created assignments:', assignmentIds)
+  // TODO: Show success toast message
+  // TODO: Optionally refresh athlete data to show new pending count
+}
+
+function toggleActionsMenu(athleteId: string) {
+  // TODO: Implement actions dropdown (view profile, remove, etc.)
+  console.log('Toggle actions for athlete:', athleteId)
+}
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -128,4 +180,5 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})</script>
+})
+</script>

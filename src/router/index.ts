@@ -17,6 +17,12 @@ const router = createRouter({
       component: () => import('@/views/SignupView.vue'),
       meta: { requiresGuest: true }
     },
+    {
+      path: '/invite/:code',
+      name: 'invite-acceptance',
+      component: () => import('@/views/InviteAcceptanceView.vue'),
+      meta: { title: 'Accept Invitation' }
+    },
 
     // Protected routes (require authentication)
     {
@@ -113,6 +119,24 @@ const router = createRouter({
     },
 
     // Athlete-specific routes
+    {
+      path: '/athlete/hub',
+      name: 'athlete-hub',
+      component: () => import('@/views/athlete/AthleteHubView.vue'),
+      meta: { requiresAuth: true, requiresAthlete: true }
+    },
+    {
+      path: '/athlete/dashboard',
+      name: 'athlete-dashboard',
+      component: () => import('@/views/athlete/AthleteDashboardView.vue'),
+      meta: { requiresAuth: true, requiresAthlete: true }
+    },
+    {
+      path: '/athlete/workout/:id',
+      name: 'workout-execution',
+      component: () => import('@/views/athlete/WorkoutExecutionView.vue'),
+      meta: { requiresAuth: true, requiresAthlete: true }
+    },
     {
       path: '/athlete/workouts',
       name: 'athlete-workouts',
