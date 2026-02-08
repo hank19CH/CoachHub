@@ -1,12 +1,70 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import MediaUploadZone from '@/components/athlete/MediaUploadZone.vue'
+import { uploadPostMedia, createPost } from '@/services/posts'
 
 const router = useRouter()
+const authStore = useAuthStore()
+
+// Form state
 const caption = ref('')
+const visibility = ref<'public' | 'followers' | 'private'>('public')
+const mediaFiles = ref<File[]>([])
+const isSubmitting = ref(false)
+const submitError = ref('')
+
+// Computed
+const canPost = computed(() => {
+  return caption.value.trim().length > 0 || mediaFiles.value.length > 0
+})
 
 function goBack() {
   router.back()
+}
+
+function handleFilesChanged(files: File[]) {
+  mediaFiles.value = files
+}
+
+async function handleSubmit() {
+  if (isSubmitting.value || !canPost.value) return
+  const userId = authStore.user?.id
+  if (!userId) return
+
+  isSubmitting.value = true
+  submitError.value = ''
+
+  try {
+    // Upload media files
+    const tempPostId = crypto.randomUUID()
+    const uploadedMedia = []
+
+    for (const file of mediaFiles.value) {
+      const url = await uploadPostMedia(file, userId, tempPostId)
+      if (url) {
+        uploadedMedia.push({
+          file,
+          url,
+          type: (file.type.startsWith('image/') ? 'image' : 'video') as 'image' | 'video',
+        })
+      }
+    }
+
+    // Create the post
+    const post = await createPost(userId, caption.value.trim(), visibility.value, uploadedMedia)
+
+    if (post) {
+      router.push('/')
+    } else {
+      submitError.value = 'Failed to create post. Please try again.'
+    }
+  } catch (err: any) {
+    submitError.value = err.message || 'Something went wrong'
+  } finally {
+    isSubmitting.value = false
+  }
 }
 </script>
 
@@ -15,47 +73,95 @@ function goBack() {
     <!-- Header -->
     <header class="sticky top-0 z-10 bg-white border-b border-feed-border">
       <div class="flex items-center justify-between px-4 h-14">
-        <button @click="goBack" class="text-gray-700">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        <button @click="goBack" class="p-1 text-gray-600 hover:text-gray-900">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
         <h1 class="font-display font-bold text-lg">New Post</h1>
-        <button class="btn-primary btn-sm">Share</button>
+        <button
+          @click="handleSubmit"
+          :disabled="!canPost || isSubmitting"
+          class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors"
+          :class="
+            canPost && !isSubmitting
+              ? 'bg-summit-600 text-white hover:bg-summit-700'
+              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+          "
+        >
+          {{ isSubmitting ? 'Posting...' : 'Share' }}
+        </button>
       </div>
     </header>
 
     <!-- Content -->
-    <div class="p-4">
-      <!-- Media upload area -->
-      <div class="aspect-square rounded-2xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center mb-4 hover:border-summit-500 hover:bg-summit-50/50 transition-colors cursor-pointer">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-        <p class="text-gray-600 font-medium">Add photos or videos</p>
-        <p class="text-gray-400 text-sm mt-1">Tap to upload</p>
+    <div class="p-4 space-y-5">
+      <!-- Error -->
+      <div v-if="submitError" class="bg-red-50 text-red-700 text-sm rounded-lg p-3">
+        {{ submitError }}
       </div>
 
-      <!-- Caption -->
-      <textarea
-        v-model="caption"
-        placeholder="Write a caption..."
-        class="input resize-none h-32"
-      ></textarea>
+      <!-- Media upload -->
+      <MediaUploadZone
+        :max-files="10"
+        @files-changed="handleFilesChanged"
+      />
 
-      <!-- Options -->
-      <div class="mt-4 space-y-3">
-        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200 hover:bg-gray-50">
-          <span class="text-gray-700">Tag people</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
+      <!-- Caption -->
+      <div>
+        <textarea
+          v-model="caption"
+          placeholder="Write a caption..."
+          rows="4"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-summit-500 focus:border-summit-500 resize-none"
+        />
+      </div>
+
+      <!-- Visibility -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Who can see this?</label>
+        <div class="flex gap-2">
+          <button
+            v-for="opt in [
+              { value: 'public', label: 'Everyone', icon: '🌍' },
+              { value: 'followers', label: 'Followers', icon: '👥' },
+              { value: 'private', label: 'Only me', icon: '🔒' },
+            ] as const"
+            :key="opt.value"
+            @click="visibility = opt.value"
+            class="flex-1 py-2.5 px-3 rounded-lg text-sm font-medium text-center border transition-colors"
+            :class="
+              visibility === opt.value
+                ? 'border-summit-500 bg-summit-50 text-summit-700'
+                : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+            "
+          >
+            <span class="block text-lg mb-0.5">{{ opt.icon }}</span>
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Future options placeholder -->
+      <div class="space-y-3 opacity-50 pointer-events-none">
+        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200">
+          <div class="flex items-center gap-3">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            <span class="text-gray-500 text-sm">Tag people</span>
+          </div>
+          <span class="text-xs text-gray-400">Coming soon</span>
         </button>
-        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200 hover:bg-gray-50">
-          <span class="text-gray-700">Add location</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
+        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200">
+          <div class="flex items-center gap-3">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span class="text-gray-500 text-sm">Add location</span>
+          </div>
+          <span class="text-xs text-gray-400">Coming soon</span>
         </button>
       </div>
     </div>

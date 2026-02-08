@@ -154,6 +154,62 @@ export async function createWorkoutPost(
 }
 
 /**
+ * Create a general post (manual type) with optional media
+ */
+export async function createPost(
+  authorId: string,
+  caption: string,
+  visibility: 'public' | 'followers' | 'private',
+  mediaFiles: UploadedMedia[]
+): Promise<Post | null> {
+  try {
+    // Create post record
+    const postInsert: PostInsert = {
+      author_id: authorId,
+      content: caption || null,
+      post_type: 'manual',
+      visibility,
+      is_pinned: false,
+      likes_count: 0,
+      comments_count: 0,
+    }
+
+    const { data: post, error: postError } = await supabase
+      .from('posts')
+      .insert(postInsert)
+      .select()
+      .single()
+
+    if (postError || !post) {
+      console.error('Error creating post:', postError)
+      return null
+    }
+
+    // Create post_media records for uploaded files
+    if (mediaFiles.length > 0) {
+      const mediaInserts: PostMediaInsert[] = mediaFiles.map((media, index) => ({
+        post_id: post.id,
+        media_type: media.type,
+        url: media.url,
+        display_order: index,
+        alt_text: `Post media ${index + 1}`,
+      }))
+
+      const { error: mediaError } = await supabase.from('post_media').insert(mediaInserts)
+
+      if (mediaError) {
+        console.error('Error creating post_media:', mediaError)
+      }
+    }
+
+    return post
+  } catch (error) {
+    console.error('Error in createPost:', error)
+    return null
+  }
+}
+
+/**
  * Fetch feed posts with workout data
  */
 export async function getFeedPosts(limit = 25, offset = 0) {
