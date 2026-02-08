@@ -117,6 +117,18 @@ const router = createRouter({
       component: () => import('@/views/coach/WorkoutBuilderView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
+    {
+      path: '/coach/dashboard',
+      name: 'coach-dashboard',
+      component: () => import('@/views/coach/CoachDashboardView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/athletes/:id',
+      name: 'athlete-detail',
+      component: () => import('@/views/coach/AthleteDetailView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
 
     // Athlete-specific routes
     {
@@ -137,24 +149,10 @@ const router = createRouter({
       component: () => import('@/views/athlete/WorkoutExecutionView.vue'),
       meta: { requiresAuth: true, requiresAthlete: true }
     },
-    {
-      path: '/athlete/workouts',
-      name: 'athlete-workouts',
-      component: () => import('@/views/athlete/WorkoutsView.vue'),
-      meta: { requiresAuth: true, requiresAthlete: true }
-    },
-    {
-      path: '/athlete/workouts/:id',
-      name: 'athlete-workout-detail',
-      component: () => import('@/views/athlete/WorkoutDetailView.vue'),
-      meta: { requiresAuth: true, requiresAthlete: true }
-    },
-    {
-      path: '/progress',
-      name: 'progress',
-      component: () => import('@/views/athlete/ProgressView.vue'),
-      meta: { requiresAuth: true, requiresAthlete: true }
-    },
+    // Placeholder routes - redirect to dashboard until implemented
+    { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
+    { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
+    { path: '/progress', redirect: '/athlete/dashboard' },
 
     // Post detail
     {

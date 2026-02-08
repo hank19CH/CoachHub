@@ -122,6 +122,66 @@ function editProgram(programId: string) {
   router.push(`/programs/${programId}/edit`)
 }
 
+async function deleteProgram(program: Program) {
+  if (!authStore.user) return
+  if (!confirm(`Delete "${program.name}"? This will also delete all weeks and workouts in this program. This cannot be undone.`)) return
+
+  try {
+    // Fetch weeks to get workout IDs
+    const { data: weeks } = await supabase
+      .from('program_weeks')
+      .select('id')
+      .eq('program_id', program.id)
+
+    if (weeks && weeks.length > 0) {
+      const weekIds = weeks.map(w => w.id)
+
+      // Get workouts in those weeks
+      const { data: workouts } = await supabase
+        .from('workouts')
+        .select('id')
+        .in('program_week_id', weekIds)
+
+      if (workouts && workouts.length > 0) {
+        const workoutIds = workouts.map(w => w.id)
+
+        // Delete exercises for those workouts
+        await supabase
+          .from('exercises')
+          .delete()
+          .in('workout_id', workoutIds)
+
+        // Delete workouts
+        await supabase
+          .from('workouts')
+          .delete()
+          .in('id', workoutIds)
+          .eq('coach_id', authStore.user.id)
+      }
+
+      // Delete weeks
+      await supabase
+        .from('program_weeks')
+        .delete()
+        .in('id', weekIds)
+    }
+
+    // Delete the program itself
+    const { error } = await supabase
+      .from('programs')
+      .delete()
+      .eq('id', program.id)
+      .eq('coach_id', authStore.user.id)
+
+    if (error) throw error
+
+    await loadPrograms()
+  } catch (e) {
+    console.error('Error deleting program:', e)
+    alert('Failed to delete program')
+  }
+}
+
 async function duplicateProgram(program: Program) {
   if (!authStore.user) return
   
@@ -345,6 +405,15 @@ async function duplicateProgram(program: Program) {
           <!-- Action buttons -->
           <div class="flex gap-1 flex-shrink-0">
             <button
+              @click.stop="editProgram(program.id)"
+              class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Edit program"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+            <button
               @click.stop="duplicateProgram(program)"
               class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               title="Duplicate program"
@@ -354,12 +423,12 @@ async function duplicateProgram(program: Program) {
               </svg>
             </button>
             <button
-              @click.stop="editProgram(program.id)"
-              class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Edit program"
+              @click.stop="deleteProgram(program)"
+              class="p-2 hover:bg-red-50 rounded-lg transition-colors"
+              title="Delete program"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400 hover:text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </button>
           </div>

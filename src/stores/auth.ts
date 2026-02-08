@@ -110,8 +110,6 @@ export const useAuthStore = defineStore('auth', () => {
       }
       if (!authData.user) throw new Error('No user returned from signup')
 
-      console.log('User created:', authData.user.id)
-
       // Wait a moment for the session to be established
       await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -125,8 +123,6 @@ export const useAuthStore = defineStore('auth', () => {
         sport_ids: [],
       }
 
-      console.log('Creating profile:', profileData)
-
       const { error: profileError } = await supabase
         .from('profiles')
         .insert(profileData)
@@ -136,11 +132,8 @@ export const useAuthStore = defineStore('auth', () => {
         throw profileError
       }
 
-      console.log('Profile created successfully')
-
       // If coach, create coach_profile
       if (userType === 'coach') {
-        console.log('Creating coach profile...')
         const { error: coachError } = await supabase
           .from('coach_profiles')
           .insert({ id: authData.user.id })
@@ -149,12 +142,10 @@ export const useAuthStore = defineStore('auth', () => {
           console.error('Coach profile creation error:', coachError)
           throw coachError
         }
-        console.log('Coach profile created successfully')
       }
 
       // If athlete, create athlete_profile
       if (userType === 'athlete') {
-        console.log('Creating athlete profile...')
         const { error: athleteError } = await supabase
           .from('athlete_profiles')
           .insert({ id: authData.user.id })
@@ -163,7 +154,6 @@ export const useAuthStore = defineStore('auth', () => {
           console.error('Athlete profile creation error:', athleteError)
           throw athleteError
         }
-        console.log('Athlete profile created successfully')
       }
 
       // Fetch the created profile

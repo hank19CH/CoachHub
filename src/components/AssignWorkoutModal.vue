@@ -4,8 +4,8 @@
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity" @click="closeModal"></div>
     
     <!-- Modal -->
-    <div class="flex min-h-full items-center justify-center p-4">
-      <div class="relative bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 transform transition-all">
+    <div class="flex min-h-full items-end sm:items-center justify-center p-4">
+      <div class="relative bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 transform transition-all max-h-[90vh] overflow-y-auto">
         <!-- Header -->
         <div class="flex items-center justify-between mb-6">
           <h2 class="text-2xl font-bold text-gray-900">Assign Workout</h2>
@@ -29,7 +29,7 @@
             <select
               v-model="formData.workoutId"
               required
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-purple-500 focus:border-transparent transition-all"
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-500 focus:border-transparent transition-all"
             >
               <option value="">Choose a workout...</option>
               <option
@@ -55,13 +55,13 @@
               <div
                 v-for="athleteId in formData.athleteIds"
                 :key="athleteId"
-                class="inline-flex items-center gap-2 px-3 py-1 bg-summit-purple-100 text-summit-purple-700 rounded-full text-sm"
+                class="inline-flex items-center gap-2 px-3 py-1 bg-summit-100 text-summit-700 rounded-full text-sm"
               >
                 <span>{{ getAthleteName(athleteId) }}</span>
                 <button
                   type="button"
                   @click="removeAthlete(athleteId)"
-                  class="hover:text-summit-purple-900"
+                  class="hover:text-summit-900"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -74,7 +74,7 @@
             <select
               v-model="selectedAthleteToAdd"
               @change="addAthlete"
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-purple-500 focus:border-transparent transition-all"
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-500 focus:border-transparent transition-all"
             >
               <option value="">+ Add athlete...</option>
               <option
@@ -100,7 +100,7 @@
               v-model="formData.assignedDate"
               required
               :min="todayDate"
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-purple-500 focus:border-transparent transition-all"
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-500 focus:border-transparent transition-all"
             />
             <p class="mt-1 text-sm text-gray-500">When should this workout be completed?</p>
           </div>
@@ -114,7 +114,7 @@
               v-model="formData.notes"
               rows="3"
               placeholder="Add any specific instructions for this assignment..."
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-purple-500 focus:border-transparent transition-all resize-none"
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-summit-500 focus:border-transparent transition-all resize-none"
             ></textarea>
             <p class="mt-1 text-sm text-gray-500">
               {{ formData.notes.length }}/500 characters
@@ -127,18 +127,18 @@
           </div>
 
           <!-- Actions -->
-          <div class="flex gap-3 pt-4">
+          <div class="flex gap-3 pt-4 pb-2">
             <button
               type="button"
               @click="closeModal"
-              class="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
+              class="btn-secondary flex-1"
             >
               Cancel
             </button>
             <button
               type="submit"
               :disabled="loading || !isFormValid"
-              class="flex-1 px-6 py-3 bg-gradient-to-r from-summit-purple-600 to-valencia-orange-500 text-white rounded-lg hover:from-summit-purple-700 hover:to-valencia-orange-600 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              class="btn-primary flex-1"
             >
               {{ loading ? 'Assigning...' : 'Assign Workout' }}
             </button>
@@ -268,8 +268,6 @@ async function handleAssign() {
       assignedDate: formData.value.assignedDate,
       notes: formData.value.notes || undefined
     })
-    
-    console.log('Successfully created assignments:', assignments)
     
     emit('assigned', assignments.map(a => a.id))
     closeModal()

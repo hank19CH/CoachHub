@@ -142,28 +142,8 @@ async function handleSubmit() {
         </div>
       </div>
 
-      <!-- Future options placeholder -->
-      <div class="space-y-3 opacity-50 pointer-events-none">
-        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200">
-          <div class="flex items-center gap-3">
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-            <span class="text-gray-500 text-sm">Tag people</span>
-          </div>
-          <span class="text-xs text-gray-400">Coming soon</span>
-        </button>
-        <button class="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200">
-          <div class="flex items-center gap-3">
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span class="text-gray-500 text-sm">Add location</span>
-          </div>
-          <span class="text-xs text-gray-400">Coming soon</span>
-        </button>
-      </div>
+      <!-- Spacer for bottom nav -->
+      <div class="h-16"></div>
     </div>
   </div>
 </template>

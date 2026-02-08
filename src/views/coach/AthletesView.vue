@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-gray-50 pb-20">
     <!-- Header -->
     <div class="bg-white border-b sticky top-0 z-10">
-      <div class="max-w-7xl mx-auto px-4 py-4">
+      <div class="max-w-2xl mx-auto px-4 py-4">
         <div class="flex items-center justify-between">
           <h1 class="text-2xl font-bold text-gray-900">Athletes</h1>
           <button
@@ -19,7 +19,7 @@
     </div>
 
     <!-- Content -->
-    <div class="max-w-7xl mx-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto px-4 py-6">
       <!-- Loading State -->
       <div v-if="loading" class="flex justify-center py-12">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-summit-600"></div>
@@ -41,7 +41,7 @@
       </div>
 
       <!-- Athlete Cards -->
-      <div v-else class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div v-else class="grid gap-4 grid-cols-1 md:grid-cols-2">
         <div
           v-for="athleteRelation in filteredAthletes"
           :key="athleteRelation.id"
@@ -64,14 +64,12 @@
               </p>
             </div>
 
-            <!-- Quick Actions Dropdown -->
-            <button 
-              @click="toggleActionsMenu(athleteRelation.athlete.id)"
-              class="text-gray-400 hover:text-gray-600"
+            <!-- View Detail -->
+            <button
+              @click="viewAthleteDetail(athleteRelation.athlete.id)"
+              class="text-summit-600 hover:text-summit-700 text-sm font-medium"
             >
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-              </svg>
+              View
             </button>
           </div>
 
@@ -111,7 +109,10 @@
 import InviteAthleteModal from '@/components/InviteAthleteModal.vue'
 import AssignWorkoutModal from '@/components/AssignWorkoutModal.vue'
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+
+const router = useRouter()
 import { fetchCoachAthletes, type AthleteWithProfile } from '@/services/athletes'
 
 const authStore = useAuthStore()
@@ -158,15 +159,13 @@ function closeAssignModal() {
   selectedAthleteForAssignment.value = null
 }
 
-function handleAssignmentCreated(assignmentIds: string[]) {
-  console.log('Successfully created assignments:', assignmentIds)
-  // TODO: Show success toast message
-  // TODO: Optionally refresh athlete data to show new pending count
+function handleAssignmentCreated(_assignmentIds: string[]) {
+  // Refresh athlete data after assignment
+  closeAssignModal()
 }
 
-function toggleActionsMenu(athleteId: string) {
-  // TODO: Implement actions dropdown (view profile, remove, etc.)
-  console.log('Toggle actions for athlete:', athleteId)
+function viewAthleteDetail(athleteId: string) {
+  router.push(`/coach/athletes/${athleteId}`)
 }
 
 onMounted(async () => {

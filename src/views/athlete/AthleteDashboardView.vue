@@ -137,7 +137,7 @@ onMounted(() => {
   <div class="min-h-screen bg-gray-50 pb-20">
     <!-- Header -->
     <div class="bg-white border-b border-gray-200">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <!-- Greeting -->
         <div class="mb-6">
           <h1 class="text-3xl font-bold text-gray-900">
@@ -202,7 +202,7 @@ onMounted(() => {
     </div>
 
     <!-- Main Content -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <!-- Loading State -->
       <div v-if="loading" class="flex justify-center items-center py-20">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-summit-600"></div>
@@ -238,7 +238,7 @@ onMounted(() => {
         <h2 class="text-xl font-bold text-gray-900 mb-4">
           {{ isToday ? "Today's Workouts" : 'Scheduled Workouts' }}
         </h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="space-y-4">
           <AssignmentCard
             v-for="assignment in assignments"
             :key="assignment.id"
@@ -252,7 +252,7 @@ onMounted(() => {
       <!-- Upcoming Section -->
       <div v-if="isToday && upcomingAssignments.length > 0" class="mt-12">
         <h2 class="text-xl font-bold text-gray-900 mb-4">Coming Up</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="space-y-3">
           <div
             v-for="assignment in upcomingAssignments"
             :key="assignment.id"

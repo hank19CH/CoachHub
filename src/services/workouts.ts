@@ -30,10 +30,11 @@ export const workoutsService = {
   },
 
   /**
-   * Get a single workout by ID with its exercises
+   * Get a single workout by ID with its exercises.
+   * Pass coachId to verify ownership (recommended for coach-facing views).
    */
-  async getWorkoutById(workoutId: string): Promise<WorkoutWithExercises> {
-    const { data, error } = await supabase
+  async getWorkoutById(workoutId: string, coachId?: string): Promise<WorkoutWithExercises> {
+    let query = supabase
       .from('workouts')
       .select(`
         *,
@@ -56,7 +57,12 @@ export const workoutsService = {
         )
       `)
       .eq('id', workoutId)
-      .single()
+
+    if (coachId) {
+      query = query.eq('coach_id', coachId)
+    }
+
+    const { data, error } = await query.single()
 
     if (error) {
       console.error('Error fetching workout:', error)
@@ -109,15 +115,19 @@ export const workoutsService = {
   },
 
   /**
-   * Update an existing workout
+   * Update an existing workout. Pass coachId to verify ownership.
    */
-  async updateWorkout(workoutId: string, updates: WorkoutUpdate): Promise<Workout> {
-    const { data, error } = await supabase
+  async updateWorkout(workoutId: string, updates: WorkoutUpdate, coachId?: string): Promise<Workout> {
+    let query = supabase
       .from('workouts')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', workoutId)
-      .select()
-      .single()
+
+    if (coachId) {
+      query = query.eq('coach_id', coachId)
+    }
+
+    const { data, error } = await query.select().single()
 
     if (error) {
       console.error('Error updating workout:', error)
@@ -128,9 +138,9 @@ export const workoutsService = {
   },
 
   /**
-   * Delete a workout and its exercises
+   * Delete a workout and its exercises. Pass coachId to verify ownership.
    */
-  async deleteWorkout(workoutId: string): Promise<void> {
+  async deleteWorkout(workoutId: string, coachId?: string): Promise<void> {
     // Exercises will cascade delete if FK is set up, otherwise delete manually
     const { error: exerciseError } = await supabase
       .from('exercises')
@@ -142,10 +152,16 @@ export const workoutsService = {
       throw new Error('Failed to delete workout exercises')
     }
 
-    const { error } = await supabase
+    let query = supabase
       .from('workouts')
       .delete()
       .eq('id', workoutId)
+
+    if (coachId) {
+      query = query.eq('coach_id', coachId)
+    }
+
+    const { error } = await query
 
     if (error) {
       console.error('Error deleting workout:', error)
@@ -157,8 +173,8 @@ export const workoutsService = {
    * Duplicate a workout (create a copy)
    */
   async duplicateWorkout(workoutId: string, coachId: string): Promise<WorkoutWithExercises> {
-    // Fetch original workout with exercises
-    const original = await workoutsService.getWorkoutById(workoutId)
+    // Fetch original workout with exercises (verify ownership)
+    const original = await workoutsService.getWorkoutById(workoutId, coachId)
 
     // Create the new workout
     const { data: newWorkout, error: workoutError } = await supabase

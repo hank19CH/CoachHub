@@ -526,6 +526,8 @@ export interface Database {
           caption: string | null
           shared_exercise_ids: string[]
           share_settings: ShareSettings
+          coach_feedback: string | null
+          feedback_at: string | null
         }
         Insert: {
           id?: string
@@ -539,6 +541,8 @@ export interface Database {
           caption?: string | null
           shared_exercise_ids?: string[]
           share_settings?: ShareSettings
+          coach_feedback?: string | null
+          feedback_at?: string | null
         }
         Update: {
           completed_at?: string
@@ -549,6 +553,8 @@ export interface Database {
           caption?: string | null
           shared_exercise_ids?: string[]
           share_settings?: ShareSettings
+          coach_feedback?: string | null
+          feedback_at?: string | null
         }
       }
       exercise_results: {

@@ -216,6 +216,7 @@ async function removeWorkout(workoutId: string) {
       .from('workouts')
       .delete()
       .eq('id', workoutId)
+      .eq('coach_id', authStore.user!.id)
     
     if (error) throw error
     
