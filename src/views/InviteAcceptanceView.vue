@@ -2,12 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import {
-  decodeInviteCode,
-  fetchCoachProfile,
-  acceptInvitation,
-  checkExistingRelationship
-} from '@/services/invites'
+import { lookupInviteCode, acceptInviteCode } from '@/services/athletes'
+import { fetchCoachProfile } from '@/services/invites'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,8 +12,7 @@ const authStore = useAuthStore()
 const loading = ref(true)
 const error = ref<string | null>(null)
 const coachProfile = ref<any>(null)
-const coachId = ref<string | null>(null)
-const inviteCode = ref<string>('')
+const inviteCode = ref('')
 const alreadyConnected = ref(false)
 
 onMounted(async () => {
@@ -28,23 +23,23 @@ onMounted(async () => {
       throw new Error('No invite code provided')
     }
 
-    // Decode to get coach ID
-    coachId.value = decodeInviteCode(inviteCode.value)
+    // Look up the code in invite_codes table to get coach_id
+    const invite = await lookupInviteCode(inviteCode.value)
 
-    if (!coachId.value) {
-      throw new Error('Invalid invite code')
+    if (!invite) {
+      throw new Error('Invalid or expired invite code')
     }
 
     // Fetch coach profile
-    coachProfile.value = await fetchCoachProfile(coachId.value)
+    coachProfile.value = await fetchCoachProfile(invite.coach_id)
 
-    // If user is already logged in as an athlete, check/create relationship
+    // If user is already logged in as an athlete, accept directly
     if (authStore.profile?.id && authStore.profile.user_type === 'athlete') {
-      const existing = await checkExistingRelationship(coachId.value, authStore.profile.id)
-      if (existing) {
+      try {
+        await acceptInviteCode(inviteCode.value, authStore.profile.id)
         alreadyConnected.value = true
-      } else {
-        await acceptInvitation(coachId.value, authStore.profile.id, inviteCode.value)
+      } catch {
+        // acceptInviteCode handles duplicate check internally
         alreadyConnected.value = true
       }
     }
@@ -56,30 +51,16 @@ onMounted(async () => {
 })
 
 function handleCreateAccount() {
-  sessionStorage.setItem(
-    'pending_invite',
-    JSON.stringify({
-      coach_id: coachId.value,
-      invite_code: inviteCode.value,
-      coach_name: coachProfile.value?.display_name,
-    })
-  )
+  sessionStorage.setItem('pending_invite_code', inviteCode.value)
 
   router.push({
     name: 'signup',
-    query: { userType: 'athlete', invite: 'true' },
+    query: { invite: inviteCode.value },
   })
 }
 
 function handleLogin() {
-  sessionStorage.setItem(
-    'pending_invite',
-    JSON.stringify({
-      coach_id: coachId.value,
-      invite_code: inviteCode.value,
-      coach_name: coachProfile.value?.display_name,
-    })
-  )
+  sessionStorage.setItem('pending_invite_code', inviteCode.value)
 
   router.push({
     name: 'login',

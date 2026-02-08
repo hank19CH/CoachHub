@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { acceptInvitation, checkExistingRelationship } from '@/services/invites'
+import { acceptInviteCode } from '@/services/athletes'
 import type { UserType } from '@/types/database'
 
 const router = useRouter()
@@ -12,7 +12,7 @@ const authStore = useAuthStore()
 // Form state
 const step = ref(1) // 1 = user type, 2 = details
 const userType = ref<UserType | null>(null)
-const pendingInvite = ref<{ coach_id: string; invite_code: string; coach_name: string } | null>(null)
+const pendingInviteCode = ref<string | null>(null)
 const email = ref('')
 const password = ref('')
 const confirmPassword = ref('')
@@ -66,13 +66,20 @@ const canSubmit = computed(() => {
 
 // Check for invite flow on mount
 onMounted(() => {
-  const storedInvite = sessionStorage.getItem('pending_invite')
-  if (storedInvite) {
-    pendingInvite.value = JSON.parse(storedInvite)
+  // Check sessionStorage first (set by InviteAcceptanceView)
+  const storedCode = sessionStorage.getItem('pending_invite_code')
+  if (storedCode) {
+    pendingInviteCode.value = storedCode
   }
 
-  // Auto-select athlete type if coming from invite
-  if (route.query.invite === 'true' && route.query.userType === 'athlete') {
+  // Check if invite code was passed directly via URL (from InviteAthleteModal link)
+  const inviteQuery = route.query.invite as string | undefined
+  if (inviteQuery && inviteQuery !== 'true' && !pendingInviteCode.value) {
+    pendingInviteCode.value = inviteQuery
+  }
+
+  // Auto-select athlete type if coming from any invite flow
+  if (inviteQuery) {
     userType.value = 'athlete'
     step.value = 2
   }
@@ -105,24 +112,14 @@ async function handleSubmit() {
 
   if (result.success) {
     // Handle pending invite after successful signup
-    if (pendingInvite.value && authStore.profile?.id) {
+    if (pendingInviteCode.value && authStore.profile?.id) {
       try {
-        const existing = await checkExistingRelationship(
-          pendingInvite.value.coach_id,
-          authStore.profile.id
-        )
-        if (!existing) {
-          await acceptInvitation(
-            pendingInvite.value.coach_id,
-            authStore.profile.id,
-            pendingInvite.value.invite_code
-          )
-        }
-        sessionStorage.removeItem('pending_invite')
+        await acceptInviteCode(pendingInviteCode.value, authStore.profile.id)
+        sessionStorage.removeItem('pending_invite_code')
         router.push('/athlete/hub')
       } catch (err) {
         console.error('Error accepting invitation after signup:', err)
-        sessionStorage.removeItem('pending_invite')
+        sessionStorage.removeItem('pending_invite_code')
         router.push('/')
       }
     } else {

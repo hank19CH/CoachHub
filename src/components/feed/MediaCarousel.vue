@@ -1,10 +1,29 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { PostMedia, PostType } from '@/types/database'
+import WorkoutCard from '@/components/posts/WorkoutCard.vue'
+import type { WorkoutCardExercise } from '@/components/posts/WorkoutCard.vue'
+
+export interface WorkoutCardData {
+  workoutName: string
+  duration: number | null
+  completedAt?: string
+  exercises: WorkoutCardExercise[]
+  shareSettings: {
+    show_duration: boolean
+    show_rpe: boolean
+    show_workout_name: boolean
+    show_exercise_details: boolean
+    highlight_pbs_only: boolean
+  }
+  overallRpe?: number | null
+  pbCount: number
+}
 
 const props = defineProps<{
   media: PostMedia[]
   postType: PostType
+  workoutCardData?: WorkoutCardData | null
 }>()
 
 const currentIndex = ref(0)
@@ -65,18 +84,18 @@ function handleSwipe() {
 </script>
 
 <template>
-  <div 
+  <div
     class="relative bg-gray-100 aspect-square overflow-hidden"
     @touchstart="handleTouchStart"
     @touchend="handleTouchEnd"
   >
     <!-- Media items -->
-    <div 
+    <div
       class="flex transition-transform duration-300 ease-out h-full"
       :style="{ transform: `translateX(-${currentIndex * 100}%)` }"
     >
-      <div 
-        v-for="item in sortedMedia" 
+      <div
+        v-for="item in sortedMedia"
         :key="item.id"
         class="w-full h-full flex-shrink-0 relative"
       >
@@ -100,19 +119,34 @@ function handleSwipe() {
           preload="metadata"
         />
 
-        <!-- Workout Card (rendered, not an image) -->
-        <div 
+        <!-- Workout Card (rendered component) -->
+        <div
           v-else-if="item.media_type === 'workout_card'"
-          class="w-full h-full gradient-summit flex items-center justify-center"
+          class="w-full h-full"
         >
-          <div class="text-center text-white p-6">
-            <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-white/20 flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
+          <WorkoutCard
+            v-if="workoutCardData"
+            :workout-name="workoutCardData.workoutName"
+            :duration="workoutCardData.duration"
+            :completed-at="workoutCardData.completedAt"
+            :exercises="workoutCardData.exercises"
+            :share-settings="workoutCardData.shareSettings"
+            :overall-rpe="workoutCardData.overallRpe"
+            :pb-count="workoutCardData.pbCount"
+          />
+          <!-- Fallback if no workout data -->
+          <div
+            v-else
+            class="w-full h-full bg-gradient-to-br from-violet-700 via-purple-700 to-purple-900 flex items-center justify-center"
+          >
+            <div class="text-center text-white p-6">
+              <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-white/20 flex items-center justify-center">
+                <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <p class="font-bold text-lg">Workout Complete</p>
             </div>
-            <p class="font-display text-lg font-bold">Workout Complete</p>
-            <p class="text-white/70 text-sm mt-1">Swipe for details</p>
           </div>
         </div>
       </div>
@@ -125,7 +159,7 @@ function handleSwipe() {
         @click="prevSlide"
         class="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition-colors hidden sm:flex"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
       </button>
@@ -135,14 +169,14 @@ function handleSwipe() {
         @click="nextSlide"
         class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition-colors hidden sm:flex"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
         </svg>
       </button>
     </template>
 
     <!-- Dots indicator -->
-    <div 
+    <div
       v-if="hasMultiple"
       class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5"
     >
@@ -152,15 +186,15 @@ function handleSwipe() {
         @click="goToSlide(index)"
         class="w-1.5 h-1.5 rounded-full transition-all"
         :class="[
-          index === currentIndex 
-            ? 'bg-white w-3' 
+          index === currentIndex
+            ? 'bg-white w-3'
             : 'bg-white/50 hover:bg-white/75'
         ]"
       />
     </div>
 
     <!-- Counter (top right) -->
-    <div 
+    <div
       v-if="hasMultiple"
       class="absolute top-3 right-3 px-2.5 py-1 rounded-full bg-black/50 text-white text-xs font-medium"
     >

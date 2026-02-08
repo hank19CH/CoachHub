@@ -312,6 +312,29 @@ export interface Database {
           ended_at?: string | null
         }
       }
+      invite_codes: {
+        Row: {
+          id: string
+          coach_id: string
+          code: string
+          created_at: string
+          expires_at: string | null
+          is_active: boolean
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          code: string
+          created_at?: string
+          expires_at?: string | null
+          is_active?: boolean
+        }
+        Update: {
+          code?: string
+          expires_at?: string | null
+          is_active?: boolean
+        }
+      }
       programs: {
         Row: {
           id: string

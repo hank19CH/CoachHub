@@ -5,9 +5,46 @@ import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { PostWithAuthor } from '@/types/database'
 import MediaCarousel from './MediaCarousel.vue'
+import type { WorkoutCardData } from './MediaCarousel.vue'
 
 const props = defineProps<{
-  post: PostWithAuthor
+  post: PostWithAuthor & {
+    workout_completion?: {
+      id: string
+      duration_minutes: number | null
+      overall_rpe: number | null
+      has_pb: boolean
+      completed_at: string
+      shared_exercise_ids: string[] | null
+      share_settings: {
+        show_duration: boolean
+        show_rpe: boolean
+        show_workout_name: boolean
+        show_exercise_details: boolean
+        highlight_pbs_only: boolean
+      } | null
+      assignment?: {
+        workout?: {
+          id: string
+          name: string
+          description: string | null
+        }
+      }
+      exercise_results?: {
+        id: string
+        is_pb: boolean
+        exercise: {
+          id: string
+          name: string
+          sets: number | null
+          reps: string | null
+          weight_kg: number | null
+          duration_seconds: number | null
+          distance_meters: number | null
+        }
+      }[]
+    } | null
+  }
 }>()
 
 const router = useRouter()
@@ -46,6 +83,40 @@ const authorInitials = computed(() => {
     .join('')
     .toUpperCase()
     .slice(0, 2)
+})
+
+// Build workout card data for MediaCarousel
+const workoutCardData = computed<WorkoutCardData | null>(() => {
+  const wc = props.post.workout_completion
+  if (!wc) return null
+
+  const settings = wc.share_settings ?? {
+    show_duration: true,
+    show_rpe: true,
+    show_workout_name: true,
+    show_exercise_details: true,
+    highlight_pbs_only: false,
+  }
+
+  const exercises = (wc.exercise_results ?? []).map((er) => ({
+    name: er.exercise.name,
+    sets: er.exercise.sets,
+    reps: er.exercise.reps,
+    weight: er.exercise.weight_kg,
+    duration: er.exercise.duration_seconds,
+    distance: er.exercise.distance_meters,
+    isPb: er.is_pb,
+  }))
+
+  return {
+    workoutName: wc.assignment?.workout?.name ?? 'Workout',
+    duration: wc.duration_minutes,
+    completedAt: wc.completed_at,
+    exercises,
+    shareSettings: settings,
+    overallRpe: wc.overall_rpe,
+    pbCount: exercises.filter((e) => e.isPb).length,
+  }
 })
 
 // Handle like toggle
@@ -139,10 +210,11 @@ function goToPost() {
     </header>
 
     <!-- Media Carousel (if has media) -->
-    <MediaCarousel 
-      v-if="hasMedia" 
-      :media="post.media" 
+    <MediaCarousel
+      v-if="hasMedia"
+      :media="post.media"
       :post-type="post.post_type"
+      :workout-card-data="workoutCardData"
     />
 
     <!-- Post Actions -->

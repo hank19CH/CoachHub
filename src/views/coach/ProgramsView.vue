@@ -58,8 +58,8 @@ async function loadPrograms() {
     if (error) throw error
     
     programs.value = data || []
-  } catch (e) {
-    console.error('Error loading programs:', e)
+  } catch (e: any) {
+    console.error('Error loading programs:', e?.message || e?.code || JSON.stringify(e))
   } finally {
     loading.value = false
   }
@@ -110,9 +110,9 @@ async function createProgram() {
     
     // Navigate to program builder to add weeks/workouts
     router.push(`/programs/${program.id}/edit`)
-  } catch (e) {
-    console.error('Error creating program:', e)
-    errorMessage.value = e instanceof Error ? e.message : 'Failed to create program'
+  } catch (e: any) {
+    console.error('Error creating program:', e?.message || e?.code || JSON.stringify(e))
+    errorMessage.value = e?.message || (e instanceof Error ? e.message : 'Failed to create program')
   } finally {
     saving.value = false
   }

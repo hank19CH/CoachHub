@@ -1,60 +1,158 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import PostCard from '@/components/feed/PostCard.vue'
 import PostSkeleton from '@/components/feed/PostSkeleton.vue'
 import { supabase } from '@/lib/supabase'
-import type { PostWithAuthor } from '@/types/database'
 
 const authStore = useAuthStore()
 
-const posts = ref<PostWithAuthor[]>([])
+const posts = ref<any[]>([])
 const loading = ref(true)
+const loadingMore = ref(false)
 const error = ref<string | null>(null)
+const hasMore = ref(true)
+const PAGE_SIZE = 20
 
 onMounted(async () => {
   await fetchPosts()
+  window.addEventListener('scroll', handleScroll)
 })
 
-async function fetchPosts() {
-  try {
-    loading.value = true
-    error.value = null
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll)
+})
 
-    // Fetch posts with author profiles and media
-    // For now, fetch all public posts - later we'll filter by following
+async function fetchPosts(append = false) {
+  try {
+    if (!append) {
+      loading.value = true
+      error.value = null
+    }
+
+    const offset = append ? posts.value.length : 0
+
     const { data, error: fetchError } = await supabase
       .from('posts')
       .select(`
         *,
         author:profiles!author_id(*),
-        media:post_media(*)
+        media:post_media(*),
+        workout_completion:workout_completions!posts_workout_completion_id_fkey(
+          id,
+          duration_minutes,
+          overall_rpe,
+          has_pb,
+          completed_at,
+          shared_exercise_ids,
+          share_settings,
+          assignment:workout_assignments!workout_completions_assignment_id_fkey(
+            workout:workouts!workout_assignments_workout_id_fkey(
+              id,
+              name,
+              description
+            )
+          )
+        )
       `)
       .eq('visibility', 'public')
       .order('created_at', { ascending: false })
-      .limit(20)
+      .range(offset, offset + PAGE_SIZE - 1)
 
     if (fetchError) throw fetchError
 
-    posts.value = data as PostWithAuthor[]
+    const fetchedPosts = data || []
+
+    // For workout posts, fetch exercise results for the workout card
+    const workoutPosts = fetchedPosts.filter(
+      (p: any) => p.post_type === 'workout' && p.workout_completion
+    )
+
+    if (workoutPosts.length > 0) {
+      const completionIds = workoutPosts.map((p: any) => p.workout_completion.id)
+
+      const { data: exerciseResults } = await supabase
+        .from('exercise_results')
+        .select(`
+          id,
+          completion_id,
+          is_pb,
+          exercise:exercises!exercise_results_exercise_id_fkey(
+            id,
+            name,
+            sets,
+            reps,
+            weight_kg,
+            duration_seconds,
+            distance_meters
+          )
+        `)
+        .in('completion_id', completionIds)
+
+      // Attach exercise results to matching posts
+      if (exerciseResults) {
+        const resultsByCompletion = new Map<string, any[]>()
+        for (const er of exerciseResults) {
+          const list = resultsByCompletion.get(er.completion_id) || []
+          list.push(er)
+          resultsByCompletion.set(er.completion_id, list)
+        }
+
+        for (const post of fetchedPosts) {
+          if (post.workout_completion) {
+            const sharedIds = post.workout_completion.shared_exercise_ids as string[] | null
+            let results = resultsByCompletion.get(post.workout_completion.id) || []
+
+            // Filter to shared exercises if specified
+            if (sharedIds && sharedIds.length > 0) {
+              results = results.filter((er: any) => sharedIds.includes(er.exercise?.id))
+            }
+
+            post.workout_completion.exercise_results = results
+          }
+        }
+      }
+    }
+
+    if (append) {
+      posts.value.push(...fetchedPosts)
+    } else {
+      posts.value = fetchedPosts
+    }
+
+    hasMore.value = fetchedPosts.length >= PAGE_SIZE
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load posts'
     console.error('Error fetching posts:', e)
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
 }
 
 async function handleRefresh() {
+  hasMore.value = true
   await fetchPosts()
+}
+
+function handleScroll() {
+  if (loadingMore.value || !hasMore.value) return
+
+  const scrollBottom = window.innerHeight + window.scrollY
+  const docHeight = document.documentElement.scrollHeight
+
+  if (docHeight - scrollBottom < 400) {
+    loadingMore.value = true
+    fetchPosts(true)
+  }
 }
 </script>
 
 <template>
   <div class="min-h-full">
     <!-- Welcome message for empty feed -->
-    <div 
-      v-if="!loading && posts.length === 0" 
+    <div
+      v-if="!loading && posts.length === 0"
       class="p-6 text-center"
     >
       <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-summit-100 flex items-center justify-center">
@@ -62,11 +160,11 @@ async function handleRefresh() {
           <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
         </svg>
       </div>
-      
+
       <h2 class="font-display text-2xl font-bold text-gray-900 mb-2">
         Welcome to CoachHub, {{ authStore.displayName }}!
       </h2>
-      
+
       <p class="text-gray-600 mb-6 max-w-sm mx-auto">
         Your feed is empty. Start by following coaches and athletes, or create your first post.
       </p>
@@ -108,7 +206,7 @@ async function handleRefresh() {
 
     <!-- Posts feed -->
     <div v-else class="pb-4">
-      <!-- Pull to refresh hint (visual only for now) -->
+      <!-- Pull to refresh hint -->
       <div class="text-center py-3 text-gray-400 text-sm">
         <button @click="handleRefresh" class="hover:text-gray-600 transition-colors">
           Pull to refresh
@@ -124,9 +222,14 @@ async function handleRefresh() {
         />
       </TransitionGroup>
 
+      <!-- Loading more indicator -->
+      <div v-if="loadingMore" class="flex justify-center py-6">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-summit-600"></div>
+      </div>
+
       <!-- End of feed -->
-      <div class="text-center py-8 text-gray-400 text-sm">
-        You're all caught up! 🎉
+      <div v-else-if="!hasMore && posts.length > 0" class="text-center py-8 text-gray-400 text-sm">
+        You're all caught up!
       </div>
     </div>
   </div>

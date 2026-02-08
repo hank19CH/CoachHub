@@ -8,6 +8,8 @@ import type { Assignment, Exercise, ExerciseResultData } from '@/services/assign
 import ExerciseLogger from '@/components/athlete/ExerciseLogger.vue'
 import RestTimer from '@/components/athlete/RestTimer.vue'
 import WorkoutCompleteModal from '@/components/athlete/WorkoutCompleteModal.vue'
+import WorkoutShareModal from '@/components/athlete/WorkoutShareModal.vue'
+import type { ShareExercise } from '@/components/athlete/WorkoutShareModal.vue'
 
 // Router & auth
 const route = useRoute()
@@ -26,6 +28,7 @@ const startTime = ref<Date | null>(null)
 const showRestTimer = ref(false)
 const restDuration = ref(0)
 const showCompleteModal = ref(false)
+const showShareModal = ref(false)
 const completionId = ref<string | null>(null)
 const isSubmitting = ref(false)
 
@@ -196,6 +199,44 @@ async function finishWorkout() {
   }
 }
 
+// Share-related computed
+const shareExercises = computed<ShareExercise[]>(() => {
+  return exercises.value.map((ex, i) => {
+    const result = exerciseResults.value[i]
+    return {
+      id: ex.id,
+      name: ex.name,
+      sets: ex.sets,
+      reps: ex.reps,
+      weight_kg: ex.weight_kg,
+      duration_seconds: ex.duration_seconds,
+      distance_meters: ex.distance_meters,
+      sets_completed: result?.sets_completed ?? null,
+      reps_completed: result?.reps_completed ?? null,
+      weight_used_kg: result?.weight_used_kg ?? null,
+      actual_duration_seconds: result?.duration_seconds ?? null,
+      actual_distance_meters: result?.distance_meters ?? null,
+      isPb: result?.is_pb ?? false,
+    }
+  })
+})
+
+const pbCount = computed(() => {
+  return exerciseResults.value.filter((r) => r?.is_pb).length
+})
+
+// Handle share button from complete modal
+function handleShare() {
+  showCompleteModal.value = false
+  showShareModal.value = true
+}
+
+// Handle post shared
+function handleShared(_postId: string) {
+  showShareModal.value = false
+  router.push('/athlete/dashboard')
+}
+
 // Exit workout
 function exitWorkout() {
   if (totalLogged.value > 0) {
@@ -362,6 +403,20 @@ function handleModalClose() {
       :exercises-completed="totalLogged"
       :has-pbs="exerciseResults.some(r => r?.is_pb)"
       @close="handleModalClose"
+      @share="handleShare"
+    />
+
+    <!-- Share modal -->
+    <WorkoutShareModal
+      v-if="showShareModal && completionId"
+      :completion-id="completionId"
+      :workout-name="assignment?.workout?.name || 'Workout'"
+      :duration="elapsedMinutes"
+      :exercises-completed="totalLogged"
+      :pb-count="pbCount"
+      :exercises="shareExercises"
+      @close="showShareModal = false"
+      @shared="handleShared"
     />
   </div>
 </template>

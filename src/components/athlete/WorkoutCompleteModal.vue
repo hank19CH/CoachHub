@@ -8,6 +8,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'share'): void
 }>()
 </script>
 
@@ -53,12 +54,23 @@ const emit = defineEmits<{
       </div>
 
       <!-- Actions -->
-      <button
-        @click="emit('close')"
-        class="w-full py-3 px-6 bg-valencia-500 text-white rounded-lg hover:bg-valencia-600 font-medium"
-      >
-        Back to Dashboard
-      </button>
+      <div class="space-y-3">
+        <button
+          @click="emit('share')"
+          class="w-full py-3 px-6 bg-summit-600 text-white rounded-lg hover:bg-summit-700 font-medium flex items-center justify-center gap-2"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+          </svg>
+          Share Workout
+        </button>
+        <button
+          @click="emit('close')"
+          class="w-full py-3 px-6 bg-white text-gray-700 rounded-lg hover:bg-gray-50 font-medium border border-gray-300"
+        >
+          Back to Dashboard
+        </button>
+      </div>
     </div>
   </div>
 </template>

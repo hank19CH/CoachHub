@@ -2,7 +2,6 @@ import { supabase } from '@/lib/supabase'
 import type { Database } from '@/types/database'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
-type CoachAthlete = Database['public']['Tables']['coach_athletes']['Row']
 
 export interface AthleteWithProfile {
   id: string
@@ -45,22 +44,23 @@ export async function fetchCoachAthletes(coachId: string): Promise<AthleteWithPr
     throw error
   }
 
-  // Transform the data to include last workout date
-  // For now, we'll set it as null since we don't have workouts yet
   const athletesWithProfile = data.map((relation: any) => ({
     ...relation,
-    last_workout_date: null, // TODO: Add this when we build workout completions
+    last_workout_date: null,
   }))
 
   return athletesWithProfile as AthleteWithProfile[]
 }
 
+// ============================================
+// Invite Code Functions (using invite_codes table)
+// ============================================
+
 /**
- * Generate a unique invite code for a coach
+ * Generate a unique 8-character invite code
  */
-function generateInviteCode(): string {
-  // Generate a random 8-character code
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Removed confusing characters
+function generateCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let code = ''
   for (let i = 0; i < 8; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length))
@@ -69,89 +69,112 @@ function generateInviteCode(): string {
 }
 
 /**
- * Create an invite code for a coach to share with potential athletes
+ * Create a new invite code for a coach
  */
 export async function createInviteCode(coachId: string): Promise<string> {
-  const inviteCode = generateInviteCode()
-  
-  // Create a pending coach_athletes record with the invite code
-  const { data, error } = await supabase
-    .from('coach_athletes')
+  const code = generateCode()
+
+  const { error } = await supabase
+    .from('invite_codes')
     .insert({
       coach_id: coachId,
-      athlete_id: null, // Will be filled when athlete accepts
-      status: 'pending',
-      invited_via: 'link',
-      invite_code: inviteCode,
+      code,
     })
-    .select()
-    .single()
 
   if (error) {
     console.error('Error creating invite code:', error)
     throw error
   }
 
-  return inviteCode
+  return code
 }
 
 /**
- * Get an existing unused invite code or create a new one
- * This prevents creating too many unused codes
+ * Get an existing active invite code for a coach, or create a new one
  */
 export async function getOrCreateInviteCode(coachId: string): Promise<string> {
-  // Check if there's an existing unused invite code
-  const { data: existingInvite, error: fetchError } = await supabase
-    .from('coach_athletes')
-    .select('invite_code')
+  const { data: existing, error: fetchError } = await supabase
+    .from('invite_codes')
+    .select('code')
     .eq('coach_id', coachId)
-    .eq('status', 'pending')
-    .is('athlete_id', null)
-    .not('invite_code', 'is', null)
+    .eq('is_active', true)
+    .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
-  if (!fetchError && existingInvite?.invite_code) {
-    return existingInvite.invite_code
+  if (!fetchError && existing?.code) {
+    return existing.code
   }
 
-  // No existing code, create a new one
   return await createInviteCode(coachId)
 }
 
 /**
- * Accept an invite code (athlete side - we'll use this later)
+ * Look up an invite code and return the coach_id
+ * Used by athletes to find which coach invited them
  */
-export async function acceptInviteCode(inviteCode: string, athleteId: string): Promise<void> {
-  // Find the pending invite
-  const { data: invite, error: findError } = await supabase
-    .from('coach_athletes')
-    .select('*')
-    .eq('invite_code', inviteCode)
-    .eq('status', 'pending')
-    .is('athlete_id', null)
+export async function lookupInviteCode(code: string): Promise<{ coach_id: string } | null> {
+  const { data, error } = await supabase
+    .from('invite_codes')
+    .select('coach_id')
+    .eq('code', code)
+    .eq('is_active', true)
+    .gt('expires_at', new Date().toISOString())
     .single()
 
-  if (findError || !invite) {
+  if (error || !data) {
+    console.error('Error looking up invite code:', error)
+    return null
+  }
+
+  return data
+}
+
+/**
+ * Accept an invite code: look up the code, then create the coach-athlete relationship
+ */
+export async function acceptInviteCode(code: string, athleteId: string): Promise<void> {
+  // 1. Look up the code to get the coach_id
+  const invite = await lookupInviteCode(code)
+  if (!invite) {
     throw new Error('Invalid or expired invite code')
   }
 
-  // Update the invite with athlete ID and set status to active
-  const { error: updateError } = await supabase
+  // 2. Check if relationship already exists
+  const { data: existing } = await supabase
     .from('coach_athletes')
-    .update({
+    .select('id')
+    .eq('coach_id', invite.coach_id)
+    .eq('athlete_id', athleteId)
+    .maybeSingle()
+
+  if (existing) {
+    // Already connected, nothing to do
+    return
+  }
+
+  // 3. Create the relationship
+  const { error } = await supabase
+    .from('coach_athletes')
+    .insert({
+      coach_id: invite.coach_id,
       athlete_id: athleteId,
       status: 'active',
+      invited_via: 'link',
+      invite_code: code,
       started_at: new Date().toISOString(),
     })
-    .eq('id', invite.id)
 
-  if (updateError) {
-    console.error('Error accepting invite:', updateError)
-    throw updateError
+  if (error) {
+    console.error('Error creating coach-athlete relationship:', error)
+    throw error
   }
 }
+
+// ============================================
+// Athlete Management Functions
+// ============================================
 
 /**
  * Remove an athlete from coach's roster (soft delete - set to inactive)
@@ -212,10 +235,6 @@ export async function searchAthletes(
  * Service object for use in components that expect an object-style API
  */
 export const athletesService = {
-  /**
-   * Get coach athletes as flat profile objects (id, display_name, username, avatar_url)
-   * Used by AssignWorkoutModal and similar components
-   */
   async getCoachAthletes(coachId: string): Promise<Profile[]> {
     const relations = await fetchCoachAthletes(coachId)
     return relations.map((r) => r.athlete)
@@ -225,6 +244,7 @@ export const athletesService = {
   getOrCreateInviteCode,
   createInviteCode,
   acceptInviteCode,
+  lookupInviteCode,
   removeAthlete,
   searchAthletes,
 }
