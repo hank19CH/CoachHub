@@ -76,7 +76,7 @@ function addFiles(newFiles: File[]) {
 }
 
 function removeFile(index: number) {
-  URL.revokeObjectURL(previews.value[index].url)
+  URL.revokeObjectURL(previews.value[index]?.url ?? '')
   files.value.splice(index, 1)
   previews.value.splice(index, 1)
   errorMessage.value = ''
@@ -151,7 +151,7 @@ function formatFileSize(bytes: number): string {
 
         <!-- File size badge -->
         <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] text-center py-0.5">
-          {{ formatFileSize(files[index].size) }}
+          {{ formatFileSize(files[index]?.size ?? 0) }}
         </div>
 
         <!-- Remove button -->

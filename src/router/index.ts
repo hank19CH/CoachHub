@@ -129,6 +129,24 @@ const router = createRouter({
       component: () => import('@/views/coach/AthleteDetailView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
+    {
+      path: '/coach/calendar',
+      name: 'coach-calendar',
+      component: () => import('@/views/coach/CalendarView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/groups',
+      name: 'coach-groups',
+      component: () => import('@/views/coach/GroupsView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/groups/:id',
+      name: 'group-detail',
+      component: () => import('@/views/coach/GroupDetailView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
 
     // Athlete-specific routes
     {
@@ -149,10 +167,29 @@ const router = createRouter({
       component: () => import('@/views/athlete/WorkoutExecutionView.vue'),
       meta: { requiresAuth: true, requiresAthlete: true }
     },
+    {
+      path: '/athlete/teams',
+      name: 'athlete-teams',
+      component: () => import('@/views/athlete/TeamsView.vue'),
+      meta: { requiresAuth: true, requiresAthlete: true }
+    },
+    {
+      path: '/athlete/teams/:id',
+      name: 'athlete-team-detail',
+      component: () => import('@/views/athlete/TeamDetailView.vue'),
+      meta: { requiresAuth: true, requiresAthlete: true }
+    },
     // Placeholder routes - redirect to dashboard until implemented
     { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
     { path: '/progress', redirect: '/athlete/dashboard' },
+
+    // Public profile (/@username)
+    {
+      path: '/@:username',
+      name: 'public-profile',
+      component: () => import('@/views/PublicProfileView.vue'),
+    },
 
     // Post detail
     {

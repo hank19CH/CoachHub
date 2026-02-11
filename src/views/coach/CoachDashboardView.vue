@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { getAthleteCompletions } from '@/services/coaching'
 import WorkoutCompletionCard from '@/components/coach/WorkoutCompletionCard.vue'
 import ComplianceMetrics from '@/components/coach/ComplianceMetrics.vue'
+import AthleteProgressSummary from '@/components/coach/AthleteProgressSummary.vue'
 
 const authStore = useAuthStore()
 const completions = ref<any[]>([])
@@ -81,6 +82,9 @@ const summaryStats = computed(() => {
       :stats="summaryStats"
       class="mt-6"
     />
+
+    <!-- Athlete Progress Summary -->
+    <AthleteProgressSummary class="mt-6" />
 
     <!-- Filters -->
     <div class="mt-6 flex gap-3">

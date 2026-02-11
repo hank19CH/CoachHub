@@ -8,7 +8,14 @@
       "Bash(echo:*)",
       "Bash(export PATH=\"$PATH:/c/Program Files/nodejs\")",
       "Bash(npm run build-only:*)",
-      "Bash(npx vue-tsc:*)"
+      "Bash(npx vue-tsc:*)",
+      "Bash(npm run build:*)",
+      "mcp__0d355154-6f7c-4935-933e-c878e9afb5e4__execute_sql",
+      "Bash(npx vercel:*)",
+      "mcp__12aea11a-9c21-42aa-aeb3-8ae9f43cb4be__deploy_to_vercel",
+      "Bash(npx vite build)",
+      "WebFetch(domain:mzrmivqwywinsffkaimw.supabase.co)",
+      "Bash(python3:*)"
     ]
   }
 }

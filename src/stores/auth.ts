@@ -123,8 +123,8 @@ export const useAuthStore = defineStore('auth', () => {
         sport_ids: [],
       }
 
-      const { error: profileError } = await supabase
-        .from('profiles')
+      const { error: profileError } = await (supabase
+        .from('profiles') as any)
         .insert(profileData)
 
       if (profileError) {
@@ -134,8 +134,8 @@ export const useAuthStore = defineStore('auth', () => {
 
       // If coach, create coach_profile
       if (userType === 'coach') {
-        const { error: coachError } = await supabase
-          .from('coach_profiles')
+        const { error: coachError } = await (supabase
+          .from('coach_profiles') as any)
           .insert({ id: authData.user.id })
 
         if (coachError) {
@@ -146,8 +146,8 @@ export const useAuthStore = defineStore('auth', () => {
 
       // If athlete, create athlete_profile
       if (userType === 'athlete') {
-        const { error: athleteError } = await supabase
-          .from('athlete_profiles')
+        const { error: athleteError } = await (supabase
+          .from('athlete_profiles') as any)
           .insert({ id: authData.user.id })
 
         if (athleteError) {
@@ -219,8 +219,8 @@ export const useAuthStore = defineStore('auth', () => {
       loading.value = true
       error.value = null
 
-      const { error: updateError } = await supabase
-        .from('profiles')
+      const { error: updateError } = await (supabase
+        .from('profiles') as any)
         .update(updates)
         .eq('id', user.value.id)
 

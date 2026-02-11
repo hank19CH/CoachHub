@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { Workout } from '@/types/database'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -13,6 +15,22 @@ const workouts = ref<Workout[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
 const showCreateModal = ref(false)
+
+// Confirm dialog state
+const showDeleteConfirm = ref(false)
+const workoutToDelete = ref<Workout | null>(null)
+const deleting = ref(false)
+
+// Toast state
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 // Workout form state
 const workoutForm = ref({
@@ -103,7 +121,7 @@ async function createWorkout() {
     errorMessage.value = ''
     
     // Create the workout
-    const { data: workout, error } = await supabase
+    const { data: workout, error } = (await supabase
       .from('workouts')
       .insert({
         coach_id: authStore.user.id,
@@ -112,12 +130,12 @@ async function createWorkout() {
         workout_type: workoutForm.value.workout_type || null,
         estimated_duration_min: workoutForm.value.estimated_duration_min,
         is_template: workoutForm.value.is_template
-      })
+      } as any)
       .select()
-      .single()
-    
+      .single()) as { data: any; error: any }
+
     if (error) throw error
-    
+
     // Navigate to workout builder to add exercises
     router.push(`/workouts/${workout.id}/edit`)
   } catch (e) {
@@ -137,7 +155,7 @@ async function duplicateWorkout(workout: Workout) {
   
   try {
     // Create duplicate workout
-    const { data: newWorkout, error: workoutError } = await supabase
+    const { data: newWorkout, error: workoutError } = (await supabase
       .from('workouts')
       .insert({
         coach_id: authStore.user.id,
@@ -146,24 +164,24 @@ async function duplicateWorkout(workout: Workout) {
         workout_type: workout.workout_type,
         estimated_duration_min: workout.estimated_duration_min,
         is_template: workout.is_template
-      })
+      } as any)
       .select()
-      .single()
-    
+      .single()) as { data: any; error: any }
+
     if (workoutError) throw workoutError
     
     // Fetch exercises from original workout
-    const { data: exercises, error: exercisesError } = await supabase
+    const { data: exercises, error: exercisesError } = (await supabase
       .from('exercises')
       .select('*')
       .eq('workout_id', workout.id)
-      .order('order_index')
-    
+      .order('order_index')) as { data: any[] | null; error: any }
+
     if (exercisesError) throw exercisesError
-    
+
     // Copy exercises to new workout
     if (exercises && exercises.length > 0) {
-      const exerciseCopies = exercises.map(ex => ({
+      const exerciseCopies = exercises.map((ex: any) => ({
         workout_id: newWorkout.id,
         name: ex.name,
         description: ex.description,
@@ -180,50 +198,57 @@ async function duplicateWorkout(workout: Workout) {
         notes: ex.notes,
         video_url: ex.video_url
       }))
-      
-      const { error: insertError } = await supabase
+
+      const { error: insertError } = await (supabase
         .from('exercises')
-        .insert(exerciseCopies)
-      
+        .insert(exerciseCopies as any))
+
       if (insertError) throw insertError
     }
-    
+
     // Reload workouts list
     await loadWorkouts()
-    
-    // Show success message (optional)
-    alert(`Workout duplicated! "${newWorkout.name}" has been created.`)
+    showToast(`"${newWorkout.name}" duplicated successfully`)
   } catch (e) {
     console.error('Error duplicating workout:', e)
-    alert('Failed to duplicate workout')
+    showToast('Failed to duplicate workout', 'error')
   }
 }
 
-async function deleteWorkout(workout: Workout) {
-  if (!authStore.user) return
-  if (!confirm(`Delete "${workout.name}"? This cannot be undone.`)) return
+function confirmDeleteWorkout(workout: Workout) {
+  workoutToDelete.value = workout
+  showDeleteConfirm.value = true
+}
+
+async function handleDeleteWorkout() {
+  if (!authStore.user || !workoutToDelete.value) return
+  deleting.value = true
 
   try {
-    // Delete exercises first
     const { error: exerciseError } = await supabase
       .from('exercises')
       .delete()
-      .eq('workout_id', workout.id)
+      .eq('workout_id', workoutToDelete.value.id)
 
     if (exerciseError) throw exerciseError
 
     const { error } = await supabase
       .from('workouts')
       .delete()
-      .eq('id', workout.id)
+      .eq('id', workoutToDelete.value.id)
       .eq('coach_id', authStore.user.id)
 
     if (error) throw error
 
+    showDeleteConfirm.value = false
+    workoutToDelete.value = null
     await loadWorkouts()
+    showToast('Workout deleted')
   } catch (e) {
     console.error('Error deleting workout:', e)
-    alert('Failed to delete workout')
+    showToast('Failed to delete workout', 'error')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -360,7 +385,7 @@ function formatDuration(minutes: number | null): string {
               </svg>
             </button>
             <button
-              @click.stop="deleteWorkout(workout)"
+              @click.stop="confirmDeleteWorkout(workout)"
               class="p-2 hover:bg-red-50 rounded-lg transition-colors"
               title="Delete workout"
             >
@@ -377,6 +402,25 @@ function formatDuration(minutes: number | null): string {
         <p>No workouts found matching "{{ searchQuery }}"</p>
       </div>
     </div>
+
+    <!-- Delete Confirm Dialog -->
+    <ConfirmDialog
+      :open="showDeleteConfirm"
+      title="Delete Workout?"
+      :message="`Delete &quot;${workoutToDelete?.name}&quot;? This will also delete all exercises. This cannot be undone.`"
+      confirm-text="Delete"
+      :loading="deleting"
+      @confirm="handleDeleteWorkout"
+      @cancel="showDeleteConfirm = false"
+    />
+
+    <!-- Toast -->
+    <Toast
+      :message="toastMessage"
+      :type="toastType"
+      :visible="toastVisible"
+      @close="toastVisible = false"
+    />
 
     <!-- Create Workout Modal -->
     <div

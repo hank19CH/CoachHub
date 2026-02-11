@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { Program, ProgramWeek, Workout } from '@/types/database'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +19,22 @@ const loading = ref(true)
 const showWorkoutPicker = ref(false)
 const selectedWeekId = ref<string | null>(null)
 const selectedDay = ref<number | null>(null)
+
+// Confirm dialog state
+const showRemoveConfirm = ref(false)
+const workoutToRemoveId = ref<string | null>(null)
+const removingWorkout = ref(false)
+
+// Toast state
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 const programId = computed(() => route.params.id as string)
 
@@ -51,24 +69,24 @@ async function loadProgram() {
     program.value = programData
     
     // Load weeks with workouts
-    const { data: weeksData, error: weeksError } = await supabase
+    const { data: weeksData, error: weeksError } = (await supabase
       .from('program_weeks')
       .select('*')
       .eq('program_id', programId.value)
-      .order('week_number')
-    
+      .order('week_number')) as { data: any[] | null; error: any }
+
     if (weeksError) throw weeksError
-    
+
     // Load workouts for each week
     if (weeksData && weeksData.length > 0) {
       const weeksWithWorkouts = await Promise.all(
-        weeksData.map(async (week) => {
-          const { data: workoutsData } = await supabase
+        weeksData.map(async (week: any) => {
+          const { data: workoutsData } = (await supabase
             .from('workouts')
             .select('*')
             .eq('program_week_id', week.id)
-            .order('day_of_week')
-          
+            .order('day_of_week')) as { data: any[] | null; error: any }
+
           return { ...week, workouts: workoutsData || [] }
         })
       )
@@ -90,7 +108,7 @@ async function initializeWeeks() {
   
   try {
     const weekInserts = []
-    for (let i = 1; i <= program.value.duration_weeks; i++) {
+    for (let i = 1; i <= (program.value.duration_weeks ?? 0); i++) {
       weekInserts.push({
         program_id: programId.value,
         week_number: i,
@@ -98,14 +116,14 @@ async function initializeWeeks() {
       })
     }
     
-    const { data, error } = await supabase
-      .from('program_weeks')
+    const { data, error } = (await (supabase
+      .from('program_weeks') as any)
       .insert(weekInserts)
-      .select()
-    
+      .select()) as { data: any[] | null; error: any }
+
     if (error) throw error
-    
-    weeks.value = (data || []).map(week => ({ ...week, workouts: [] }))
+
+    weeks.value = (data || []).map((week: any) => ({ ...week, workouts: [] }))
   } catch (e) {
     console.error('Error initializing weeks:', e)
   }
@@ -147,8 +165,8 @@ async function assignWorkout(workout: Workout) {
   
   try {
     // Create a copy of the workout and assign it to this week/day
-    const { data, error } = await supabase
-      .from('workouts')
+    const { data, error } = (await (supabase
+      .from('workouts') as any)
       .insert({
         coach_id: authStore.user!.id,
         program_week_id: selectedWeekId.value,
@@ -160,21 +178,21 @@ async function assignWorkout(workout: Workout) {
         is_template: false
       })
       .select()
-      .single()
-    
+      .single()) as { data: any; error: any }
+
     if (error) throw error
-    
+
     // Copy exercises from the template workout
-    const { data: exercises, error: exercisesError } = await supabase
+    const { data: exercises, error: exercisesError } = (await supabase
       .from('exercises')
       .select('*')
       .eq('workout_id', workout.id)
-      .order('order_index')
-    
+      .order('order_index')) as { data: any[] | null; error: any }
+
     if (exercisesError) throw exercisesError
-    
+
     if (exercises && exercises.length > 0) {
-      const exerciseCopies = exercises.map(ex => ({
+      const exerciseCopies = exercises.map((ex: any) => ({
         workout_id: data.id,
         name: ex.name,
         description: ex.description,
@@ -191,44 +209,56 @@ async function assignWorkout(workout: Workout) {
         notes: ex.notes,
         video_url: ex.video_url
       }))
-      
-      const { error: insertError } = await supabase
-        .from('exercises')
+
+      const { error: insertError } = await (supabase
+        .from('exercises') as any)
         .insert(exerciseCopies)
-      
+
       if (insertError) throw insertError
     }
     
     // Reload weeks
     await loadProgram()
     closeWorkoutPicker()
+    showToast('Workout assigned')
   } catch (e) {
     console.error('Error assigning workout:', e)
-    alert('Failed to assign workout')
+    showToast('Failed to assign workout', 'error')
   }
 }
 
-async function removeWorkout(workoutId: string) {
-  if (!confirm('Remove this workout from the program?')) return
-  
+function confirmRemoveWorkout(workoutId: string) {
+  workoutToRemoveId.value = workoutId
+  showRemoveConfirm.value = true
+}
+
+async function handleRemoveWorkout() {
+  if (!workoutToRemoveId.value) return
+  removingWorkout.value = true
+
   try {
     const { error } = await supabase
       .from('workouts')
       .delete()
-      .eq('id', workoutId)
+      .eq('id', workoutToRemoveId.value)
       .eq('coach_id', authStore.user!.id)
-    
+
     if (error) throw error
-    
+
+    showRemoveConfirm.value = false
+    workoutToRemoveId.value = null
     await loadProgram()
+    showToast('Workout removed')
   } catch (e) {
     console.error('Error removing workout:', e)
-    alert('Failed to remove workout')
+    showToast('Failed to remove workout', 'error')
+  } finally {
+    removingWorkout.value = false
   }
 }
 
 function getWorkoutForDay(week: ProgramWeek & { workouts?: Workout[] }, dayValue: number): Workout | undefined {
-  return week.workouts?.find(w => w.day_of_week === dayValue)
+  return week.workouts?.find((w: any) => w.day_of_week === dayValue)
 }
 
 function getDayShortLabel(dayValue: number): string {
@@ -308,7 +338,7 @@ function getDayShortLabel(dayValue: number): string {
                 {{ getWorkoutForDay(week, day.value)!.name }}
               </div>
               <button
-                @click.stop="removeWorkout(getWorkoutForDay(week, day.value)!.id)"
+                @click.stop="confirmRemoveWorkout(getWorkoutForDay(week, day.value)!.id)"
                 class="text-xs text-red-600 hover:text-red-700"
               >
                 Remove
@@ -337,6 +367,25 @@ function getDayShortLabel(dayValue: number): string {
         </p>
       </div>
     </div>
+
+    <!-- Remove Confirm Dialog -->
+    <ConfirmDialog
+      :open="showRemoveConfirm"
+      title="Remove Workout?"
+      message="Remove this workout from the program? This cannot be undone."
+      confirm-text="Remove"
+      :loading="removingWorkout"
+      @confirm="handleRemoveWorkout"
+      @cancel="showRemoveConfirm = false"
+    />
+
+    <!-- Toast -->
+    <Toast
+      :message="toastMessage"
+      :type="toastType"
+      :visible="toastVisible"
+      @close="toastVisible = false"
+    />
 
     <!-- Workout Picker Modal -->
     <div

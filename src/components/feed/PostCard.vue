@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
+import { deletePost } from '@/services/social'
 import type { PostWithAuthor } from '@/types/database'
 import MediaCarousel from './MediaCarousel.vue'
 import type { WorkoutCardData } from './MediaCarousel.vue'
@@ -53,6 +54,38 @@ const authStore = useAuthStore()
 const isLiked = ref(false)
 const likesCount = ref(props.post.likes_count)
 const isLiking = ref(false)
+
+// Check if the current user has already liked this post
+onMounted(async () => {
+  if (!authStore.user) return
+  try {
+    const { data } = await supabase
+      .from('likes')
+      .select('id')
+      .eq('user_id', authStore.user.id)
+      .eq('post_id', props.post.id)
+      .maybeSingle()
+    isLiked.value = !!data
+  } catch {
+    // Silently fail — default to not liked
+  }
+})
+
+// Post type badge config
+const postTypeBadge = computed(() => {
+  switch (props.post.post_type) {
+    case 'workout':
+      return { label: 'Workout', class: 'bg-summit-100 text-summit-800' }
+    case 'pr':
+      return { label: 'PR', class: 'bg-amber-100 text-amber-800' }
+    case 'streak_milestone':
+      return { label: 'Streak', class: 'bg-valencia-100 text-valencia-800' }
+    case 'achievement':
+      return { label: 'Achievement', class: 'bg-green-100 text-green-800' }
+    default:
+      return null
+  }
+})
 
 // Format relative time
 const timeAgo = computed(() => {
@@ -157,6 +190,26 @@ async function toggleLike() {
   }
 }
 
+// Delete post
+const showDeleteConfirm = ref(false)
+const deleting = ref(false)
+const isOwnPost = computed(() => authStore.user?.id === props.post.author_id)
+
+const emit = defineEmits<{
+  (e: 'deleted', postId: string): void
+}>()
+
+async function handleDeletePost() {
+  if (!authStore.user) return
+  deleting.value = true
+  const success = await deletePost(props.post.id, authStore.user.id)
+  if (success) {
+    showDeleteConfirm.value = false
+    emit('deleted', props.post.id)
+  }
+  deleting.value = false
+}
+
 // Navigate to profile
 function goToProfile() {
   router.push(`/profile/${props.post.author.username}`)
@@ -200,12 +253,29 @@ function goToPost() {
         </button>
       </div>
 
-      <!-- Post type badge & time -->
+      <!-- Post type badge & time & actions -->
       <div class="flex items-center gap-2 text-sm text-gray-500">
-        <span v-if="post.post_type === 'workout'" class="badge-coach">
-          Workout
+        <span
+          v-if="postTypeBadge"
+          class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+          :class="postTypeBadge.class"
+        >
+          <span v-if="post.post_type === 'pr'" class="mr-0.5">&#9733;</span>
+          <span v-if="post.post_type === 'streak_milestone'" class="mr-0.5">&#128293;</span>
+          {{ postTypeBadge.label }}
         </span>
         <span>{{ timeAgo }}</span>
+        <!-- Delete button for own posts -->
+        <button
+          v-if="isOwnPost"
+          @click.stop="showDeleteConfirm = true"
+          class="ml-1 p-1 text-gray-400 hover:text-red-500 transition-colors"
+          title="Delete post"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -287,4 +357,40 @@ function goToPost() {
       </button>
     </div>
   </article>
+
+  <!-- Delete Confirmation Modal -->
+  <Teleport to="body">
+    <div
+      v-if="showDeleteConfirm"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      @click.self="showDeleteConfirm = false"
+    >
+      <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+        <h3 class="text-lg font-semibold text-gray-900 mb-2">Delete Post?</h3>
+        <p class="text-sm text-gray-600 mb-6">
+          Are you sure you want to delete this post? This action cannot be undone.
+        </p>
+        <div class="flex gap-3">
+          <button
+            @click="showDeleteConfirm = false"
+            class="flex-1 btn-secondary"
+            :disabled="deleting"
+          >
+            Cancel
+          </button>
+          <button
+            @click="handleDeletePost"
+            class="flex-1 btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500"
+            :disabled="deleting"
+          >
+            <span v-if="deleting" class="flex items-center gap-2">
+              <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              Deleting...
+            </span>
+            <span v-else>Delete</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

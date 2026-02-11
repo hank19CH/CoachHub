@@ -6,12 +6,13 @@ import { assignmentsService } from '@/services/assignments'
 import type { Assignment } from '@/services/assignments'
 import AssignmentCard from '@/components/athlete/AssignmentCard.vue'
 import WorkoutPreviewModal from '@/components/athlete/WorkoutPreviewModal.vue'
+import ProgressStats from '@/components/athlete/ProgressStats.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 // State
-const selectedDate = ref(new Date().toISOString().split('T')[0])
+const selectedDate = ref<string>(new Date().toISOString().split('T')[0] as string as string)
 const assignments = ref<Assignment[]>([])
 const upcomingAssignments = ref<Assignment[]>([])
 const stats = ref<any>(null)
@@ -22,7 +23,7 @@ const isModalOpen = ref(false)
 
 // Computed
 const isToday = computed(() => {
-  return selectedDate.value === new Date().toISOString().split('T')[0]
+  return selectedDate.value === new Date().toISOString().split('T')[0] as string
 })
 
 const formattedDate = computed(() => {
@@ -88,17 +89,17 @@ async function loadStats() {
 function previousDay() {
   const date = new Date(selectedDate.value + 'T00:00:00')
   date.setDate(date.getDate() - 1)
-  selectedDate.value = date.toISOString().split('T')[0]
+  selectedDate.value = date.toISOString().split('T')[0] as string
 }
 
 function nextDay() {
   const date = new Date(selectedDate.value + 'T00:00:00')
   date.setDate(date.getDate() + 1)
-  selectedDate.value = date.toISOString().split('T')[0]
+  selectedDate.value = date.toISOString().split('T')[0] as string
 }
 
 function goToToday() {
-  selectedDate.value = new Date().toISOString().split('T')[0]
+  selectedDate.value = new Date().toISOString().split('T')[0] as string
 }
 
 function viewDetails(assignment: Assignment) {
@@ -146,21 +147,8 @@ onMounted(() => {
           <p class="text-gray-600 mt-1">Ready to crush today's workouts?</p>
         </div>
 
-        <!-- Stats -->
-        <div v-if="stats" class="grid grid-cols-3 gap-4 mb-6">
-          <div class="bg-summit-50 rounded-lg p-4">
-            <p class="text-sm text-summit-600 font-medium">This Week</p>
-            <p class="text-2xl font-bold text-summit-900">{{ stats.thisWeek }}</p>
-          </div>
-          <div class="bg-green-50 rounded-lg p-4">
-            <p class="text-sm text-green-600 font-medium">Completed</p>
-            <p class="text-2xl font-bold text-green-900">{{ stats.completed }}</p>
-          </div>
-          <div class="bg-valencia-50 rounded-lg p-4">
-            <p class="text-sm text-valencia-600 font-medium">Completion Rate</p>
-            <p class="text-2xl font-bold text-valencia-900">{{ stats.completionRate }}%</p>
-          </div>
-        </div>
+        <!-- Progress Stats -->
+        <ProgressStats class="mb-6" />
 
         <!-- Date Navigation -->
         <div class="flex items-center gap-3">

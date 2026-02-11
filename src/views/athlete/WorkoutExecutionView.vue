@@ -75,8 +75,8 @@ onMounted(async () => {
 
   try {
     // Fetch today's assignments and find the matching one
-    const today = new Date().toISOString().split('T')[0]
-    const assignments = await assignmentsService.fetchAssignmentsForDate(authStore.user.id, today)
+    const today = new Date().toISOString().split('T')[0] as string
+    const assignments = await assignmentsService.fetchAssignmentsForDate(authStore.user!.id, today)
 
     const found = assignments.find((a: Assignment) => a.id === assignmentId)
     if (!found) {
@@ -87,8 +87,8 @@ onMounted(async () => {
       tomorrow.setDate(tomorrow.getDate() + 1)
 
       const [yesterdayAssignments, tomorrowAssignments] = await Promise.all([
-        assignmentsService.fetchAssignmentsForDate(authStore.user.id, yesterday.toISOString().split('T')[0]),
-        assignmentsService.fetchAssignmentsForDate(authStore.user.id, tomorrow.toISOString().split('T')[0])
+        assignmentsService.fetchAssignmentsForDate(authStore.user!.id, yesterday.toISOString().split('T')[0] as string),
+        assignmentsService.fetchAssignmentsForDate(authStore.user!.id, tomorrow.toISOString().split('T')[0] as string)
       ])
 
       const foundAlt = [...yesterdayAssignments, ...tomorrowAssignments]

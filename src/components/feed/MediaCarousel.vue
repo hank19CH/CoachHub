@@ -61,11 +61,11 @@ let touchStartX = 0
 let touchEndX = 0
 
 function handleTouchStart(e: TouchEvent) {
-  touchStartX = e.changedTouches[0].screenX
+  touchStartX = e.changedTouches[0]?.screenX ?? 0
 }
 
 function handleTouchEnd(e: TouchEvent) {
-  touchEndX = e.changedTouches[0].screenX
+  touchEndX = e.changedTouches[0]?.screenX ?? 0
   handleSwipe()
 }
 

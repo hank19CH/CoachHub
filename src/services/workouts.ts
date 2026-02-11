@@ -62,7 +62,7 @@ export const workoutsService = {
       query = query.eq('coach_id', coachId)
     }
 
-    const { data, error } = await query.single()
+    const { data, error } = (await query.single()) as { data: any; error: any }
 
     if (error) {
       console.error('Error fetching workout:', error)
@@ -70,7 +70,7 @@ export const workoutsService = {
     }
 
     // Sort exercises by order_index
-    if (data.exercises) {
+    if (data?.exercises) {
       data.exercises.sort((a: Exercise, b: Exercise) => a.order_index - b.order_index)
     }
 
@@ -100,11 +100,11 @@ export const workoutsService = {
    * Create a new workout
    */
   async createWorkout(workout: WorkoutInsert): Promise<Workout> {
-    const { data, error } = await supabase
-      .from('workouts')
+    const { data, error } = (await (supabase
+      .from('workouts') as any)
       .insert(workout)
       .select()
-      .single()
+      .single()) as { data: any; error: any }
 
     if (error) {
       console.error('Error creating workout:', error)
@@ -118,8 +118,8 @@ export const workoutsService = {
    * Update an existing workout. Pass coachId to verify ownership.
    */
   async updateWorkout(workoutId: string, updates: WorkoutUpdate, coachId?: string): Promise<Workout> {
-    let query = supabase
-      .from('workouts')
+    let query = (supabase
+      .from('workouts') as any)
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', workoutId)
 
@@ -177,8 +177,8 @@ export const workoutsService = {
     const original = await workoutsService.getWorkoutById(workoutId, coachId)
 
     // Create the new workout
-    const { data: newWorkout, error: workoutError } = await supabase
-      .from('workouts')
+    const { data: newWorkout, error: workoutError } = (await (supabase
+      .from('workouts') as any)
       .insert({
         coach_id: coachId,
         name: `${original.name} (Copy)`,
@@ -188,7 +188,7 @@ export const workoutsService = {
         is_template: original.is_template,
       })
       .select()
-      .single()
+      .single()) as { data: any; error: any }
 
     if (workoutError || !newWorkout) {
       console.error('Error duplicating workout:', workoutError)
@@ -215,8 +215,8 @@ export const workoutsService = {
         video_url: ex.video_url,
       }))
 
-      const { error: exerciseError } = await supabase
-        .from('exercises')
+      const { error: exerciseError } = await (supabase
+        .from('exercises') as any)
         .insert(newExercises)
 
       if (exerciseError) {

@@ -3,7 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
-import type { Workout, Exercise } from '@/types/database'
+import type { Workout, Exercise, FavoriteExercise } from '@/types/database'
+import { trackEvent } from '@/utils/analytics'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -12,9 +15,27 @@ const authStore = useAuthStore()
 // State
 const workout = ref<Workout | null>(null)
 const exercises = ref<Exercise[]>([])
+const favorites = ref<FavoriteExercise[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const showExerciseModal = ref(false)
+const showFavoritesPanel = ref(false)
+
+// Confirm dialog state
+const showDeleteConfirm = ref(false)
+const exerciseToDeleteId = ref<string | null>(null)
+const deletingExercise = ref(false)
+
+// Toast state
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 // Exercise form state
 const exerciseForm = ref({
@@ -39,9 +60,76 @@ const errorMessage = ref('')
 const workoutId = computed(() => route.params.id as string)
 
 onMounted(async () => {
-  await loadWorkout()
+  await Promise.all([loadWorkout(), loadFavorites()])
   await loadExercises()
 })
+
+async function loadFavorites() {
+  if (!authStore.user) return
+  try {
+    const { data } = await supabase
+      .from('favorite_exercises')
+      .select('*')
+      .eq('coach_id', authStore.user.id)
+      .order('exercise_name')
+    favorites.value = data || []
+  } catch (e) {
+    console.error('Error loading favorites:', e)
+  }
+}
+
+function isFavorite(name: string): boolean {
+  return favorites.value.some(f => f.exercise_name.toLowerCase() === name.toLowerCase())
+}
+
+async function toggleFavorite(exercise: Exercise) {
+  if (!authStore.user) return
+
+  const existing = favorites.value.find(
+    f => f.exercise_name.toLowerCase() === exercise.name.toLowerCase()
+  )
+
+  if (existing) {
+    await supabase.from('favorite_exercises').delete().eq('id', existing.id)
+    favorites.value = favorites.value.filter(f => f.id !== existing.id)
+  } else {
+    const defaults: Record<string, any> = {}
+    if (exercise.sets) defaults.sets = exercise.sets
+    if (exercise.reps) defaults.reps = exercise.reps
+    if (exercise.weight_kg) defaults.weight_kg = exercise.weight_kg
+    if (exercise.rest_seconds) defaults.rest_seconds = exercise.rest_seconds
+
+    const { data } = (await (supabase
+      .from('favorite_exercises') as any)
+      .insert({
+        coach_id: authStore.user.id,
+        exercise_name: exercise.name,
+        exercise_defaults: defaults,
+      })
+      .select()
+      .single()) as { data: any }
+
+    if (data) {
+      favorites.value.push(data)
+      trackEvent('exercise_favorited', { exercise_name: exercise.name })
+    }
+  }
+}
+
+function loadFromFavorite(fav: FavoriteExercise) {
+  resetExerciseForm()
+  exerciseForm.value.name = fav.exercise_name
+  if (fav.exercise_defaults) {
+    const d = fav.exercise_defaults
+    if (d.sets) exerciseForm.value.sets = d.sets
+    if (d.reps) exerciseForm.value.reps = d.reps
+    if (d.weight_kg) exerciseForm.value.weight_kg = d.weight_kg
+    if (d.rest_seconds) exerciseForm.value.rest_seconds = d.rest_seconds
+  }
+  editingExerciseId.value = null
+  showFavoritesPanel.value = false
+  showExerciseModal.value = true
+}
 
 async function loadWorkout() {
   if (!authStore.user) return
@@ -139,8 +227,8 @@ async function saveExercise() {
     
     if (editingExerciseId.value) {
       // Update existing exercise
-      const { error } = await supabase
-        .from('exercises')
+      const { error } = (await (supabase
+        .from('exercises') as any)
         .update({
           name: exerciseForm.value.name,
           description: exerciseForm.value.description || null,
@@ -156,13 +244,13 @@ async function saveExercise() {
           notes: exerciseForm.value.notes || null,
           video_url: exerciseForm.value.video_url || null
         })
-        .eq('id', editingExerciseId.value)
-      
+        .eq('id', editingExerciseId.value)) as { error: any }
+
       if (error) throw error
     } else {
       // Create new exercise
-      const { error } = await supabase
-        .from('exercises')
+      const { error } = (await (supabase
+        .from('exercises') as any)
         .insert({
           workout_id: workoutId.value,
           name: exerciseForm.value.name,
@@ -179,11 +267,11 @@ async function saveExercise() {
           rest_seconds: exerciseForm.value.rest_seconds,
           notes: exerciseForm.value.notes || null,
           video_url: exerciseForm.value.video_url || null
-        })
-      
+        })) as { error: any }
+
       if (error) throw error
     }
-    
+
     await loadExercises()
     closeExerciseModal()
   } catch (e) {
@@ -194,20 +282,31 @@ async function saveExercise() {
   }
 }
 
-async function deleteExercise(exerciseId: string) {
-  if (!confirm('Delete this exercise?')) return
-  
+function confirmDeleteExercise(exerciseId: string) {
+  exerciseToDeleteId.value = exerciseId
+  showDeleteConfirm.value = true
+}
+
+async function handleDeleteExercise() {
+  if (!exerciseToDeleteId.value) return
+  deletingExercise.value = true
+
   try {
     const { error } = await supabase
       .from('exercises')
       .delete()
-      .eq('id', exerciseId)
-    
+      .eq('id', exerciseToDeleteId.value)
+
     if (error) throw error
+    showDeleteConfirm.value = false
+    exerciseToDeleteId.value = null
     await loadExercises()
+    showToast('Exercise deleted')
   } catch (e) {
     console.error('Error deleting exercise:', e)
-    alert('Failed to delete exercise')
+    showToast('Failed to delete exercise', 'error')
+  } finally {
+    deletingExercise.value = false
   }
 }
 
@@ -327,6 +426,21 @@ function formatTime(seconds: number | null): string {
             <!-- Actions -->
             <div class="flex gap-1 flex-shrink-0">
               <button
+                @click="toggleFavorite(exercise)"
+                class="p-2 hover:bg-yellow-50 rounded-lg"
+                :title="isFavorite(exercise.name) ? 'Remove from favorites' : 'Add to favorites'"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="w-5 h-5"
+                  :class="isFavorite(exercise.name) ? 'text-yellow-400 fill-current' : 'text-gray-400'"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+              </button>
+              <button
                 @click="editExercise(exercise)"
                 class="p-2 hover:bg-gray-100 rounded-lg"
                 title="Edit"
@@ -336,7 +450,7 @@ function formatTime(seconds: number | null): string {
                 </svg>
               </button>
               <button
-                @click="deleteExercise(exercise.id)"
+                @click="confirmDeleteExercise(exercise.id)"
                 class="p-2 hover:bg-red-100 rounded-lg"
                 title="Delete"
               >
@@ -348,18 +462,75 @@ function formatTime(seconds: number | null): string {
           </div>
         </div>
 
-        <!-- Add another exercise button -->
-        <button
-          @click="openExerciseModal"
-          class="w-full p-4 border-2 border-dashed border-gray-300 rounded-xl hover:border-summit-500 hover:bg-summit-50 transition-colors text-gray-600 hover:text-summit-700 font-medium"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-          Add Exercise
-        </button>
+        <!-- Favorites panel -->
+        <div v-if="showFavoritesPanel && favorites.length > 0" class="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-900 text-sm">Favorite Exercises</h3>
+            <button @click="showFavoritesPanel = false" class="text-gray-400 hover:text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="space-y-2">
+            <button
+              v-for="fav in favorites"
+              :key="fav.id"
+              @click="loadFromFavorite(fav)"
+              class="w-full text-left px-3 py-2 bg-white rounded-lg hover:bg-yellow-100 transition-colors flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-yellow-400 fill-current flex-shrink-0" viewBox="0 0 20 20">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+              </svg>
+              <span class="font-medium text-sm text-gray-900">{{ fav.exercise_name }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Add buttons -->
+        <div class="flex gap-3">
+          <button
+            @click="openExerciseModal"
+            class="flex-1 p-4 border-2 border-dashed border-gray-300 rounded-xl hover:border-summit-500 hover:bg-summit-50 transition-colors text-gray-600 hover:text-summit-700 font-medium"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add Exercise
+          </button>
+          <button
+            v-if="favorites.length > 0"
+            @click="showFavoritesPanel = !showFavoritesPanel"
+            class="p-4 border-2 border-dashed border-yellow-300 rounded-xl hover:border-yellow-500 hover:bg-yellow-50 transition-colors text-yellow-600 hover:text-yellow-700 font-medium"
+            title="Add from favorites"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1 fill-current" viewBox="0 0 20 20">
+              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+            </svg>
+            Favorites
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Delete Confirm Dialog -->
+    <ConfirmDialog
+      :open="showDeleteConfirm"
+      title="Delete Exercise?"
+      message="Are you sure you want to delete this exercise? This cannot be undone."
+      confirm-text="Delete"
+      :loading="deletingExercise"
+      @confirm="handleDeleteExercise"
+      @cancel="showDeleteConfirm = false"
+    />
+
+    <!-- Toast -->
+    <Toast
+      :message="toastMessage"
+      :type="toastType"
+      :visible="toastVisible"
+      @close="toastVisible = false"
+    />
 
     <!-- Exercise Modal -->
     <div

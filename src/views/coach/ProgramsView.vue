@@ -4,15 +4,33 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { Program } from '@/types/database'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 // State
-const programs = ref<Program[]>([])
+const programs = ref<(Program & { workout_count?: number })[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
 const showCreateModal = ref(false)
+
+// Confirm dialog state
+const showDeleteConfirm = ref(false)
+const programToDelete = ref<Program | null>(null)
+const deleting = ref(false)
+
+// Toast state
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 // Program form state
 const programForm = ref({
@@ -31,7 +49,7 @@ const filteredPrograms = computed(() => {
   if (!searchQuery.value) return programs.value
   
   const query = searchQuery.value.toLowerCase()
-  return programs.value.filter(program => 
+  return programs.value.filter((program: any) =>
     program.name.toLowerCase().includes(query) ||
     (program.description && program.description.toLowerCase().includes(query))
   )
@@ -49,15 +67,21 @@ async function loadPrograms() {
   try {
     loading.value = true
     
-    const { data, error } = await supabase
+    const { data, error } = (await supabase
       .from('programs')
-      .select('*')
+      .select('*, program_weeks(id, workouts:workouts(id))')
       .eq('coach_id', authStore.user.id)
-      .order('created_at', { ascending: false })
-    
+      .order('created_at', { ascending: false })) as { data: any[] | null; error: any }
+
     if (error) throw error
-    
-    programs.value = data || []
+
+    // Count workouts across all weeks
+    programs.value = (data || []).map((p: any) => {
+      const weeks = p.program_weeks || []
+      const workoutCount = weeks.reduce((sum: number, w: any) => sum + (w.workouts?.length || 0), 0)
+      const { program_weeks, ...rest } = p
+      return { ...rest, workout_count: workoutCount }
+    })
   } catch (e: any) {
     console.error('Error loading programs:', e?.message || e?.code || JSON.stringify(e))
   } finally {
@@ -91,8 +115,8 @@ async function createProgram() {
     errorMessage.value = ''
     
     // Create the program
-    const { data: program, error } = await supabase
-      .from('programs')
+    const { data: program, error } = (await (supabase
+      .from('programs') as any)
       .insert({
         coach_id: authStore.user.id,
         name: programForm.value.name,
@@ -104,10 +128,10 @@ async function createProgram() {
         is_published: false
       })
       .select()
-      .single()
-    
+      .single()) as { data: any; error: any }
+
     if (error) throw error
-    
+
     // Navigate to program builder to add weeks/workouts
     router.push(`/programs/${program.id}/edit`)
   } catch (e: any) {
@@ -122,28 +146,34 @@ function editProgram(programId: string) {
   router.push(`/programs/${programId}/edit`)
 }
 
-async function deleteProgram(program: Program) {
-  if (!authStore.user) return
-  if (!confirm(`Delete "${program.name}"? This will also delete all weeks and workouts in this program. This cannot be undone.`)) return
+function confirmDeleteProgram(program: Program) {
+  programToDelete.value = program
+  showDeleteConfirm.value = true
+}
+
+async function deleteProgram() {
+  const program = programToDelete.value
+  if (!authStore.user || !program) return
+  deleting.value = true
 
   try {
     // Fetch weeks to get workout IDs
-    const { data: weeks } = await supabase
+    const { data: weeks } = (await supabase
       .from('program_weeks')
       .select('id')
-      .eq('program_id', program.id)
+      .eq('program_id', program.id)) as { data: any[] | null; error: any }
 
     if (weeks && weeks.length > 0) {
-      const weekIds = weeks.map(w => w.id)
+      const weekIds = weeks.map((w: any) => w.id)
 
       // Get workouts in those weeks
-      const { data: workouts } = await supabase
+      const { data: workouts } = (await supabase
         .from('workouts')
         .select('id')
-        .in('program_week_id', weekIds)
+        .in('program_week_id', weekIds)) as { data: any[] | null; error: any }
 
       if (workouts && workouts.length > 0) {
-        const workoutIds = workouts.map(w => w.id)
+        const workoutIds = workouts.map((w: any) => w.id)
 
         // Delete exercises for those workouts
         await supabase
@@ -175,10 +205,15 @@ async function deleteProgram(program: Program) {
 
     if (error) throw error
 
+    showDeleteConfirm.value = false
+    programToDelete.value = null
     await loadPrograms()
+    showToast('Program deleted')
   } catch (e) {
     console.error('Error deleting program:', e)
-    alert('Failed to delete program')
+    showToast('Failed to delete program', 'error')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -187,8 +222,8 @@ async function duplicateProgram(program: Program) {
   
   try {
     // Create duplicate program
-    const { data: newProgram, error: programError } = await supabase
-      .from('programs')
+    const { data: newProgram, error: programError } = (await (supabase
+      .from('programs') as any)
       .insert({
         coach_id: authStore.user.id,
         name: `${program.name} (Copy)`,
@@ -200,25 +235,25 @@ async function duplicateProgram(program: Program) {
         is_published: false
       })
       .select()
-      .single()
-    
+      .single()) as { data: any; error: any }
+
     if (programError) throw programError
-    
+
     // Fetch weeks from original program
-    const { data: weeks, error: weeksError } = await supabase
+    const { data: weeks, error: weeksError } = (await supabase
       .from('program_weeks')
       .select('*')
       .eq('program_id', program.id)
-      .order('week_number')
-    
+      .order('week_number')) as { data: any[] | null; error: any }
+
     if (weeksError) throw weeksError
-    
+
     // Copy weeks and workouts
     if (weeks && weeks.length > 0) {
       for (const week of weeks) {
         // Create new week
-        const { data: newWeek, error: weekError } = await supabase
-          .from('program_weeks')
+        const { data: newWeek, error: weekError } = (await (supabase
+          .from('program_weeks') as any)
           .insert({
             program_id: newProgram.id,
             week_number: week.week_number,
@@ -226,23 +261,23 @@ async function duplicateProgram(program: Program) {
             notes: week.notes
           })
           .select()
-          .single()
-        
+          .single()) as { data: any; error: any }
+
         if (weekError) throw weekError
         
         // Get workouts from this week
-        const { data: workouts, error: workoutsError } = await supabase
+        const { data: workouts, error: workoutsError } = (await supabase
           .from('workouts')
           .select('*, exercises(*)')
-          .eq('program_week_id', week.id)
-        
+          .eq('program_week_id', week.id)) as { data: any[] | null; error: any }
+
         if (workoutsError) throw workoutsError
-        
+
         // Copy workouts
         if (workouts) {
           for (const workout of workouts) {
-            const { data: newWorkout, error: workoutError } = await supabase
-              .from('workouts')
+            const { data: newWorkout, error: workoutError } = (await (supabase
+              .from('workouts') as any)
               .insert({
                 coach_id: authStore.user.id,
                 program_week_id: newWeek.id,
@@ -254,10 +289,10 @@ async function duplicateProgram(program: Program) {
                 is_template: workout.is_template
               })
               .select()
-              .single()
-            
+              .single()) as { data: any; error: any }
+
             if (workoutError) throw workoutError
-            
+
             // Copy exercises
             if (workout.exercises && workout.exercises.length > 0) {
               const exerciseCopies = workout.exercises.map((ex: any) => ({
@@ -277,24 +312,24 @@ async function duplicateProgram(program: Program) {
                 notes: ex.notes,
                 video_url: ex.video_url
               }))
-              
-              const { error: exercisesError } = await supabase
-                .from('exercises')
+
+              const { error: exercisesError } = await (supabase
+                .from('exercises') as any)
                 .insert(exerciseCopies)
-              
+
               if (exercisesError) throw exercisesError
             }
           }
         }
       }
     }
-    
+
     // Reload programs list
     await loadPrograms()
-    alert(`Program duplicated! "${newProgram.name}" has been created.`)
+    showToast(`"${newProgram.name}" duplicated successfully`)
   } catch (e) {
     console.error('Error duplicating program:', e)
-    alert('Failed to duplicate program')
+    showToast('Failed to duplicate program', 'error')
   }
 }
 </script>
@@ -393,6 +428,12 @@ async function duplicateProgram(program: Program) {
                 </svg>
                 {{ program.duration_weeks }} week{{ program.duration_weeks !== 1 ? 's' : '' }}
               </span>
+              <span v-if="program.workout_count" class="inline-flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                {{ program.workout_count }} workout{{ program.workout_count !== 1 ? 's' : '' }}
+              </span>
               <span v-if="program.difficulty" class="inline-flex items-center gap-1 capitalize">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -423,7 +464,7 @@ async function duplicateProgram(program: Program) {
               </svg>
             </button>
             <button
-              @click.stop="deleteProgram(program)"
+              @click.stop="confirmDeleteProgram(program)"
               class="p-2 hover:bg-red-50 rounded-lg transition-colors"
               title="Delete program"
             >
@@ -440,6 +481,25 @@ async function duplicateProgram(program: Program) {
         <p>No programs found matching "{{ searchQuery }}"</p>
       </div>
     </div>
+
+    <!-- Delete Confirm Dialog -->
+    <ConfirmDialog
+      :open="showDeleteConfirm"
+      title="Delete Program?"
+      :message="`Delete &quot;${programToDelete?.name}&quot;? This will also delete all weeks and workouts. This cannot be undone.`"
+      confirm-text="Delete"
+      :loading="deleting"
+      @confirm="deleteProgram"
+      @cancel="showDeleteConfirm = false"
+    />
+
+    <!-- Toast -->
+    <Toast
+      :message="toastMessage"
+      :type="toastType"
+      :visible="toastVisible"
+      @close="toastVisible = false"
+    />
 
     <!-- Create Program Modal -->
     <div

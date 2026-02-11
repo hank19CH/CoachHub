@@ -113,8 +113,8 @@ function parseTime(timeStr: string): number | null {
   if (!timeStr) return null
   const parts = timeStr.split(':')
   if (parts.length !== 2) return null
-  const mins = parseInt(parts[0]) || 0
-  const secs = parseInt(parts[1]) || 0
+  const mins = parseInt(parts[0] ?? '0') || 0
+  const secs = parseInt(parts[1] ?? '0') || 0
   return (mins * 60) + secs
 }
 </script>

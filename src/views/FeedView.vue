@@ -13,6 +13,7 @@ const loadingMore = ref(false)
 const error = ref<string | null>(null)
 const hasMore = ref(true)
 const PAGE_SIZE = 20
+const feedFilter = ref<'all' | 'following'>('all')
 
 onMounted(async () => {
   await fetchPosts()
@@ -23,6 +24,13 @@ onUnmounted(() => {
   window.removeEventListener('scroll', handleScroll)
 })
 
+async function switchFilter(filter: 'all' | 'following') {
+  if (feedFilter.value === filter) return
+  feedFilter.value = filter
+  hasMore.value = true
+  await fetchPosts()
+}
+
 async function fetchPosts(append = false) {
   try {
     if (!append) {
@@ -32,7 +40,7 @@ async function fetchPosts(append = false) {
 
     const offset = append ? posts.value.length : 0
 
-    const { data, error: fetchError } = await supabase
+    let query = supabase
       .from('posts')
       .select(`
         *,
@@ -55,13 +63,50 @@ async function fetchPosts(append = false) {
           )
         )
       `)
-      .eq('visibility', 'public')
+
+    if (feedFilter.value === 'following' && authStore.user) {
+      // Get following IDs first
+      const { data: follows } = await supabase
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', authStore.user.id)
+        .eq('status', 'active')
+
+      const followingIds = (follows || []).map((f: any) => f.following_id)
+      followingIds.push(authStore.user.id) // Include own posts
+
+      query = query
+        .in('author_id', followingIds)
+        .in('visibility', ['public', 'followers'])
+    } else {
+      query = query.eq('visibility', 'public')
+    }
+
+    const { data, error: fetchError } = (await query
       .order('created_at', { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1)
+      .range(offset, offset + PAGE_SIZE - 1)) as { data: any[] | null; error: any }
 
     if (fetchError) throw fetchError
 
-    const fetchedPosts = data || []
+    // Normalize relations: untyped supabase returns single FK relations as arrays
+    const fetchedPosts: any[] = (data || []).map((post: any) => {
+      const author = Array.isArray(post.author) ? post.author[0] : post.author
+      const media = post.media || []
+      let wc = Array.isArray(post.workout_completion)
+        ? post.workout_completion[0] ?? null
+        : post.workout_completion ?? null
+
+      // Normalize nested assignment/workout inside workout_completion
+      if (wc) {
+        const assignment = Array.isArray(wc.assignment) ? wc.assignment[0] ?? null : wc.assignment ?? null
+        if (assignment) {
+          assignment.workout = Array.isArray(assignment.workout) ? assignment.workout[0] ?? null : assignment.workout ?? null
+        }
+        wc = { ...wc, assignment }
+      }
+
+      return { ...post, author, media, workout_completion: wc }
+    })
 
     // For workout posts, fetch exercise results for the workout card
     const workoutPosts = fetchedPosts.filter(
@@ -71,7 +116,7 @@ async function fetchPosts(append = false) {
     if (workoutPosts.length > 0) {
       const completionIds = workoutPosts.map((p: any) => p.workout_completion.id)
 
-      const { data: exerciseResults } = await supabase
+      const { data: exerciseResults } = (await supabase
         .from('exercise_results')
         .select(`
           id,
@@ -87,10 +132,17 @@ async function fetchPosts(append = false) {
             distance_meters
           )
         `)
-        .in('completion_id', completionIds)
+        .in('completion_id', completionIds)) as { data: any[] | null; error: any }
 
       // Attach exercise results to matching posts
       if (exerciseResults) {
+        // Normalize exercise relation (may be array from untyped client)
+        for (const er of exerciseResults) {
+          if (Array.isArray(er.exercise)) {
+            er.exercise = er.exercise[0] ?? null
+          }
+        }
+
         const resultsByCompletion = new Map<string, any[]>()
         for (const er of exerciseResults) {
           const list = resultsByCompletion.get(er.completion_id) || []
@@ -135,6 +187,10 @@ async function handleRefresh() {
   await fetchPosts()
 }
 
+function handlePostDeleted(postId: string) {
+  posts.value = posts.value.filter(p => p.id !== postId)
+}
+
 function handleScroll() {
   if (loadingMore.value || !hasMore.value) return
 
@@ -150,6 +206,30 @@ function handleScroll() {
 
 <template>
   <div class="min-h-full">
+    <!-- Feed filter tabs -->
+    <div class="sticky top-0 bg-white/90 backdrop-blur-sm z-10 border-b border-gray-100">
+      <div class="flex">
+        <button
+          @click="switchFilter('all')"
+          class="flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2"
+          :class="feedFilter === 'all'
+            ? 'text-summit-800 border-summit-800'
+            : 'text-gray-500 border-transparent hover:text-gray-700'"
+        >
+          For You
+        </button>
+        <button
+          @click="switchFilter('following')"
+          class="flex-1 py-3 text-sm font-medium text-center transition-colors border-b-2"
+          :class="feedFilter === 'following'
+            ? 'text-summit-800 border-summit-800'
+            : 'text-gray-500 border-transparent hover:text-gray-700'"
+        >
+          Following
+        </button>
+      </div>
+    </div>
+
     <!-- Welcome message for empty feed -->
     <div
       v-if="!loading && posts.length === 0"
@@ -162,11 +242,21 @@ function handleScroll() {
       </div>
 
       <h2 class="font-display text-2xl font-bold text-gray-900 mb-2">
-        Welcome to CoachHub, {{ authStore.displayName }}!
+        <template v-if="feedFilter === 'following'">
+          Follow people to see their posts
+        </template>
+        <template v-else>
+          Welcome to CoachHub, {{ authStore.displayName }}!
+        </template>
       </h2>
 
       <p class="text-gray-600 mb-6 max-w-sm mx-auto">
-        Your feed is empty. Start by following coaches and athletes, or create your first post.
+        <template v-if="feedFilter === 'following'">
+          When you follow coaches and athletes, their posts will show up here.
+        </template>
+        <template v-else>
+          Your feed is empty. Start by following coaches and athletes, or create your first post.
+        </template>
       </p>
 
       <div class="flex flex-col sm:flex-row gap-3 justify-center">
@@ -219,6 +309,7 @@ function handleScroll() {
           v-for="post in posts"
           :key="post.id"
           :post="post"
+          @deleted="handlePostDeleted"
         />
       </TransitionGroup>
 

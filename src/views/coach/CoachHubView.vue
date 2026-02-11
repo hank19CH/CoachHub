@@ -36,6 +36,13 @@ const tools: ToolSection[] = [
         path: '/athletes?invite=true',
         icon: 'user-plus',
         color: 'bg-green-500'
+      },
+      {
+        name: 'Groups',
+        description: 'Organize athletes into groups',
+        path: '/coach/groups',
+        icon: 'user-group',
+        color: 'bg-purple-500'
       }
     ]
   },
@@ -55,6 +62,13 @@ const tools: ToolSection[] = [
         path: '/programs',
         icon: 'calendar',
         color: 'bg-summit-600'
+      },
+      {
+        name: 'Calendar',
+        description: 'Weekly assignment planner',
+        path: '/coach/calendar',
+        icon: 'calendar-week',
+        color: 'bg-indigo-500'
       }
     ]
   },
@@ -126,9 +140,25 @@ function navigateTo(path: string) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
 
+              <!-- Calendar Week icon -->
+              <svg v-else-if="tool.icon === 'calendar-week'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" />
+              </svg>
+
+              <!-- User Group icon -->
+              <svg v-else-if="tool.icon === 'user-group'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+
               <!-- Trending Up icon -->
               <svg v-else-if="tool.icon === 'trending-up'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+
+              <!-- Fallback icon -->
+              <svg v-else xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
 

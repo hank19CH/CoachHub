@@ -34,6 +34,19 @@ export default {
           900: '#7c2d12',
           950: '#431407',
         },
+        'valencia': {
+          50: '#fff5f5',
+          100: '#ffe3e3',
+          200: '#ffc9c9',
+          300: '#ffa3a3',
+          400: '#ff6b6b',
+          500: '#fa5252', // Primary Red-Orange
+          600: '#e03131',
+          700: '#c92a2a',
+          800: '#a61e1e',
+          900: '#862020',
+          950: '#4a0e0e',
+        },
         // Semantic colors
         'feed': {
           'bg': '#fafafa',

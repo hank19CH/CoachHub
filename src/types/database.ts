@@ -13,7 +13,7 @@ export type Json =
 
 // Enum types
 export type UserType = 'coach' | 'athlete' | 'follower'
-export type PostType = 'manual' | 'workout' | 'achievement'
+export type PostType = 'manual' | 'workout' | 'achievement' | 'pr' | 'streak_milestone'
 export type Visibility = 'public' | 'followers' | 'private'
 export type FollowStatus = 'pending' | 'active'
 export type CoachAthleteStatus = 'pending' | 'active' | 'inactive'
@@ -622,6 +622,120 @@ export interface Database {
           exercise_result_id?: string | null
         }
       }
+      user_streaks: {
+        Row: {
+          id: string
+          user_id: string
+          current_streak: number
+          longest_streak: number
+          last_workout_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          current_streak?: number
+          longest_streak?: number
+          last_workout_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          current_streak?: number
+          longest_streak?: number
+          last_workout_date?: string | null
+          updated_at?: string
+        }
+      }
+      favorite_exercises: {
+        Row: {
+          id: string
+          coach_id: string
+          exercise_name: string
+          exercise_defaults: Record<string, any>
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          exercise_name: string
+          exercise_defaults?: Record<string, any>
+          created_at?: string
+        }
+        Update: {
+          exercise_name?: string
+          exercise_defaults?: Record<string, any>
+        }
+      }
+      teams: {
+        Row: {
+          id: string
+          coach_id: string
+          name: string
+          sport_id: string | null
+          description: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          name: string
+          sport_id?: string | null
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          sport_id?: string | null
+          description?: string | null
+          updated_at?: string
+        }
+      }
+      groups: {
+        Row: {
+          id: string
+          coach_id: string
+          team_id: string | null
+          name: string
+          sport_id: string | null
+          description: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          team_id?: string | null
+          name: string
+          sport_id?: string | null
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          team_id?: string | null
+          name?: string
+          sport_id?: string | null
+          description?: string | null
+          updated_at?: string
+        }
+      }
+      group_members: {
+        Row: {
+          id: string
+          group_id: string
+          athlete_id: string
+          joined_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          athlete_id: string
+          joined_at?: string
+        }
+        Update: never
+      }
     }
   }
 }
@@ -641,6 +755,8 @@ export type Sport = Database['public']['Tables']['sports']['Row']
 export type CoachProfile = Database['public']['Tables']['coach_profiles']['Row']
 export type AthleteProfile = Database['public']['Tables']['athlete_profiles']['Row']
 
+export type Program = Database['public']['Tables']['programs']['Row']
+export type ProgramWeek = Database['public']['Tables']['program_weeks']['Row']
 export type Workout = Database['public']['Tables']['workouts']['Row']
 export type Exercise = Database['public']['Tables']['exercises']['Row']
 export type WorkoutCompletion = Database['public']['Tables']['workout_completions']['Row']
@@ -663,4 +779,25 @@ export interface WorkoutCompletionWithDetails extends WorkoutCompletion {
 
 export interface ExerciseResultWithExercise extends ExerciseResult {
   exercise: Exercise
+}
+
+export type UserStreak = Database['public']['Tables']['user_streaks']['Row']
+export type FavoriteExercise = Database['public']['Tables']['favorite_exercises']['Row']
+
+export type Team = Database['public']['Tables']['teams']['Row']
+export type TeamInsert = Database['public']['Tables']['teams']['Insert']
+export type Group = Database['public']['Tables']['groups']['Row']
+export type GroupInsert = Database['public']['Tables']['groups']['Insert']
+export type GroupMember = Database['public']['Tables']['group_members']['Row']
+
+export interface GroupWithDetails extends Group {
+  team?: Team | null
+  sport?: Sport | null
+  members?: (GroupMember & { athlete: Profile })[]
+  member_count?: number
+}
+
+export interface TeamWithGroups extends Team {
+  sport?: Sport | null
+  groups?: Group[]
 }

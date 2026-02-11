@@ -210,6 +210,108 @@ export async function createPost(
 }
 
 /**
+ * Create a PR/Personal Best auto-post
+ */
+export async function createPrPost(
+  authorId: string,
+  exerciseName: string,
+  pbType: string,
+  pbValue: number,
+  completionId?: string
+): Promise<Post | null> {
+  try {
+    const content = `New Personal Record! ${exerciseName} — ${formatPbValue(pbType, pbValue)}`
+
+    const postInsert: PostInsert = {
+      author_id: authorId,
+      content,
+      post_type: 'pr',
+      workout_completion_id: completionId ?? null,
+      visibility: 'public',
+      is_pinned: false,
+      likes_count: 0,
+      comments_count: 0,
+    }
+
+    const { data: post, error } = await supabase
+      .from('posts')
+      .insert(postInsert)
+      .select()
+      .single()
+
+    if (error || !post) {
+      console.error('Error creating PR post:', error)
+      return null
+    }
+
+    return post
+  } catch (error) {
+    console.error('Error in createPrPost:', error)
+    return null
+  }
+}
+
+/**
+ * Create a streak milestone auto-post
+ */
+export async function createStreakPost(
+  authorId: string,
+  streakCount: number
+): Promise<Post | null> {
+  try {
+    const content = `${streakCount}-day workout streak! Consistency is key.`
+
+    const postInsert: PostInsert = {
+      author_id: authorId,
+      content,
+      post_type: 'streak_milestone',
+      visibility: 'public',
+      is_pinned: false,
+      likes_count: 0,
+      comments_count: 0,
+    }
+
+    const { data: post, error } = await supabase
+      .from('posts')
+      .insert(postInsert)
+      .select()
+      .single()
+
+    if (error || !post) {
+      console.error('Error creating streak post:', error)
+      return null
+    }
+
+    return post
+  } catch (error) {
+    console.error('Error in createStreakPost:', error)
+    return null
+  }
+}
+
+/** Format PB value for display */
+function formatPbValue(pbType: string, value: number): string {
+  switch (pbType) {
+    case 'weight':
+      return `${value}kg`
+    case 'reps':
+      return `${value} reps`
+    case 'time': {
+      const mins = Math.floor(value / 60)
+      const secs = value % 60
+      return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+    }
+    case 'distance':
+      return value >= 1000 ? `${(value / 1000).toFixed(1)}km` : `${value}m`
+    default:
+      return `${value}`
+  }
+}
+
+/** Streak milestones that trigger auto-posts */
+export const STREAK_MILESTONES = [3, 5, 7, 10, 14, 21, 30, 50, 75, 100, 150, 200, 365]
+
+/**
  * Fetch feed posts with workout data
  */
 export async function getFeedPosts(limit = 25, offset = 0) {

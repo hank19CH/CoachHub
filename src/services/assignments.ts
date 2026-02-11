@@ -1,5 +1,8 @@
 import { supabase } from '@/lib/supabase'
 import type { Database } from '@/types/database'
+import { updateStreak } from '@/utils/streaks'
+import { createPrPost, createStreakPost, STREAK_MILESTONES } from '@/services/posts'
+import { getStreak } from '@/utils/streaks'
 
 type WorkoutAssignment = Database['public']['Tables']['workout_assignments']['Row']
 type WorkoutAssignmentInsert = Database['public']['Tables']['workout_assignments']['Insert']
@@ -133,6 +136,19 @@ export async function completeWorkout(
       await updatePersonalBests(athleteId, pbResults, completion.id)
     }
 
+    // 5. Update workout streak
+    await updateStreak(athleteId)
+
+    // 6. Check for streak milestones and auto-post
+    try {
+      const streak = await getStreak(athleteId)
+      if (streak && STREAK_MILESTONES.includes(streak.current_streak)) {
+        await createStreakPost(athleteId, streak.current_streak)
+      }
+    } catch {
+      // Don't block completion on streak post failure
+    }
+
     return { success: true, completionId: completion.id }
   } catch (error: any) {
     console.error('Error completing workout:', error)
@@ -190,6 +206,9 @@ async function updatePersonalBests(
           }, {
             onConflict: 'athlete_id,exercise_name,pb_type'
           })
+
+        // Auto-post PR achievement
+        await createPrPost(athleteId, exercise.name, pbType, value, completionId)
       }
     }
   } catch (error) {
@@ -480,7 +499,7 @@ export const assignmentsService = {
       return []
     }
 
-    return (data || []) as Assignment[]
+    return (data || []) as unknown as Assignment[]
   },
 
   /**

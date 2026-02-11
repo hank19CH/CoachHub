@@ -49,8 +49,8 @@ async function fetchCompliance() {
       athleteId.value,
       authStore.user!.id,
       {
-        start: startDate.toISOString().split('T')[0],
-        end: endDate.toISOString().split('T')[0]
+        start: startDate.toISOString().split('T')[0] as string,
+        end: endDate.toISOString().split('T')[0] as string
       }
     )
     compliance.value = data

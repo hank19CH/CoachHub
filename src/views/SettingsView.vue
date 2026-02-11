@@ -38,6 +38,7 @@ const showSportsModal = ref(false)
 
 // Specialties input
 const specialtyInput = ref('')
+const avatarInput = ref<HTMLInputElement | null>(null)
 
 const initials = computed(() => {
   if (!displayName.value) return authStore.profile?.display_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -67,21 +68,21 @@ async function loadProfile() {
   // Load coach-specific data if user is a coach
   if (authStore.isCoach) {
     try {
-      const { data, error } = await supabase
+      const { data, error } = (await supabase
         .from('coach_profiles')
         .select('*')
         .eq('id', authStore.user!.id)
-        .single()
+        .single()) as { data: CoachProfile | null; error: any }
 
       if (error) throw error
-      
+
       coachProfile.value = data
-      qualifications.value = data.qualifications || ''
-      experienceYears.value = data.experience_years
-      location.value = data.location || ''
-      websiteUrl.value = data.website_url || ''
-      specialties.value = data.specialties || []
-      acceptsAthletes.value = data.accepts_athletes
+      qualifications.value = data?.qualifications || ''
+      experienceYears.value = data?.experience_years ?? null
+      location.value = data?.location || ''
+      websiteUrl.value = data?.website_url || ''
+      specialties.value = data?.specialties || []
+      acceptsAthletes.value = data?.accepts_athletes ?? true
     } catch (e) {
       console.error('Error loading coach profile:', e)
     }
@@ -201,8 +202,8 @@ async function handleSave() {
     }
 
     // Update basic profile
-    const { error: profileError } = await supabase
-      .from('profiles')
+    const { error: profileError } = (await (supabase
+      .from('profiles') as any)
       .update({
         display_name: displayName.value,
         bio: bio.value || null,
@@ -211,14 +212,14 @@ async function handleSave() {
         avatar_url: avatarUrl,
         updated_at: new Date().toISOString()
       })
-      .eq('id', authStore.user.id)
+      .eq('id', authStore.user.id)) as { error: any }
 
     if (profileError) throw profileError
 
     // Update coach profile if user is a coach
     if (authStore.isCoach) {
-      const { error: coachError } = await supabase
-        .from('coach_profiles')
+      const { error: coachError } = (await (supabase
+        .from('coach_profiles') as any)
         .update({
           qualifications: qualifications.value || null,
           experience_years: experienceYears.value,
@@ -227,7 +228,7 @@ async function handleSave() {
           specialties: specialties.value,
           accepts_athletes: acceptsAthletes.value
         })
-        .eq('id', authStore.user.id)
+        .eq('id', authStore.user.id)) as { error: any }
 
       if (coachError) throw coachError
     }
@@ -320,7 +321,7 @@ async function handleSignOut() {
             </div>
             <button
               v-if="isEditing"
-              @click="$refs.avatarInput.click()"
+              @click="avatarInput?.click()"
               class="absolute bottom-0 right-0 w-7 h-7 bg-summit-700 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-summit-800 transition-colors"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
