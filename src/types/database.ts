@@ -22,6 +22,7 @@ export type AssignmentStatus = 'pending' | 'completed' | 'skipped'
 export type DifficultyLevel = 'beginner' | 'intermediate' | 'advanced'
 export type PbType = 'weight' | 'reps' | 'time' | 'distance'
 export type MediaType = 'image' | 'video' | 'workout_card'
+export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement'
 
 // Share settings for workout posts
 export interface ShareSettings {
@@ -735,6 +736,37 @@ export interface Database {
           joined_at?: string
         }
         Update: never
+      }
+      notifications: {
+        Row: {
+          id: string
+          user_id: string
+          actor_id: string | null
+          type: string
+          entity_type: string | null
+          entity_id: string | null
+          title: string
+          message: string | null
+          action_url: string | null
+          is_read: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          actor_id?: string | null
+          type: string
+          entity_type?: string | null
+          entity_id?: string | null
+          title: string
+          message?: string | null
+          action_url?: string | null
+          is_read?: boolean
+          created_at?: string
+        }
+        Update: {
+          is_read?: boolean
+        }
       }
     }
   }

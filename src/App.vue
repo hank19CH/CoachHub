@@ -1,13 +1,33 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
 
 onMounted(() => {
   authStore.initialize()
+})
+
+// Initialize notifications when user is authenticated
+watch(
+  () => authStore.user,
+  (user) => {
+    if (user) {
+      notificationsStore.fetchNotifications()
+      notificationsStore.subscribeToNotifications(user.id)
+    } else {
+      notificationsStore.$reset()
+    }
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  notificationsStore.unsubscribeFromNotifications()
 })
 </script>
 

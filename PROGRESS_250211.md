@@ -1,6 +1,6 @@
 # Vumation (CoachHub) - Project Progress Tracker
-**Date**: 2025-02-11
-**Overall Completion**: ~55%
+**Date**: 2025-02-11 (Updated: 2026-02-12)
+**Overall Completion**: ~62%
 
 ---
 
@@ -16,7 +16,8 @@
 | c05212b | Sprint 6 - Workout social sharing with media upload |
 | 9dfcded | Fix - Create social post in bottom nav fully functional |
 | afd3128 | AI Codebase cleanup and minor UI/UX fixes |
-| *(uncommitted)* | Sprint 7 work - Groups/Teams, Calendar, UI components, type/service updates |
+| 1a67d26 | Sprint 7 progress - Groups/Teams, Calendar, Social components |
+| *(uncommitted)* | Sprint 8 - Full notifications system (DB triggers, real-time store, UI) |
 
 ---
 
@@ -81,7 +82,7 @@
 - [x] Public profile view (/@username)
 - [x] Share workout with configurable options (duration, RPE, exercises, PBs)
 
-### Groups & Teams (Sprint 7 - in progress)
+### Groups & Teams (Sprint 7)
 - [x] Groups service (CRUD, members, program assignment)
 - [x] Groups view (coach)
 - [x] Group detail view (coach)
@@ -89,6 +90,25 @@
 - [x] Team detail view (athlete)
 - [x] RLS policies with SECURITY DEFINER helpers
 - [x] Group member management
+
+### Notifications System (Sprint 8)
+- [x] Notifications table with indexes (user+created_at, user+unread, entity)
+- [x] RLS policies (view/update/delete own, system insert)
+- [x] Realtime enabled (supabase_realtime publication)
+- [x] DB trigger: Like notifications (notify post author)
+- [x] DB trigger: Comment notifications (notify post author)
+- [x] DB trigger: Follow notifications (active status only)
+- [x] DB trigger: Workout assignment notifications (notify athlete)
+- [x] DB trigger: Workout completion notifications (notify coach, PB highlight)
+- [x] DB trigger: Personal best notifications (notify all active coaches)
+- [x] Self-notify prevention (create_notification helper skips actor == recipient)
+- [x] Pinia notifications store (fetch, mark read, mark all read, delete)
+- [x] Real-time subscription (new notifications appear instantly)
+- [x] NotificationItem component (type-specific icons & colors)
+- [x] NotificationsView with All/Unread tabs
+- [x] Unread badge on BottomNav bell icon (athletes)
+- [x] Unread badge on TopHeader bell icon (tablet/desktop)
+- [x] Auto-initialization on auth (App.vue watcher)
 
 ### UI Components
 - [x] ConfirmDialog (replaces native confirm)
@@ -104,58 +124,32 @@
 
 ---
 
-## Uncommitted Work (Current Session)
-These files are modified but not yet committed (since `afd3128`):
+## Uncommitted Work (Sprint 8)
+These files are modified but not yet committed (since `1a67d26`):
 
-### Source Changes
-| File | Type | Description |
-|------|------|-------------|
-| src/router/index.ts | Modified | New routes (Calendar, Groups, Teams, PublicProfile) |
-| src/types/database.ts | Modified | Added types for groups, teams, streaks, social tables |
-| src/services/assignments.ts | Modified | Updates to assignment/completion logic |
-| src/services/posts.ts | Modified | Social post improvements |
-| src/services/workouts.ts | Modified | Workout service updates |
-| src/stores/auth.ts | Modified | Auth store updates |
-| src/lib/supabase.ts | Modified | Supabase client changes |
-| src/views/ProfileView.vue | Modified | Profile updates |
-| src/views/athlete/AthleteHubView.vue | Modified | Athlete hub updates |
-| src/views/coach/WorkoutBuilderView.vue | Modified | Workout builder fixes |
-| src/components/AssignWorkoutModal.vue | Modified | Assignment modal updates |
-| src/components/athlete/ExerciseLogger.vue | Modified | Exercise logging fixes |
-| src/components/athlete/MediaUploadZone.vue | Modified | Media upload improvements |
-| src/components/feed/MediaCarousel.vue | Modified | Carousel fixes |
-| src/components/feed/PostCard.vue | Modified | Post card updates |
-| tailwind.config.js | Modified | Tailwind config updates |
-
-### New Files (untracked)
+### Sprint 8 - New Files
 | File | Description |
 |------|-------------|
-| src/views/coach/CalendarView.vue | Calendar view for assignments |
-| src/views/coach/GroupsView.vue | Coach groups management |
-| src/views/coach/GroupDetailView.vue | Group detail page |
-| src/views/athlete/TeamsView.vue | Athlete teams list |
-| src/views/athlete/TeamDetailView.vue | Athlete team detail |
-| src/views/PublicProfileView.vue | Public profile (/@username) |
-| src/services/groups.ts | Groups/teams service |
-| src/services/social.ts | Social interactions service |
-| src/components/social/* | LikeButton, CommentInput, CommentsList, FollowButton |
-| src/components/ui/* | ConfirmDialog, Toast |
-| src/components/athlete/ProgressStats.vue | Athlete progress stats |
-| src/components/coach/AthleteProgressSummary.vue | Coach athlete summary |
-| src/components/coach/ReassignWorkoutModal.vue | Reassign workout modal |
-| src/utils/streaks.ts | Streak tracking utility |
-| src/utils/analytics.ts | Analytics tracking |
-| src/vite-env.d.ts | Vite environment types |
-| supabase/migrations/20250210_fix_groups_rls.sql | Groups RLS fix migration |
+| src/stores/notifications.ts | Notifications Pinia store (fetch, real-time, mark read, delete) |
+| src/components/notifications/NotificationItem.vue | Notification row component (type-specific icons/colors) |
+
+### Sprint 8 - Modified Files
+| File | Type | Description |
+|------|------|-------------|
+| src/views/NotificationsView.vue | Rewritten | Full notifications view with All/Unread tabs |
+| src/App.vue | Modified | Added notifications store init on auth change |
+| src/components/layout/BottomNav.vue | Modified | Added unread badge on bell icon |
+| src/components/layout/TopHeader.vue | Modified | Added unread badge on bell icon (tablet) |
+| src/types/database.ts | Modified | Added NotificationType enum and notifications table types |
 
 ---
 
 ## Remaining Work / Roadmap
 
 ### High Priority
-- [ ] **Notifications system** - View exists (`NotificationsView.vue`) but likely stub; needs backend triggers for likes, comments, follows, assignments
+- [x] ~~**Notifications system**~~ - ✅ Complete (Sprint 8) - DB triggers, real-time store, full UI
 - [ ] **Explore/Discover view** - View exists but may be minimal; needs user search, trending posts, suggested follows
-- [ ] **Commit & deploy current uncommitted work** - Large amount of uncommitted changes
+- [ ] **Commit Sprint 8 & deploy** - Notifications system ready to commit
 
 ### Medium Priority
 - [ ] **Messaging / DMs** - No evidence in codebase; coach-athlete communication channel
@@ -182,10 +176,10 @@ These files are modified but not yet committed (since `afd3128`):
 
 ---
 
-## Database Schema Summary (22 tables)
+## Database Schema Summary (23 tables)
 **Core**: profiles, coach_profiles, athlete_profiles, sports
 **Coaching**: workouts, exercises, programs, program_weeks, workout_assignments, workout_completions, exercise_results, personal_bests, coach_athletes
-**Social**: posts, post_media, likes, comments, follows
+**Social**: posts, post_media, likes, comments, follows, notifications
 **Groups**: teams, groups, group_members
 **Other**: workout_streaks, invites
 
@@ -204,5 +198,7 @@ These files are modified but not yet committed (since `afd3128`):
 ## File Counts
 - **Views**: 22 (7 coach, 4 athlete, 11 shared/auth)
 - **Components**: ~25+ (layout, feed, social, athlete, coach, ui, modals)
+- **Stores**: 3 (auth, notifications, counter)
 - **Services**: 8 (posts, social, workouts, assignments, athletes, coaching, groups, invites)
 - **Routes**: ~30 (public, protected, coach, athlete)
+- **DB Triggers**: 6 (like, comment, follow, workout_assigned, workout_completed, personal_best)
