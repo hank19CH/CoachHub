@@ -1,0 +1,469 @@
+# CoachHub Project Instructions for Claude
+
+## CRITICAL: Always Check Project State First
+
+**Before ANY code generation, architectural decisions, or planning:**
+
+1. **Query Supabase for current project state:**
+   ```typescript
+   import { getProjectState, getCurrentSprint } from '@/services/projectProgress'
+   
+   const state = await getProjectState()
+   const sprint = await getCurrentSprint()
+   ```
+
+2. **Review what you find:**
+   - Current sprint number and status
+   - Features in progress vs. complete
+   - Active blockers
+   - Overall completion percentage
+
+3. **Never assume - always verify:**
+   - Don't guess what's been built
+   - Don't rebuild existing features
+   - Don't ignore documented blockers
+
+---
+
+## Project Overview
+
+**Name:** CoachHub (formerly Vumation)  
+**Tagline:** "Reach Your Summit"  
+**Mission:** Social-first platform for athletic journeys combining Instagram-style social with professional coaching tools
+
+**Current Status:** ~70% MVP complete (Sprints 1-9 complete, Sprint 10 next)
+
+**Development Approach:** This project adapts to real-world workflow. Sprint plans may change based on priorities, blockers, or opportunities. Always query the database for current state rather than relying on documented plans.
+
+**Tech Stack:**
+- Frontend: Vue 3 + TypeScript + Vite + Tailwind CSS
+- Backend: Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions)
+- AI: Claude Sonnet 4.5 (claude-sonnet-4-20250514) via Supabase Edge Functions (Deno runtime)
+- State: Pinia (auth, notifications, plans stores)
+- Charts: Chart.js / vue-chartjs
+- Deployment: Vercel
+- Node: ^20.19.0 || >=22.12.0
+- Supabase Project ID: mzrmivqwywinsffkaimw (us-west-2)
+
+---
+
+## Code Conventions
+
+### File Structure
+```
+vumation/
+├── src/
+│   ├── assets/           # Images, logos
+│   ├── components/       # Reusable UI components
+│   │   ├── athlete/      # Athlete-specific components
+│   │   ├── coach/        # Coach-specific components
+│   │   ├── feed/         # Social feed components
+│   │   ├── layout/       # Navigation, headers
+│   │   ├── planner/      # Training planner (Sprint 9 - 18 components)
+│   │   ├── social/       # Like, comment, follow buttons
+│   │   ├── ui/           # Generic UI (dialogs, toasts)
+│   │   └── notifications/# Notification components
+│   ├── lib/
+│   │   └── supabase.ts   # Supabase client initialization
+│   ├── router/
+│   │   └── index.ts      # Vue Router with guards
+│   ├── services/         # Business logic (posts, workouts, plans, AI, etc.)
+│   ├── stores/           # Pinia stores (auth, notifications, plans)
+│   ├── types/
+│   │   └── database.ts   # TypeScript types for Supabase
+│   ├── utils/            # Helpers (streaks, analytics)
+│   ├── views/            # Page components
+│   │   ├── athlete/      # Athlete views
+│   │   ├── coach/        # Coach views
+│   │   └── ...           # Shared views
+│   ├── App.vue
+│   └── main.ts
+├── supabase/
+│   └── migrations/       # Database migrations
+├── tailwind.config.js
+└── package.json
+```
+
+### Naming Conventions
+- **Views:** PascalCase ending in `View.vue` (e.g., `AthleteHubView.vue`)
+- **Components:** PascalCase (e.g., `ExerciseLogger.vue`)
+- **Services:** camelCase files (e.g., `projectProgress.ts`)
+- **Stores:** camelCase files, PascalCase exports (e.g., `useAuthStore`)
+- **Database tables:** snake_case (e.g., `workout_completions`)
+- **TypeScript types:** PascalCase (e.g., `WorkoutAssignment`)
+
+### Style Guidelines
+- **Always use Tailwind utility classes** - No custom CSS
+- **Mobile-first responsive design** - Use `sm:`, `md:`, `lg:` breakpoints
+- **Brand colors via Tailwind config:**
+  - Summit (teal/purple): `summit-600`, `summit-700`, etc.
+  - Valencia (red/orange): `valencia-600`, etc.
+  - Emerald: `emerald-600`, etc.
+  - Peak (orange): `peak-600`, etc.
+
+### State Management
+- **Auth state:** `useAuthStore()` (Pinia)
+- **Notifications:** `useNotificationsStore()` (Pinia)
+- **Plans state:** `usePlansStore()` (Pinia) - activePlan, selectedBlockId, selectedWeekId
+- **Component state:** `ref()` and `reactive()` (Vue Composition API)
+- **Pinia pattern:** Composition API style: `defineStore('name', () => { ... })`
+
+### Database Access
+- **Always use service functions** - Don't write raw Supabase queries in components
+- **RLS is enabled** - All tables have row-level security
+- **Real-time subscriptions** - Use `supabase.channel()` for live updates
+- **Untyped client** - Types manually maintained in `src/types/database.ts`, use `as any` casts on `.from()` and `.insert()`
+- **FK relation normalization** - Always normalize: `Array.isArray(x) ? x[0] ?? null : x ?? null`
+
+### Edge Functions
+- **Deno runtime** - Supabase Edge Functions use Deno, not Node
+- **JWT verification** - All Edge Functions verify auth via `supabase.auth.getUser(token)`
+- **Active functions:** `generate-plan` (Tier 2/3 AI), `generate-session` (AI exercise generation)
+- **Secrets:** `ANTHROPIC_API_KEY` set in Supabase Edge Function secrets
+
+---
+
+## Development Workflow
+
+### When Starting a Feature
+
+1. **Check project progress database:**
+   ```typescript
+   const sprint = await getCurrentSprint()
+   console.log('Current sprint:', sprint.name)
+   console.log('Features:', sprint.features)
+   ```
+
+2. **Verify the feature isn't already built:**
+   ```typescript
+   const features = await getFeaturesByStatus('complete')
+   const exists = features.find(f => f.name.includes('User search'))
+   ```
+
+3. **Check for active blockers:**
+   ```typescript
+   const blockers = await getActiveBlockers()
+   if (blockers.length > 0) {
+     console.log('Active blockers:', blockers)
+   }
+   ```
+
+### When Completing Work
+
+1. **List what was completed:**
+   - Files created/modified
+   - Features implemented
+   - Tests added (if any)
+
+2. **Provide update commands:**
+   ```typescript
+   // Example: Mark feature complete
+   await markFeatureComplete('User search functionality')
+   ```
+
+3. **Recommend next steps:**
+   - What to work on next
+   - What depends on this feature
+   - Any new blockers discovered
+
+---
+
+## Common Patterns
+
+### Creating a New View
+```typescript
+// src/views/coach/NewView.vue
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+
+onMounted(async () => {
+  // Fetch data
+})
+</script>
+
+<template>
+  <div class="min-h-screen bg-gray-50 p-4">
+    <!-- Content -->
+  </div>
+</template>
+```
+
+### Creating a Service
+```typescript
+// src/services/myService.ts
+import { supabase } from '@/lib/supabase'
+
+export async function fetchSomething() {
+  const { data, error } = await supabase
+    .from('table_name')
+    .select('*')
+  
+  if (error) throw error
+  return data
+}
+```
+
+### Adding a Route
+```typescript
+// src/router/index.ts
+{
+  path: '/new-page',
+  name: 'NewPage',
+  component: () => import('@/views/NewView.vue'),
+  meta: { requiresAuth: true, requiresCoach: true }
+}
+```
+
+---
+
+## Database Schema Summary
+
+**47 Tables/Views** (query `information_schema.tables WHERE table_schema = 'public'` for latest):
+- **Auth/Profiles:** profiles, coach_profiles, athlete_profiles, sports
+- **Coaching:** workouts, exercises, exercise_library, favorite_exercises, programs, program_weeks, workout_assignments, workout_completions, exercise_results, personal_bests, coach_athletes, athlete_assessments
+- **Social:** posts, post_media, likes, comments, follows, notifications
+- **Groups:** teams, groups, group_members
+- **Tracking:** user_streaks, invite_codes
+- **Training Planner (Sprint 9):** plans, training_blocks, block_weeks, plan_athletes, plan_changelog, periodization_templates, readiness_logs, session_feedback, ai_plan_logs
+- **Project Tracking:** sprints, features, files_changed, git_commits, commit_features, tech_decisions, blockers, project_metadata
+- **Views:** current_sprint_summary, active_blockers, feature_completion_by_category
+
+---
+
+## Known Issues & Technical Debt
+
+**Critical (Address Soon):**
+- Large uncommitted changeset (Sprint 9 files not yet committed)
+- No TypeScript types generated from Supabase (manually maintained in `database.ts`, using `as any` casts)
+- Only 1 migration file (schema created via dashboard)
+
+**Important (Address Eventually):**
+- No unit/integration tests
+- No error boundary components
+- No rate limiting on social actions
+- Image optimization needs refinement
+- `Projectprogressservice.ts` filename should be renamed to `projectProgress.ts` (casing mismatch)
+
+**Nice to Have:**
+- Dark mode
+- Offline/PWA support
+- Push notifications
+- Advanced analytics polish
+
+---
+
+## Recent Bug Fixes (Post-Sprint 9)
+
+### Fix: RLS Error Handling in Plans Service
+**Problem:** AddBlockModal spinner spun forever with no feedback when block creation failed due to RLS policy rejection. Errors were caught silently with only `console.error`.
+**Root Cause:** Supabase RLS INSERT policy `is_plan_coach(plan_id, auth.uid())` correctly blocks non-coach users. Error messages were replaced with generic strings, hiding the actual Supabase error.
+**Files Modified:**
+- `src/services/plans.ts` - Updated all 20+ `throw new Error()` statements to pass through actual `error.message` from Supabase (e.g., `throw new Error(error.message || 'Failed to create training block')`)
+- `src/components/planner/AddBlockModal.vue` - Added `errorMessage` ref and red error banner UI to display errors to user instead of silent failure
+- `src/components/planner/BlockEditor.vue` - Added same `errorMessage` ref and error banner pattern
+
+**Testing Note:** RLS policies are correct. If block creation fails with "new row violates row-level security policy", verify the user is logged in as a **coach** account (e.g., hencoach), not an athlete account (e.g., testbob). Route guard `requiresCoach: true` is on planner routes but won't help if the user navigated before switching accounts.
+
+### Fix: PostCard TransitionGroup Warning
+**Problem:** Vue console warning: "Component inside `<Transition>` renders non-element root node that cannot be animated" for PostCard components in FeedView.
+**Root Cause:** `PostCard.vue` had two root-level template nodes: `<article>` and `<Teleport to="body">`. Vue's `<TransitionGroup>` in FeedView requires each child to have a single element root for animation.
+**Fix:** Moved the `<Teleport>` (delete confirmation modal) inside the `<article>` element. Teleport renders its content to `<body>` regardless of where it's placed in the template tree, so no visual change.
+**File Modified:** `src/components/feed/PostCard.vue`
+
+---
+
+## Completed Sprints Summary
+
+| Sprint | Name | Features | Status |
+|--------|------|----------|--------|
+| 1 | Foundation | Auth, routing, Supabase setup | Complete |
+| 2 | Profile Management | User profiles, coach/athlete roles | Complete |
+| 3 | Athletes & Invites | Coach-athlete relationships, invites | Complete |
+| 4 | Coach Hub & Workouts | Workout builder, programs | Complete |
+| 5 | Athlete Execution | Workout logging, exercise results, PBs | Complete |
+| 6 | Social Feed | Posts, likes, comments, follows, media | Complete |
+| 7 | Groups & Calendar | Teams, groups, calendar view | Complete |
+| 8 | Notifications | DB triggers, real-time notification UI | Complete |
+| 9 | Training Planner | AI-powered periodization planner (see below) | Complete |
+| 10 | Smart Import & Polish | AI plan import from text/CSV/PDF | Planned |
+| 11 | Payments | Stripe integration, subscriptions | Planned |
+
+### Sprint 9 Detail: Training Planner
+
+**Hierarchy:** Plan -> Training Blocks -> Block Weeks -> Workouts (Sessions) -> Exercises
+
+**9.1 - Plan CRUD & Structure:**
+- Service: `src/services/plans.ts` (CRUD for plans, blocks, weeks + templates)
+- Store: `src/stores/plans.ts` (Pinia store)
+- Components: PlansList, CreatePlanModal, PlanTimeline, AddBlockModal, BlockEditor, TemplateBrowser
+
+**9.2 - Week Editor & Sessions:**
+- Components: WeekEditor (7-day grid), WeekNavigation, ExerciseCard, ExerciseLibrary
+
+**9.3 - Athlete Feedback & Readiness:**
+- Service: `src/services/readiness.ts`
+- Components: ReadinessCheckIn, SessionFeedback
+
+**9.4 - Publishing, Changelog & Analytics:**
+- Services: `src/services/planPublish.ts`, `src/services/planAnalytics.ts`
+- Components: PublishWeekModal, PlanChangelog, PlanAnalytics (Chart.js)
+
+**9.5 - AI Assist Layer (Three-tier architecture):**
+- Tier 1: `src/services/adaptive.ts` - Deterministic rules engine ($0 cost). ACWR, progressive overload, deload detection, readiness adjustments, compliance alerts
+- Tier 2+3: Supabase Edge Functions `generate-plan` + `generate-session` (Claude Sonnet 4.5)
+- `src/services/athleteHistory.ts` - Pre-computes athlete summary for AI context
+- `src/services/aiPeriodization.ts` - Frontend AI service connecting all tiers
+- `src/services/smartImport.ts` - Sprint 10 stub (types + placeholder methods)
+- Component: AiAssistPanel.vue (Suggestions tab + Chat tab)
+
+**PlannerView.vue:** Three-panel desktop (PlanTimeline | WeekEditor | Right Panel) with tabs: Details, History, Analytics, AI. Mobile: tabbed single-panel (Plan, Week, Analytics, AI, Session).
+Route: `/coach/planner` (list) and `/coach/planner/:planId` (planner view)
+
+---
+
+## Checking Current Sprint & Features
+
+**NEVER assume sprint plans without querying the database first.**
+
+The project may deviate from original plans. Always check Supabase for the actual current state:
+
+### Query Current Sprint (TypeScript)
+```typescript
+import { 
+  getCurrentSprint, 
+  getFeaturesByStatus,
+  getActiveBlockers 
+} from '@/services/projectProgress'
+
+// What sprint are we in?
+const sprint = await getCurrentSprint()
+console.log('Current sprint:', sprint.name)
+console.log('Sprint status:', sprint.status)
+console.log('Features in this sprint:', sprint.features.length)
+
+// What's in progress?
+const inProgress = await getFeaturesByStatus('in_progress')
+console.log('Currently working on:', inProgress.map(f => f.name))
+
+// What's next?
+const planned = await getFeaturesByStatus('planned')
+console.log('Up next:', planned.slice(0, 3).map(f => f.name))
+
+// Any blockers?
+const blockers = await getActiveBlockers()
+console.log('Active blockers:', blockers.length)
+```
+
+### Query Current Sprint (SQL)
+```sql
+-- Current sprint summary
+SELECT * FROM current_sprint_summary;
+
+-- Features in current sprint
+SELECT f.name, f.status, f.priority, f.completion_percentage
+FROM features f
+JOIN sprints s ON s.id = f.sprint_id
+WHERE s.status = 'active'
+ORDER BY f.priority DESC;
+
+-- What's next (planned features)
+SELECT name, category, priority
+FROM features 
+WHERE status = 'planned'
+ORDER BY priority DESC
+LIMIT 5;
+
+-- Active blockers
+SELECT * FROM active_blockers;
+```
+
+### Before Starting Any Work
+
+**Always run this check:**
+```typescript
+const state = await getProjectState()
+
+console.log('📊 Project State:')
+console.log('  Overall completion:', state.overall_completion + '%')
+console.log('  Current sprint:', state.current_sprint.name)
+console.log('  Total features:', state.current_sprint.total_features)
+console.log('  Completed:', state.current_sprint.completed_features)
+console.log('  In progress:', state.current_sprint.in_progress_features)
+console.log('  Blocked:', state.current_sprint.blocked_features)
+console.log('  Active blockers:', state.active_blockers.length)
+```
+
+**If the database shows different sprints/features than expected, trust the database!**
+
+---
+
+## Important Reminders
+
+1. **Never rebuild existing features** - Check the database first
+2. **Always use existing patterns** - Follow the established file structure
+3. **Mobile-first design** - Test at 375px width first
+4. **RLS is strict** - All database queries must respect row-level security
+5. **Real-time is enabled** - Notifications, posts, and messages update live
+6. **Brand consistency** - Use Tailwind config colors, not hardcoded hex
+
+---
+
+## After Completing Work
+
+**Always provide:**
+
+1. **Summary of changes:**
+   ```markdown
+   ## Completed
+   - âœ… User search functionality
+   - âœ… Explore view UI with search bar
+   - âœ… Debounced search input (300ms)
+   
+   ## Files Modified
+   - src/views/ExploreView.vue (created)
+   - src/services/users.ts (added searchUsers function)
+   - src/router/index.ts (added /explore route)
+   ```
+
+2. **Database update commands:**
+   ```typescript
+   await markFeatureComplete('User search functionality')
+   await updateFeatureStatus(featureId, 'complete')
+   ```
+
+3. **Next recommended steps:**
+   ```markdown
+   ## Next Up
+   1. Trending posts algorithm (Sprint 9, priority: 80)
+   2. Suggested follows (Sprint 9, priority: 70)
+   3. Consider committing current work before starting Sprint 10
+   ```
+
+---
+
+## Questions to Ask Before Proceeding
+
+If uncertain about any of the following, ASK before building:
+
+- "Is this feature already built?" → Check project_progress database
+- "What's the current sprint?" → Query current_sprint_summary
+- "Are there any blockers?" → Check active_blockers view
+- "What's the priority?" → Review features table ordered by priority
+- "Should I create a new file or modify existing?" → Check file structure first
+
+---
+
+## Contact & Escalation
+
+If you encounter:
+- **Supabase errors** → Check RLS policies first
+- **TypeScript errors** → Check database.ts types
+- **Build errors** → Check Node version (should be 20.19+ or 22.12+)
+- **Uncertain architecture decisions** → Ask user before implementing
+
+---
+
+**Remember: The project_progress database is the single source of truth. When in doubt, query it!**

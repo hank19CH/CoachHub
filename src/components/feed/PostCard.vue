@@ -356,41 +356,41 @@ function goToPost() {
         View all {{ post.comments_count }} comments
       </button>
     </div>
-  </article>
 
-  <!-- Delete Confirmation Modal -->
-  <Teleport to="body">
-    <div
-      v-if="showDeleteConfirm"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      @click.self="showDeleteConfirm = false"
-    >
-      <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
-        <h3 class="text-lg font-semibold text-gray-900 mb-2">Delete Post?</h3>
-        <p class="text-sm text-gray-600 mb-6">
-          Are you sure you want to delete this post? This action cannot be undone.
-        </p>
-        <div class="flex gap-3">
-          <button
-            @click="showDeleteConfirm = false"
-            class="flex-1 btn-secondary"
-            :disabled="deleting"
-          >
-            Cancel
-          </button>
-          <button
-            @click="handleDeletePost"
-            class="flex-1 btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500"
-            :disabled="deleting"
-          >
-            <span v-if="deleting" class="flex items-center gap-2">
-              <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              Deleting...
-            </span>
-            <span v-else>Delete</span>
-          </button>
+    <!-- Delete Confirmation Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteConfirm"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+        @click.self="showDeleteConfirm = false"
+      >
+        <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Delete Post?</h3>
+          <p class="text-sm text-gray-600 mb-6">
+            Are you sure you want to delete this post? This action cannot be undone.
+          </p>
+          <div class="flex gap-3">
+            <button
+              @click="showDeleteConfirm = false"
+              class="flex-1 btn-secondary"
+              :disabled="deleting"
+            >
+              Cancel
+            </button>
+            <button
+              @click="handleDeletePost"
+              class="flex-1 btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500"
+              :disabled="deleting"
+            >
+              <span v-if="deleting" class="flex items-center gap-2">
+                <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                Deleting...
+              </span>
+              <span v-else>Delete</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  </Teleport>
+    </Teleport>
+  </article>
 </template>

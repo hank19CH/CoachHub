@@ -17,6 +17,12 @@ const hideBottomNav = computed(() => {
 const hideTopHeader = computed(() => {
   return ['create', 'workout-detail'].includes(route.name as string)
 })
+
+// Pages that need full width (no max-width constraint)
+const needsFullWidth = computed(() => {
+  const fullWidthRoutes = ['planner', 'coach-planner']
+  return fullWidthRoutes.includes(route.name as string) || route.path.includes('/planner')
+})
 </script>
 
 <template>
@@ -25,11 +31,12 @@ const hideTopHeader = computed(() => {
     <TopHeader v-if="!hideTopHeader" />
 
     <!-- Main Content -->
-    <main 
-      class="flex-1 w-full max-w-lg mx-auto"
+    <main
+      class="flex-1 w-full"
       :class="{
         'pt-14': !hideTopHeader,
-        'pb-20': !hideBottomNav
+        'pb-20': !hideBottomNav,
+        'max-w-lg mx-auto': !needsFullWidth,
       }"
     >
       <slot />

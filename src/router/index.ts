@@ -76,43 +76,49 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/athletes',
+      path: '/coach/athletes',
       name: 'athletes',
       component: () => import('@/views/coach/AthletesView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/programs',
+      path: '/coach/programs',
       name: 'programs',
       component: () => import('@/views/coach/ProgramsView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/programs/new',
+      path: '/coach/programs/new',
       name: 'new-program',
       component: () => import('@/views/coach/ProgramEditorView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/programs/:id',
+      path: '/coach/programs/:id',
       name: 'program-detail',
       component: () => import('@/views/coach/ProgramDetailView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/programs/:id/edit',
+      path: '/coach/programs/:id/edit',
       name: 'edit-program',
       component: () => import('@/views/coach/ProgramEditorView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/workouts',
+      path: '/coach/workouts',
       name: 'workouts',
       component: () => import('@/views/coach/WorkoutsView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/workouts/:id/edit',
+      path: '/coach/workouts/new',
+      name: 'workout-builder-new',
+      component: () => import('@/views/coach/WorkoutBuilderView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/workouts/:id/edit',
       name: 'workout-builder',
       component: () => import('@/views/coach/WorkoutBuilderView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
@@ -145,6 +151,24 @@ const router = createRouter({
       path: '/coach/groups/:id',
       name: 'group-detail',
       component: () => import('@/views/coach/GroupDetailView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/planner',
+      name: 'planner',
+      component: () => import('@/views/coach/PlannerView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/planner/:planId',
+      name: 'planner-detail',
+      component: () => import('@/views/coach/PlannerView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/exercises',
+      name: 'exercise-library',
+      component: () => import('@/views/coach/ExerciseLibraryView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
 
@@ -182,7 +206,7 @@ const router = createRouter({
     // Placeholder routes - redirect to dashboard until implemented
     { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
-    { path: '/progress', redirect: '/athlete/dashboard' },
+    { path: '/athlete/progress', redirect: '/athlete/dashboard' },
 
     // Public profile (/@username)
     {

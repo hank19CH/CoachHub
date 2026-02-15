@@ -133,7 +133,7 @@ async function createProgram() {
     if (error) throw error
 
     // Navigate to program builder to add weeks/workouts
-    router.push(`/programs/${program.id}/edit`)
+    router.push(`/coach/programs/${program.id}/edit`)
   } catch (e: any) {
     console.error('Error creating program:', e?.message || e?.code || JSON.stringify(e))
     errorMessage.value = e?.message || (e instanceof Error ? e.message : 'Failed to create program')
@@ -143,7 +143,7 @@ async function createProgram() {
 }
 
 function editProgram(programId: string) {
-  router.push(`/programs/${programId}/edit`)
+  router.push(`/coach/programs/${programId}/edit`)
 }
 
 function confirmDeleteProgram(program: Program) {

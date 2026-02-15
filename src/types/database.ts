@@ -24,6 +24,15 @@ export type PbType = 'weight' | 'reps' | 'time' | 'distance'
 export type MediaType = 'image' | 'video' | 'workout_card'
 export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement'
 
+// Sprint 9 — Training Planner enums
+export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived'
+export type VolumeTarget = 'low' | 'moderate' | 'high'
+export type IntensityTarget = 'low' | 'moderate' | 'high' | 'peak'
+export type ExerciseCategory = 'primary' | 'accessory' | 'warmup' | 'cooldown' | 'drill' | 'plyometric'
+export type MovementPattern = 'squat' | 'hinge' | 'push' | 'pull' | 'carry' | 'locomotion' | 'rotation' | 'skill'
+export type AiActionTaken = 'accepted' | 'modified' | 'rejected' | 'pending'
+export type TemplateDifficulty = 'beginner' | 'intermediate' | 'advanced' | 'elite'
+
 // Share settings for workout posts
 export interface ShareSettings {
   show_duration?: boolean
@@ -400,11 +409,16 @@ export interface Database {
           id: string
           coach_id: string
           program_week_id: string | null
+          block_week_id: string | null
           name: string
           description: string | null
           day_of_week: number | null
           estimated_duration_min: number | null
           workout_type: string | null
+          session_type: string | null
+          session_focus: string[]
+          target_rpe: number | null
+          energy_system: string | null
           is_template: boolean
           created_at: string
           updated_at: string
@@ -413,22 +427,32 @@ export interface Database {
           id?: string
           coach_id: string
           program_week_id?: string | null
+          block_week_id?: string | null
           name: string
           description?: string | null
           day_of_week?: number | null
           estimated_duration_min?: number | null
           workout_type?: string | null
+          session_type?: string | null
+          session_focus?: string[]
+          target_rpe?: number | null
+          energy_system?: string | null
           is_template?: boolean
           created_at?: string
           updated_at?: string
         }
         Update: {
           program_week_id?: string | null
+          block_week_id?: string | null
           name?: string
           description?: string | null
           day_of_week?: number | null
           estimated_duration_min?: number | null
           workout_type?: string | null
+          session_type?: string | null
+          session_focus?: string[]
+          target_rpe?: number | null
+          energy_system?: string | null
           is_template?: boolean
           updated_at?: string
         }
@@ -451,6 +475,12 @@ export interface Database {
           rest_seconds: number | null
           notes: string | null
           video_url: string | null
+          category: string | null
+          movement_pattern: string | null
+          intensity_prescription: string | null
+          intensity_value: number | null
+          tempo: string | null
+          superset_group: number | null
         }
         Insert: {
           id?: string
@@ -469,6 +499,12 @@ export interface Database {
           rest_seconds?: number | null
           notes?: string | null
           video_url?: string | null
+          category?: string | null
+          movement_pattern?: string | null
+          intensity_prescription?: string | null
+          intensity_value?: number | null
+          tempo?: string | null
+          superset_group?: number | null
         }
         Update: {
           name?: string
@@ -485,6 +521,12 @@ export interface Database {
           rest_seconds?: number | null
           notes?: string | null
           video_url?: string | null
+          category?: string | null
+          movement_pattern?: string | null
+          intensity_prescription?: string | null
+          intensity_value?: number | null
+          tempo?: string | null
+          superset_group?: number | null
         }
       }
       workout_assignments: {
@@ -768,6 +810,454 @@ export interface Database {
           is_read?: boolean
         }
       }
+      // ============================================
+      // Sprint 9 — Training Planner Tables
+      // ============================================
+      plans: {
+        Row: {
+          id: string
+          coach_id: string
+          name: string
+          sport_id: string | null
+          start_date: string
+          end_date: string
+          goal_description: string | null
+          periodization_model: string | null
+          status: PlanStatus
+          version: number
+          ai_generated: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          name: string
+          sport_id?: string | null
+          start_date: string
+          end_date: string
+          goal_description?: string | null
+          periodization_model?: string | null
+          status?: PlanStatus
+          version?: number
+          ai_generated?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          sport_id?: string | null
+          start_date?: string
+          end_date?: string
+          goal_description?: string | null
+          periodization_model?: string | null
+          status?: PlanStatus
+          version?: number
+          ai_generated?: boolean
+          updated_at?: string
+        }
+      }
+      plan_athletes: {
+        Row: {
+          id: string
+          plan_id: string
+          athlete_id: string
+          group_id: string | null
+          individual_notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          plan_id: string
+          athlete_id: string
+          group_id?: string | null
+          individual_notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          group_id?: string | null
+          individual_notes?: string | null
+        }
+      }
+      training_blocks: {
+        Row: {
+          id: string
+          plan_id: string
+          name: string
+          block_type: string | null
+          focus_tags: string[]
+          order_index: number
+          duration_weeks: number | null
+          volume_target: VolumeTarget | null
+          intensity_target: IntensityTarget | null
+          ai_generated: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          plan_id: string
+          name: string
+          block_type?: string | null
+          focus_tags?: string[]
+          order_index: number
+          duration_weeks?: number | null
+          volume_target?: VolumeTarget | null
+          intensity_target?: IntensityTarget | null
+          ai_generated?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          block_type?: string | null
+          focus_tags?: string[]
+          order_index?: number
+          duration_weeks?: number | null
+          volume_target?: VolumeTarget | null
+          intensity_target?: IntensityTarget | null
+          ai_generated?: boolean
+          updated_at?: string
+        }
+      }
+      block_weeks: {
+        Row: {
+          id: string
+          training_block_id: string
+          week_number: number
+          name: string | null
+          volume_modifier: number
+          intensity_modifier: number
+          is_deload: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          training_block_id: string
+          week_number: number
+          name?: string | null
+          volume_modifier?: number
+          intensity_modifier?: number
+          is_deload?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          week_number?: number
+          name?: string | null
+          volume_modifier?: number
+          intensity_modifier?: number
+          is_deload?: boolean
+          updated_at?: string
+        }
+      }
+      plan_sessions: {
+        Row: {
+          id: string
+          block_week_id: string
+          day_of_week: number
+          workout_id: string
+          order_index: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          block_week_id: string
+          day_of_week: number
+          workout_id: string
+          order_index?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          day_of_week?: number
+          order_index?: number
+          updated_at?: string
+        }
+      }
+      exercise_library: {
+        Row: {
+          id: string
+          name: string
+          coach_id: string | null
+          sport_id: string | null
+          category: ExerciseCategory | null
+          movement_pattern: MovementPattern | null
+          equipment: string[]
+          muscle_groups: string[]
+          video_url: string | null
+          cues: string | null
+          is_approved: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          coach_id?: string | null
+          sport_id?: string | null
+          category?: ExerciseCategory | null
+          movement_pattern?: MovementPattern | null
+          equipment?: string[]
+          muscle_groups?: string[]
+          video_url?: string | null
+          cues?: string | null
+          is_approved?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          coach_id?: string | null
+          sport_id?: string | null
+          category?: ExerciseCategory | null
+          movement_pattern?: MovementPattern | null
+          equipment?: string[]
+          muscle_groups?: string[]
+          video_url?: string | null
+          cues?: string | null
+          is_approved?: boolean
+          updated_at?: string
+        }
+      }
+      readiness_logs: {
+        Row: {
+          id: string
+          athlete_id: string
+          log_date: string
+          subjective_score: number | null
+          sleep_quality: number | null
+          sleep_hours: number | null
+          muscle_soreness: number | null
+          energy_level: number | null
+          stress_level: number | null
+          hrv: number | null
+          resting_hr: number | null
+          source: string
+          raw_data: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          athlete_id: string
+          log_date: string
+          subjective_score?: number | null
+          sleep_quality?: number | null
+          sleep_hours?: number | null
+          muscle_soreness?: number | null
+          energy_level?: number | null
+          stress_level?: number | null
+          hrv?: number | null
+          resting_hr?: number | null
+          source?: string
+          raw_data?: Json | null
+          created_at?: string
+        }
+        Update: {
+          log_date?: string
+          subjective_score?: number | null
+          sleep_quality?: number | null
+          sleep_hours?: number | null
+          muscle_soreness?: number | null
+          energy_level?: number | null
+          stress_level?: number | null
+          hrv?: number | null
+          resting_hr?: number | null
+          source?: string
+          raw_data?: Json | null
+        }
+      }
+      session_feedback: {
+        Row: {
+          id: string
+          completion_id: string
+          session_rpe: number | null
+          soreness_post: number | null
+          energy_post: number | null
+          notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          completion_id: string
+          session_rpe?: number | null
+          soreness_post?: number | null
+          energy_post?: number | null
+          notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          session_rpe?: number | null
+          soreness_post?: number | null
+          energy_post?: number | null
+          notes?: string | null
+        }
+      }
+      athlete_assessments: {
+        Row: {
+          id: string
+          athlete_id: string
+          coach_id: string
+          assessment_type: string
+          data: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          athlete_id: string
+          coach_id: string
+          assessment_type: string
+          data?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          assessment_type?: string
+          data?: Json
+          updated_at?: string
+        }
+      }
+      ai_plan_logs: {
+        Row: {
+          id: string
+          coach_id: string
+          context_type: string
+          context_id: string | null
+          prompt_summary: string | null
+          suggestion: Json | null
+          action_taken: AiActionTaken | null
+          coach_notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          context_type: string
+          context_id?: string | null
+          prompt_summary?: string | null
+          suggestion?: Json | null
+          action_taken?: AiActionTaken | null
+          coach_notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          action_taken?: AiActionTaken | null
+          coach_notes?: string | null
+        }
+      }
+      plan_changelog: {
+        Row: {
+          id: string
+          plan_id: string
+          version: number
+          changed_by: string
+          change_type: string
+          change_summary: string | null
+          metadata: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          plan_id: string
+          version?: number
+          changed_by: string
+          change_type?: string
+          change_summary?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Update: {
+          change_summary?: string | null
+          metadata?: Json | null
+        }
+      }
+      periodization_templates: {
+        Row: {
+          id: string
+          coach_id: string | null
+          name: string
+          sport_id: string | null
+          duration_weeks: number
+          structure: Json
+          difficulty: TemplateDifficulty | null
+          is_public: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id?: string | null
+          name: string
+          sport_id?: string | null
+          duration_weeks: number
+          structure: Json
+          difficulty?: TemplateDifficulty | null
+          is_public?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          sport_id?: string | null
+          duration_weeks?: number
+          structure?: Json
+          difficulty?: TemplateDifficulty | null
+          is_public?: boolean
+          updated_at?: string
+        }
+      }
+      ai_chat_sessions: {
+        Row: {
+          id: string
+          plan_id: string
+          coach_id: string
+          title: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          plan_id: string
+          coach_id: string
+          title?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          title?: string | null
+          updated_at?: string
+        }
+      }
+      ai_chat_messages: {
+        Row: {
+          id: string
+          session_id: string
+          role: 'user' | 'assistant'
+          content: string
+          plan_data: Json | null
+          session_data: Json | null
+          tokens_used: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          session_id: string
+          role: 'user' | 'assistant'
+          content: string
+          plan_data?: Json | null
+          session_data?: Json | null
+          tokens_used?: number | null
+          created_at?: string
+        }
+        Update: {
+          content?: string
+          plan_data?: Json | null
+          session_data?: Json | null
+        }
+      }
     }
   }
 }
@@ -833,3 +1323,57 @@ export interface TeamWithGroups extends Team {
   sport?: Sport | null
   groups?: Group[]
 }
+
+// Sprint 9 — Training Planner convenience types
+export type Plan = Database['public']['Tables']['plans']['Row']
+export type PlanInsert = Database['public']['Tables']['plans']['Insert']
+export type PlanUpdate = Database['public']['Tables']['plans']['Update']
+
+export type PlanAthlete = Database['public']['Tables']['plan_athletes']['Row']
+export type PlanAthleteInsert = Database['public']['Tables']['plan_athletes']['Insert']
+
+export type TrainingBlock = Database['public']['Tables']['training_blocks']['Row']
+export type TrainingBlockInsert = Database['public']['Tables']['training_blocks']['Insert']
+export type TrainingBlockUpdate = Database['public']['Tables']['training_blocks']['Update']
+
+export type BlockWeek = Database['public']['Tables']['block_weeks']['Row']
+export type BlockWeekInsert = Database['public']['Tables']['block_weeks']['Insert']
+
+export type ExerciseLibraryItem = Database['public']['Tables']['exercise_library']['Row']
+export type ExerciseLibraryInsert = Database['public']['Tables']['exercise_library']['Insert']
+
+export type ReadinessLog = Database['public']['Tables']['readiness_logs']['Row']
+export type ReadinessLogInsert = Database['public']['Tables']['readiness_logs']['Insert']
+
+export type SessionFeedback = Database['public']['Tables']['session_feedback']['Row']
+export type SessionFeedbackInsert = Database['public']['Tables']['session_feedback']['Insert']
+
+export type AthleteAssessment = Database['public']['Tables']['athlete_assessments']['Row']
+export type AiPlanLog = Database['public']['Tables']['ai_plan_logs']['Row']
+
+export type PeriodizationTemplate = Database['public']['Tables']['periodization_templates']['Row']
+export type PeriodizationTemplateInsert = Database['public']['Tables']['periodization_templates']['Insert']
+
+export type PlanChangelog = Database['public']['Tables']['plan_changelog']['Row']
+export type PlanChangelogInsert = Database['public']['Tables']['plan_changelog']['Insert']
+
+// Extended types with relations
+export interface PlanWithDetails extends Plan {
+  sport?: Sport | null
+  athletes?: (PlanAthlete & { athlete: Profile })[]
+  blocks?: TrainingBlock[]
+}
+
+export interface TrainingBlockWithWeeks extends TrainingBlock {
+  weeks?: BlockWeek[]
+}
+
+export interface BlockWeekWithWorkouts extends BlockWeek {
+  workouts?: Workout[]
+}
+
+// AI Chat types
+export type AiChatSession = Database['public']['Tables']['ai_chat_sessions']['Row']
+export type AiChatSessionInsert = Database['public']['Tables']['ai_chat_sessions']['Insert']
+export type AiChatMessage = Database['public']['Tables']['ai_chat_messages']['Row']
+export type AiChatMessageInsert = Database['public']['Tables']['ai_chat_messages']['Insert']

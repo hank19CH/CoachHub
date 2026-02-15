@@ -171,7 +171,7 @@ async function handleDelete() {
       .eq('coach_id', authStore.user.id)
 
     if (error) throw error
-    router.push('/programs')
+    router.push('/coach/programs')
   } catch (e) {
     console.error('Error deleting program:', e)
     showToast('Failed to delete program', 'error')
@@ -212,7 +212,7 @@ function getDifficultyColor(difficulty: string | null): string {
     <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
       <div class="flex items-center gap-3">
         <button
-          @click="router.push('/programs')"
+          @click="router.push('/coach/programs')"
           class="p-2 hover:bg-gray-100 rounded-lg -ml-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -226,7 +226,7 @@ function getDifficultyColor(difficulty: string | null): string {
         </div>
         <div class="flex gap-1">
           <button
-            @click="router.push(`/programs/${programId}/edit`)"
+            @click="router.push(`/coach/programs/${programId}/edit`)"
             class="p-2 hover:bg-gray-100 rounded-lg"
             title="Edit program"
           >
@@ -296,7 +296,7 @@ function getDifficultyColor(difficulty: string | null): string {
         </div>
         <p class="text-gray-600 mb-4">No weeks set up yet</p>
         <button
-          @click="router.push(`/programs/${programId}/edit`)"
+          @click="router.push(`/coach/programs/${programId}/edit`)"
           class="btn-primary px-6"
         >
           Build Program
@@ -319,7 +319,7 @@ function getDifficultyColor(difficulty: string | null): string {
         <div v-if="week.workouts.length === 0" class="card p-4 text-center">
           <p class="text-sm text-gray-500">No workouts in this week</p>
           <button
-            @click="router.push(`/programs/${programId}/edit`)"
+            @click="router.push(`/coach/programs/${programId}/edit`)"
             class="text-summit-700 text-sm font-medium mt-1 hover:underline"
           >
             Add workouts
@@ -367,7 +367,7 @@ function getDifficultyColor(difficulty: string | null): string {
             <!-- Actions -->
             <div class="flex flex-col gap-1 flex-shrink-0">
               <button
-                @click="router.push(`/workouts/${workout.id}/edit`)"
+                @click="router.push(`/coach/workouts/${workout.id}/edit`)"
                 class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Edit workout"
               >
@@ -392,7 +392,7 @@ function getDifficultyColor(difficulty: string | null): string {
       <!-- Bottom actions -->
       <div class="flex gap-3">
         <button
-          @click="router.push(`/programs/${programId}/edit`)"
+          @click="router.push(`/coach/programs/${programId}/edit`)"
           class="btn-primary flex-1"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

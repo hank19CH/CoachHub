@@ -3,10 +3,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
-import type { Workout, Exercise, FavoriteExercise } from '@/types/database'
+import type { Workout, Exercise, FavoriteExercise, ExerciseLibraryItem } from '@/types/database'
 import { trackEvent } from '@/utils/analytics'
+import { exerciseLibraryService } from '@/services/exerciseLibrary'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Toast from '@/components/ui/Toast.vue'
+import ExerciseLibrary from '@/components/planner/ExerciseLibrary.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +22,23 @@ const loading = ref(true)
 const saving = ref(false)
 const showExerciseModal = ref(false)
 const showFavoritesPanel = ref(false)
+const showExerciseLibrary = ref(false)
+
+// Session header fields (Sprint 9.3b)
+const sessionType = ref('')
+const sessionFocus = ref('')
+const targetRpe = ref<number | null>(null)
+const savingSession = ref(false)
+
+const sessionTypes = [
+  'strength', 'hypertrophy', 'power', 'speed', 'conditioning',
+  'skills', 'technique', 'recovery', 'testing', 'mixed'
+]
+const sessionFocusOptions = [
+  'upper_body', 'lower_body', 'full_body', 'push', 'pull',
+  'posterior_chain', 'anterior_chain', 'core', 'sport_specific',
+  'aerobic', 'anaerobic', 'mobility'
+]
 
 // Confirm dialog state
 const showDeleteConfirm = ref(false)
@@ -37,6 +56,21 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
   toastVisible.value = true
 }
 
+// Estimated session load (volume × intensity across exercises)
+const estimatedLoad = computed(() => {
+  let totalLoad = 0
+  for (const ex of exercises.value) {
+    const sets = ex.sets || 0
+    const reps = parseInt(String(ex.reps || '0')) || 0
+    const weight = ex.weight_kg || 0
+    const intensity = ex.intensity_percent ? ex.intensity_percent / 100 : 1
+    if (sets && reps && weight) {
+      totalLoad += sets * reps * weight * intensity
+    }
+  }
+  return Math.round(totalLoad)
+})
+
 // Exercise form state
 const exerciseForm = ref({
   name: '',
@@ -51,13 +85,44 @@ const exerciseForm = ref({
   target_time_seconds: null as number | null,
   rest_seconds: null as number | null,
   notes: '',
-  video_url: ''
+  video_url: '',
+  // Sprint 9.3b enrichment fields
+  intensity_prescription: '',
+  tempo: '',
+  superset_group: '',
 })
 
 const editingExerciseId = ref<string | null>(null)
 const errorMessage = ref('')
 
-const workoutId = computed(() => route.params.id as string)
+const workoutId = computed(() => route.params.id as string | undefined)
+const isNewWorkout = computed(() => !workoutId.value || workoutId.value === 'new')
+
+// Sprint 9: Plan session context (when building a session within a plan)
+const planContext = computed(() => {
+  const mode = route.query.mode as string
+  if (mode !== 'plan-session') return null
+
+  return {
+    planId: route.query.planId as string,
+    blockId: route.query.blockId as string,
+    weekId: route.query.weekId as string,
+    dayIndex: parseInt(route.query.dayIndex as string),
+    blockType: route.query.blockType as string,
+    isDeload: route.query.isDeload === 'true',
+  }
+})
+
+const isPlanSession = computed(() => planContext.value !== null)
+
+// Handle back navigation
+function handleBack() {
+  if (isPlanSession.value && planContext.value) {
+    router.push(`/coach/planner/${planContext.value.planId}`)
+  } else {
+    router.push('/coach/workouts')
+  }
+}
 
 onMounted(async () => {
   await Promise.all([loadWorkout(), loadFavorites()])
@@ -133,7 +198,64 @@ function loadFromFavorite(fav: FavoriteExercise) {
 
 async function loadWorkout() {
   if (!authStore.user) return
-  
+
+  // If creating new workout, create it first
+  if (isNewWorkout.value) {
+    try {
+      const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+      const defaultName = isPlanSession.value && planContext.value
+        ? `${planContext.value.blockType || 'Session'} - ${dayNames[planContext.value.dayIndex]}`
+        : 'New Workout'
+
+      const { data, error } = (await (supabase
+        .from('workouts') as any)
+        .insert({
+          coach_id: authStore.user.id,
+          name: defaultName,
+          description: isPlanSession.value ? `Week ${planContext.value?.weekId} - Day ${(planContext.value?.dayIndex || 0) + 1}` : '',
+          session_type: planContext.value?.blockType || null,
+        })
+        .select()
+        .single()) as { data: any; error: any }
+
+      if (error) throw error
+      workout.value = data
+
+      // If this is a plan session, create the plan_session link
+      if (isPlanSession.value && planContext.value) {
+        try {
+          const { planSessionsService } = await import('@/services/planSessions')
+          await planSessionsService.createPlanSession({
+            block_week_id: planContext.value.weekId,
+            day_of_week: planContext.value.dayIndex,
+            workout_id: data.id,
+            order_index: 0,
+          })
+        } catch (linkError: any) {
+          // If duplicate key error, a session already exists for this day - that's ok
+          if (!linkError.message?.includes('duplicate key')) {
+            throw linkError
+          }
+          console.log('Session link already exists for this day')
+        }
+      }
+
+      // Update route to use the new workout ID
+      router.replace({
+        path: `/coach/workouts/${data.id}/edit`,
+        query: route.query, // Preserve plan context
+      })
+    } catch (e) {
+      console.error('Error creating workout:', e)
+      showToast('Failed to create workout', 'error')
+      router.push('/coach/workouts')
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+
+  // Load existing workout
   try {
     const { data, error } = await supabase
       .from('workouts')
@@ -141,25 +263,72 @@ async function loadWorkout() {
       .eq('id', workoutId.value)
       .eq('coach_id', authStore.user.id)
       .single()
-    
+
     if (error) throw error
     workout.value = data
+
+    // Load session-level metadata from workout
+    if (data) {
+      sessionType.value = (data as any).session_type || ''
+      sessionFocus.value = (data as any).session_focus || ''
+      targetRpe.value = (data as any).target_rpe || null
+    }
   } catch (e) {
     console.error('Error loading workout:', e)
-    router.push('/workouts')
+    router.push('/coach/workouts')
   } finally {
     loading.value = false
   }
 }
 
+async function saveSessionMeta() {
+  if (!workout.value) return
+  savingSession.value = true
+  try {
+    const { error } = (await (supabase
+      .from('workouts') as any)
+      .update({
+        session_type: sessionType.value || null,
+        session_focus: sessionFocus.value || null,
+        target_rpe: targetRpe.value || null,
+      })
+      .eq('id', workoutId.value)) as { error: any }
+
+    if (error) throw error
+    showToast('Session info saved')
+  } catch (e) {
+    console.error('Error saving session meta:', e)
+    showToast('Failed to save session info', 'error')
+  } finally {
+    savingSession.value = false
+  }
+}
+
+function handleLibrarySelect(item: ExerciseLibraryItem) {
+  // Pre-fill exercise form from library item
+  resetExerciseForm()
+  exerciseForm.value.name = item.name
+  exerciseForm.value.description = item.cues || ''
+  exerciseForm.value.video_url = item.video_url || ''
+  editingExerciseId.value = null
+  showExerciseLibrary.value = false
+  showExerciseModal.value = true
+}
+
 async function loadExercises() {
+  // Don't try to load exercises for new workouts (workoutId is 'new')
+  if (isNewWorkout.value || !workout.value) {
+    exercises.value = []
+    return
+  }
+
   try {
     const { data, error } = await supabase
       .from('exercises')
       .select('*')
       .eq('workout_id', workoutId.value)
       .order('order_index')
-    
+
     if (error) throw error
     exercises.value = data || []
   } catch (e) {
@@ -187,7 +356,10 @@ function editExercise(exercise: Exercise) {
     target_time_seconds: exercise.target_time_seconds,
     rest_seconds: exercise.rest_seconds,
     notes: exercise.notes || '',
-    video_url: exercise.video_url || ''
+    video_url: exercise.video_url || '',
+    intensity_prescription: (exercise as any).intensity_prescription || '',
+    tempo: (exercise as any).tempo || '',
+    superset_group: (exercise as any).superset_group || '',
   }
   editingExerciseId.value = exercise.id
   showExerciseModal.value = true
@@ -207,7 +379,10 @@ function resetExerciseForm() {
     target_time_seconds: null,
     rest_seconds: null,
     notes: '',
-    video_url: ''
+    video_url: '',
+    intensity_prescription: '',
+    tempo: '',
+    superset_group: '',
   }
   errorMessage.value = ''
 }
@@ -242,7 +417,10 @@ async function saveExercise() {
           target_time_seconds: exerciseForm.value.target_time_seconds,
           rest_seconds: exerciseForm.value.rest_seconds,
           notes: exerciseForm.value.notes || null,
-          video_url: exerciseForm.value.video_url || null
+          video_url: exerciseForm.value.video_url || null,
+          intensity_prescription: exerciseForm.value.intensity_prescription || null,
+          tempo: exerciseForm.value.tempo || null,
+          superset_group: exerciseForm.value.superset_group || null,
         })
         .eq('id', editingExerciseId.value)) as { error: any }
 
@@ -266,7 +444,10 @@ async function saveExercise() {
           target_time_seconds: exerciseForm.value.target_time_seconds,
           rest_seconds: exerciseForm.value.rest_seconds,
           notes: exerciseForm.value.notes || null,
-          video_url: exerciseForm.value.video_url || null
+          video_url: exerciseForm.value.video_url || null,
+          intensity_prescription: exerciseForm.value.intensity_prescription || null,
+          tempo: exerciseForm.value.tempo || null,
+          superset_group: exerciseForm.value.superset_group || null,
         })) as { error: any }
 
       if (error) throw error
@@ -312,7 +493,7 @@ async function handleDeleteExercise() {
 
 function formatExerciseDetails(exercise: Exercise): string {
   const parts: string[] = []
-  
+
   if (exercise.sets) parts.push(`${exercise.sets} sets`)
   if (exercise.reps) parts.push(`${exercise.reps} reps`)
   if (exercise.weight_kg) parts.push(`${exercise.weight_kg}kg`)
@@ -324,8 +505,32 @@ function formatExerciseDetails(exercise: Exercise): string {
   if (exercise.distance_meters) parts.push(`${exercise.distance_meters}m`)
   if (exercise.rpe) parts.push(`RPE ${exercise.rpe}`)
   if (exercise.intensity_percent) parts.push(`${exercise.intensity_percent}%`)
-  
+  const exAny = exercise as any
+  if (exAny.intensity_prescription) parts.push(exAny.intensity_prescription)
+  if (exAny.tempo) parts.push(`@${exAny.tempo}`)
+
   return parts.length > 0 ? parts.join(' • ') : 'No parameters set'
+}
+
+function getSupersetsMap(): Map<string, Exercise[]> {
+  const map = new Map<string, Exercise[]>()
+  for (const ex of exercises.value) {
+    const group = (ex as any).superset_group
+    if (group) {
+      if (!map.has(group)) map.set(group, [])
+      map.get(group)!.push(ex)
+    }
+  }
+  return map
+}
+
+function getSupersetLabel(exercise: Exercise): string | null {
+  const group = (exercise as any).superset_group
+  if (!group) return null
+  const map = getSupersetsMap()
+  const members = map.get(group)
+  if (!members || members.length < 2) return null
+  return group
 }
 
 function formatTime(seconds: number | null): string {
@@ -342,7 +547,7 @@ function formatTime(seconds: number | null): string {
     <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
       <div class="flex items-center gap-3">
         <button
-          @click="router.push('/workouts')"
+          @click="handleBack"
           class="p-2 hover:bg-gray-100 rounded-lg -ml-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -372,9 +577,77 @@ function formatTime(seconds: number | null): string {
 
     <!-- Content -->
     <div v-else class="p-4 space-y-4">
+      <!-- Plan context banner -->
+      <div v-if="isPlanSession && planContext" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
+        <div class="flex items-center gap-2 text-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-summit-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span class="font-semibold text-summit-900">Plan Session</span>
+          <span class="text-summit-700">
+            {{ planContext.blockType || 'Session' }} · Day {{ planContext.dayIndex + 1 }}
+            <span v-if="planContext.isDeload" class="ml-1 text-indigo-600 font-medium">· Deload Week</span>
+          </span>
+        </div>
+      </div>
+
       <!-- Workout info card -->
       <div v-if="workout?.description" class="card p-4">
         <p class="text-sm text-gray-700">{{ workout.description }}</p>
+      </div>
+
+      <!-- Session Metadata Panel (Sprint 9.3b) -->
+      <div class="card p-4 border-l-4 border-l-summit-600">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-bold text-gray-900">Session Details</h3>
+          <button
+            @click="saveSessionMeta"
+            :disabled="savingSession"
+            class="text-xs font-semibold text-summit-600 hover:text-summit-700"
+          >
+            {{ savingSession ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <!-- Session Type -->
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Type</label>
+            <select v-model="sessionType" class="input text-sm py-1.5">
+              <option value="">Not set</option>
+              <option v-for="t in sessionTypes" :key="t" :value="t">
+                {{ t.charAt(0).toUpperCase() + t.slice(1) }}
+              </option>
+            </select>
+          </div>
+          <!-- Session Focus -->
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Focus</label>
+            <select v-model="sessionFocus" class="input text-sm py-1.5">
+              <option value="">Not set</option>
+              <option v-for="f in sessionFocusOptions" :key="f" :value="f">
+                {{ f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) }}
+              </option>
+            </select>
+          </div>
+          <!-- Target RPE -->
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Target RPE</label>
+            <input
+              v-model.number="targetRpe"
+              type="number"
+              min="1"
+              max="10"
+              step="0.5"
+              placeholder="7"
+              class="input text-sm py-1.5"
+            />
+          </div>
+        </div>
+        <!-- Estimated Load -->
+        <div v-if="estimatedLoad > 0" class="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Est. Session Load</span>
+          <span class="text-sm font-bold text-summit-700">{{ estimatedLoad.toLocaleString() }} kg</span>
+        </div>
       </div>
 
       <!-- Empty state -->
@@ -409,9 +682,17 @@ function formatTime(seconds: number | null): string {
 
             <!-- Exercise info -->
             <div class="flex-1 min-w-0">
-              <h3 class="font-semibold text-gray-900 mb-1">
-                {{ exercise.name }}
-              </h3>
+              <div class="flex items-center gap-2 mb-1">
+                <h3 class="font-semibold text-gray-900">
+                  {{ exercise.name }}
+                </h3>
+                <span
+                  v-if="getSupersetLabel(exercise)"
+                  class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700"
+                >
+                  {{ getSupersetLabel(exercise) }}
+                </span>
+              </div>
               <p v-if="exercise.description" class="text-sm text-gray-600 mb-2">
                 {{ exercise.description }}
               </p>
@@ -496,7 +777,16 @@ function formatTime(seconds: number | null): string {
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
             </svg>
-            Add Exercise
+            Custom
+          </button>
+          <button
+            @click="showExerciseLibrary = true"
+            class="flex-1 p-4 border-2 border-dashed border-emerald-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-emerald-600 hover:text-emerald-700 font-medium"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            </svg>
+            Library
           </button>
           <button
             v-if="favorites.length > 0"
@@ -507,7 +797,7 @@ function formatTime(seconds: number | null): string {
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1 fill-current" viewBox="0 0 20 20">
               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
             </svg>
-            Favorites
+            Favs
           </button>
         </div>
       </div>
@@ -531,6 +821,35 @@ function formatTime(seconds: number | null): string {
       :visible="toastVisible"
       @close="toastVisible = false"
     />
+
+    <!-- Exercise Library Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showExerciseLibrary"
+        class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50"
+        @click.self="showExerciseLibrary = false"
+      >
+        <div class="bg-white w-full sm:max-w-3xl sm:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col animate-slide-up">
+          <div class="p-4 border-b border-feed-border flex items-center justify-between flex-shrink-0">
+            <h2 class="font-semibold text-lg">Exercise Library</h2>
+            <button
+              @click="showExerciseLibrary = false"
+              class="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 overflow-y-auto">
+            <ExerciseLibrary
+              :selectable="true"
+              @select="handleLibrarySelect"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Exercise Modal -->
     <div
@@ -693,6 +1012,48 @@ function formatTime(seconds: number | null): string {
               placeholder="90"
               class="input"
             />
+          </div>
+
+          <!-- Sprint 9.3b: Enrichment fields -->
+          <div class="pt-3 border-t border-gray-100">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Advanced Prescription</div>
+            <div class="grid grid-cols-2 gap-4">
+              <!-- Intensity Prescription -->
+              <div class="col-span-2 sm:col-span-1">
+                <label class="label">Intensity Prescription</label>
+                <input
+                  v-model="exerciseForm.intensity_prescription"
+                  type="text"
+                  placeholder="e.g., 80% 1RM, Zone 3, RPE 7-8"
+                  class="input"
+                />
+                <p class="helper-text">%, RPE range, pace, HR zone, velocity</p>
+              </div>
+
+              <!-- Tempo -->
+              <div class="col-span-2 sm:col-span-1">
+                <label class="label">Tempo</label>
+                <input
+                  v-model="exerciseForm.tempo"
+                  type="text"
+                  placeholder="e.g., 3-1-2-0"
+                  class="input"
+                />
+                <p class="helper-text">Eccentric-Pause-Concentric-Pause</p>
+              </div>
+
+              <!-- Superset Group -->
+              <div class="col-span-2">
+                <label class="label">Superset Group</label>
+                <input
+                  v-model="exerciseForm.superset_group"
+                  type="text"
+                  placeholder="e.g., A, B, or a custom name"
+                  class="input"
+                />
+                <p class="helper-text">Exercises with the same group letter are performed as a superset</p>
+              </div>
+            </div>
           </div>
 
           <!-- Notes -->

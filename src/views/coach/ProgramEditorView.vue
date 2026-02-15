@@ -97,7 +97,7 @@ async function loadProgram() {
     }
   } catch (e) {
     console.error('Error loading program:', e)
-    router.push('/programs')
+    router.push('/coach/programs')
   } finally {
     loading.value = false
   }
@@ -273,7 +273,7 @@ function getDayShortLabel(dayValue: number): string {
     <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
       <div class="flex items-center gap-3">
         <button
-          @click="router.push('/programs')"
+          @click="router.push('/coach/programs')"
           class="p-2 hover:bg-gray-100 rounded-lg -ml-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -311,7 +311,7 @@ function getDayShortLabel(dayValue: number): string {
       <!-- Empty state for workouts library -->
       <div v-if="availableWorkouts.length === 0" class="card p-4 bg-blue-50 border border-blue-200">
         <p class="text-sm text-blue-800">
-          💡 <strong>Tip:</strong> You don't have any standalone workouts yet. <router-link to="/workouts" class="underline">Create some workouts</router-link> first, then come back to assign them to your program.
+          💡 <strong>Tip:</strong> You don't have any standalone workouts yet. <router-link to="/coach/workouts" class="underline">Create some workouts</router-link> first, then come back to assign them to your program.
         </p>
       </div>
 
@@ -329,7 +329,7 @@ function getDayShortLabel(dayValue: number): string {
             <div 
               v-if="getWorkoutForDay(week, day.value)"
               class="h-full card p-2 flex flex-col justify-between bg-summit-50 border-summit-200 cursor-pointer hover:shadow-md transition-shadow"
-              @click="router.push(`/workouts/${getWorkoutForDay(week, day.value)!.id}/edit`)"
+              @click="router.push(`/coach/workouts/${getWorkoutForDay(week, day.value)!.id}/edit`)"
             >
               <div class="text-xs text-summit-700 font-medium">
                 {{ getDayShortLabel(day.value) }}
@@ -411,7 +411,7 @@ function getDayShortLabel(dayValue: number): string {
         <div class="flex-1 overflow-y-auto p-4 space-y-2">
           <div v-if="availableWorkouts.length === 0" class="text-center py-8 text-gray-500">
             <p>No workouts available.</p>
-            <router-link to="/workouts" class="text-summit-700 underline text-sm">
+            <router-link to="/coach/workouts" class="text-summit-700 underline text-sm">
               Create a workout first
             </router-link>
           </div>

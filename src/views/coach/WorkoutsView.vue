@@ -137,7 +137,7 @@ async function createWorkout() {
     if (error) throw error
 
     // Navigate to workout builder to add exercises
-    router.push(`/workouts/${workout.id}/edit`)
+    router.push(`/coach/workouts/${workout.id}/edit`)
   } catch (e) {
     console.error('Error creating workout:', e)
     errorMessage.value = e instanceof Error ? e.message : 'Failed to create workout'
@@ -147,7 +147,7 @@ async function createWorkout() {
 }
 
 function editWorkout(workoutId: string) {
-  router.push(`/workouts/${workoutId}/edit`)
+  router.push(`/coach/workouts/${workoutId}/edit`)
 }
 
 async function duplicateWorkout(workout: Workout) {

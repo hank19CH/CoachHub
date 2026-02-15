@@ -15,7 +15,25 @@
       "mcp__12aea11a-9c21-42aa-aeb3-8ae9f43cb4be__deploy_to_vercel",
       "Bash(npx vite build)",
       "WebFetch(domain:mzrmivqwywinsffkaimw.supabase.co)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(dir \"C:\\\\Users\\\\hkmit\\\\OneDrive\\\\Documents\\\\GitHub\\\\vumation\\\\Sprint9*\")",
+      "Bash(dir \"C:\\\\Users\\\\hkmit\\\\Downloads\\\\Sprint9*\")",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "mcp__0d355154-6f7c-4935-933e-c878e9afb5e4__deploy_edge_function",
+      "Bash(npx supabase secrets set:*)",
+      "Bash(npx supabase login)",
+      "Bash(ls:*)",
+      "Bash(xargs:*)",
+      "Bash(find:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git -C \"C:\\\\Users\\\\hkmit\\\\OneDrive\\\\Documents\\\\GitHub\\\\vumation\" log --oneline -10)",
+      "Bash(git -C \"C:\\\\Users\\\\hkmit\\\\OneDrive\\\\Documents\\\\GitHub\\\\vumation\" ls-files:*)",
+      "Bash(git -C \"C:\\\\Users\\\\hkmit\\\\OneDrive\\\\Documents\\\\GitHub\\\\vumation\" ls-files dist/)",
+      "Bash(git -C:*)",
+      "Bash(git rm:*)",
+      "Bash(npx supabase:*)"
     ]
   }
 }

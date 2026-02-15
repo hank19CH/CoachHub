@@ -1,0 +1,9 @@
+# Supabase Edge Function configuration
+# JWT verification is handled inside the function code via supabase.auth.getUser()
+# so we disable the gateway-level check to avoid double verification issues
+
+[functions.generate-plan]
+verify_jwt = false
+
+[functions.generate-session]
+verify_jwt = false
