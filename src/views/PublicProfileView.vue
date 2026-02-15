@@ -8,6 +8,9 @@ import { trackEvent } from '@/utils/analytics'
 import type { Profile, CoachProfile, UserStreak } from '@/types/database'
 import PostCard from '@/components/feed/PostCard.vue'
 import PostSkeleton from '@/components/feed/PostSkeleton.vue'
+import { getOrCreateConversation } from '@/services/messages'
+
+const startingConversation = ref(false)
 
 const route = useRoute()
 const router = useRouter()
@@ -173,6 +176,19 @@ async function loadPosts(authorId: string) {
   }
 }
 
+async function startConversation() {
+  if (!authStore.user || !profile.value || startingConversation.value) return
+  startingConversation.value = true
+  try {
+    const conversation = await getOrCreateConversation(authStore.user.id, profile.value.id)
+    router.push(`/messages/${conversation.id}`)
+  } catch (e) {
+    console.error('Error starting conversation:', e)
+  } finally {
+    startingConversation.value = false
+  }
+}
+
 onMounted(() => {
   loadProfile()
 })
@@ -321,7 +337,13 @@ onMounted(() => {
           </template>
           <template v-else>
             <button class="btn-primary">Follow</button>
-            <button class="btn-secondary">Message</button>
+            <button
+              class="btn-secondary"
+              :disabled="startingConversation"
+              @click="startConversation"
+            >
+              {{ startingConversation ? 'Opening...' : 'Message' }}
+            </button>
           </template>
         </div>
       </div>

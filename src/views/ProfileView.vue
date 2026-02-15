@@ -8,6 +8,9 @@ import type { Profile, CoachProfile, UserStreak } from '@/types/database'
 import PostCard from '@/components/feed/PostCard.vue'
 import PostSkeleton from '@/components/feed/PostSkeleton.vue'
 import FollowButton from '@/components/social/FollowButton.vue'
+import { getOrCreateConversation } from '@/services/messages'
+
+const startingConversation = ref(false)
 
 const route = useRoute()
 const router = useRouter()
@@ -122,6 +125,19 @@ function handleFollowChange(following: boolean) {
 function handlePostDeleted(postId: string) {
   posts.value = posts.value.filter(p => p.id !== postId)
   postCount.value = Math.max(0, postCount.value - 1)
+}
+
+async function startConversation() {
+  if (!authStore.user || !displayProfile.value || startingConversation.value) return
+  startingConversation.value = true
+  try {
+    const conversation = await getOrCreateConversation(authStore.user.id, displayProfile.value.id)
+    router.push(`/messages/${conversation.id}`)
+  } catch (e) {
+    console.error('Error starting conversation:', e)
+  } finally {
+    startingConversation.value = false
+  }
 }
 
 async function loadPosts(userId: string) {
@@ -359,7 +375,13 @@ async function loadPosts(userId: string) {
             :is-private="displayProfile.is_private"
             @change="handleFollowChange"
           />
-          <button class="btn-secondary">Message</button>
+          <button
+            class="btn-secondary"
+            :disabled="startingConversation"
+            @click="startConversation"
+          >
+            {{ startingConversation ? 'Opening...' : 'Message' }}
+          </button>
         </template>
       </div>
     </div>

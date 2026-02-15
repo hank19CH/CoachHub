@@ -22,7 +22,8 @@ export type AssignmentStatus = 'pending' | 'completed' | 'skipped'
 export type DifficultyLevel = 'beginner' | 'intermediate' | 'advanced'
 export type PbType = 'weight' | 'reps' | 'time' | 'distance'
 export type MediaType = 'image' | 'video' | 'workout_card'
-export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement'
+export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement' | 'message'
+export type AttachmentType = 'image' | 'video'
 
 // Sprint 9 — Training Planner enums
 export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived'
@@ -1256,6 +1257,57 @@ export interface Database {
           content?: string
           plan_data?: Json | null
           session_data?: Json | null
+        }
+      }
+      // ============================================
+      // Sprint 11 — Messaging
+      // ============================================
+      conversations: {
+        Row: {
+          id: string
+          participant_1_id: string
+          participant_2_id: string
+          last_message_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          participant_1_id: string
+          participant_2_id: string
+          last_message_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          last_message_at?: string | null
+        }
+      }
+      messages: {
+        Row: {
+          id: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          attachment_url: string | null
+          attachment_type: string | null
+          is_read: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          attachment_url?: string | null
+          attachment_type?: string | null
+          is_read?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          content?: string
+          is_read?: boolean
+          updated_at?: string
         }
       }
       // ============================================

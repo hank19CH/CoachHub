@@ -1,13 +1,38 @@
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { getTotalUnreadCount } from '@/services/messages'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
 const { unreadCount } = storeToRefs(notificationsStore)
+
+const messageUnreadCount = ref(0)
+
+onMounted(async () => {
+  if (authStore.user) {
+    try {
+      messageUnreadCount.value = await getTotalUnreadCount(authStore.user.id)
+    } catch {
+      // silently fail
+    }
+
+    // Poll every 30 seconds
+    setInterval(async () => {
+      if (authStore.user) {
+        try {
+          messageUnreadCount.value = await getTotalUnreadCount(authStore.user.id)
+        } catch {
+          // silently fail
+        }
+      }
+    }, 30000)
+  }
+})
 </script>
 
 <template>
@@ -48,15 +73,21 @@ const { unreadCount } = storeToRefs(notificationsStore)
           </span>
         </router-link>
 
-        <!-- Messages / DM (future feature) -->
-        <button 
-          class="p-2 rounded-full hover:bg-gray-100 transition-colors"
-          title="Messages coming soon"
+        <!-- Messages / DM -->
+        <router-link
+          to="/messages"
+          class="p-2 rounded-full hover:bg-gray-100 transition-colors relative"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
-        </button>
+          <span
+            v-if="messageUnreadCount > 0"
+            class="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-white bg-valencia-500 rounded-full"
+          >
+            {{ messageUnreadCount > 9 ? '9+' : messageUnreadCount }}
+          </span>
+        </router-link>
       </div>
     </div>
   </header>

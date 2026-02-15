@@ -10,12 +10,12 @@ const authStore = useAuthStore()
 
 // Pages that should hide the bottom nav
 const hideBottomNav = computed(() => {
-  return ['create', 'workout-detail', 'settings'].includes(route.name as string)
+  return ['create', 'workout-detail', 'settings', 'message-thread'].includes(route.name as string)
 })
 
 // Pages that should hide the top header
 const hideTopHeader = computed(() => {
-  return ['create', 'workout-detail'].includes(route.name as string)
+  return ['create', 'workout-detail', 'message-thread'].includes(route.name as string)
 })
 
 // Pages that need full width (no max-width constraint)
