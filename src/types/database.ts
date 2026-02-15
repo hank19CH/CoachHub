@@ -1258,6 +1258,115 @@ export interface Database {
           session_data?: Json | null
         }
       }
+      // ============================================
+      // Sprint 10 — Smart Import + Philosophy Detection
+      // ============================================
+      coach_philosophy: {
+        Row: {
+          id: string
+          coach_id: string
+          programs_analyzed: number
+          last_analysis_at: string | null
+          next_analysis_threshold: number
+          primary_periodization: string[] | null
+          avg_mesocycle_length_weeks: number | null
+          typical_deload_frequency: number | null
+          volume_progression_pattern: string | null
+          intensity_distribution: Json | null
+          top_exercises: Json | null
+          movement_patterns: Json | null
+          coaching_style_summary: string | null
+          recommendations: string[] | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          programs_analyzed?: number
+          last_analysis_at?: string | null
+          next_analysis_threshold?: number
+          primary_periodization?: string[] | null
+          avg_mesocycle_length_weeks?: number | null
+          typical_deload_frequency?: number | null
+          volume_progression_pattern?: string | null
+          intensity_distribution?: Json | null
+          top_exercises?: Json | null
+          movement_patterns?: Json | null
+          coaching_style_summary?: string | null
+          recommendations?: string[] | null
+        }
+        Update: {
+          programs_analyzed?: number
+          last_analysis_at?: string | null
+          next_analysis_threshold?: number
+          primary_periodization?: string[] | null
+          avg_mesocycle_length_weeks?: number | null
+          typical_deload_frequency?: number | null
+          volume_progression_pattern?: string | null
+          intensity_distribution?: Json | null
+          top_exercises?: Json | null
+          movement_patterns?: Json | null
+          coaching_style_summary?: string | null
+          recommendations?: string[] | null
+          updated_at?: string
+        }
+      }
+      import_history: {
+        Row: {
+          id: string
+          coach_id: string
+          file_name: string
+          file_type: string
+          file_size_bytes: number | null
+          storage_path: string | null
+          ai_model_used: string | null
+          processing_cost_usd: number | null
+          processing_time_ms: number | null
+          programs_imported: number
+          workouts_imported: number
+          exercises_imported: number
+          detected_periodization: string | null
+          detected_duration_weeks: number | null
+          detected_sport: string | null
+          status: string
+          error_message: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          file_name: string
+          file_type: string
+          file_size_bytes?: number | null
+          storage_path?: string | null
+          ai_model_used?: string | null
+          processing_cost_usd?: number | null
+          processing_time_ms?: number | null
+          programs_imported?: number
+          workouts_imported?: number
+          exercises_imported?: number
+          detected_periodization?: string | null
+          detected_duration_weeks?: number | null
+          detected_sport?: string | null
+          status?: string
+          error_message?: string | null
+        }
+        Update: {
+          storage_path?: string | null
+          ai_model_used?: string | null
+          processing_cost_usd?: number | null
+          processing_time_ms?: number | null
+          programs_imported?: number
+          workouts_imported?: number
+          exercises_imported?: number
+          detected_periodization?: string | null
+          detected_duration_weeks?: number | null
+          detected_sport?: string | null
+          status?: string
+          error_message?: string | null
+        }
+      }
     }
   }
 }

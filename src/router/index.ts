@@ -171,6 +171,18 @@ const router = createRouter({
       component: () => import('@/views/coach/ExerciseLibraryView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
+    {
+      path: '/coach/import',
+      name: 'smart-import',
+      component: () => import('@/views/coach/SmartImportView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/coach/philosophy',
+      name: 'philosophy-insights',
+      component: () => import('@/views/coach/PhilosophyInsightsView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
 
     // Athlete-specific routes
     {
