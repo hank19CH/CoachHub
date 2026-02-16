@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
+
+const route = useRoute()
 
 const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
@@ -58,11 +61,11 @@ onUnmounted(() => {
 
   <!-- Auth pages (login/signup) -->
   <AuthLayout v-else-if="!authStore.isAuthenticated">
-    <RouterView />
+    <RouterView :key="route.fullPath" />
   </AuthLayout>
 
   <!-- Main app layout (authenticated) -->
   <AppLayout v-else>
-    <RouterView />
+    <RouterView :key="route.fullPath" />
   </AppLayout>
 </template>

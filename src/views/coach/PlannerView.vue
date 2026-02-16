@@ -114,6 +114,7 @@ function handleCreateSession(dayIndex: number) {
       planId: plansStore.activePlan.id,
       blockId: plansStore.selectedBlockId,
       weekId: plansStore.selectedWeekId,
+      weekNumber: plansStore.selectedWeek.week_number?.toString() || '1',
       dayIndex: dayIndex.toString(),
       blockType: plansStore.selectedBlock?.block_type || '',
       isDeload: plansStore.selectedWeek.is_deload ? 'true' : 'false'

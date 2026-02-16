@@ -107,6 +107,7 @@ const planContext = computed(() => {
     planId: route.query.planId as string,
     blockId: route.query.blockId as string,
     weekId: route.query.weekId as string,
+    weekNumber: parseInt(route.query.weekNumber as string) || 1,
     dayIndex: parseInt(route.query.dayIndex as string),
     blockType: route.query.blockType as string,
     isDeload: route.query.isDeload === 'true',
@@ -212,7 +213,7 @@ async function loadWorkout() {
         .insert({
           coach_id: authStore.user.id,
           name: defaultName,
-          description: isPlanSession.value ? `Week ${planContext.value?.weekId} - Day ${(planContext.value?.dayIndex || 0) + 1}` : '',
+          description: isPlanSession.value ? `Week ${planContext.value?.weekNumber || 1} – Day ${(planContext.value?.dayIndex || 0) + 1}` : '',
           session_type: planContext.value?.blockType || null,
         })
         .select()

@@ -66,6 +66,7 @@ Deno.serve(async (req) => {
       equipment,
       coachPrompt,
       athleteContext,
+      methodologyContext,
       conversationHistory,
     } = body
 
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     const prompt = `You are a professional strength and conditioning coach. Generate a detailed workout session based on the coach's request.
 
-**Session Context:**
+${methodologyContext ? `${methodologyContext}\n` : ''}**Session Context:**
 - Block Type: ${blockType || 'general'}
 - Block Focus: ${blockFocusTags?.join(', ') || 'general fitness'}
 - Week Number: ${weekNumber || 1}

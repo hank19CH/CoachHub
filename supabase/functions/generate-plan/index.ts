@@ -57,6 +57,7 @@ Deno.serve(async (req) => {
       modificationRequest,
       coachPrompt,
       athleteContext,
+      methodologyContext,
       sport,
       goal,
       durationWeeks,
@@ -81,6 +82,7 @@ Deno.serve(async (req) => {
       // Tier 2: Modify existing plan
       prompt = `You are a professional strength and conditioning coach. A coach has requested modifications to an existing training plan.
 
+${methodologyContext ? `${methodologyContext}\n` : ''}
 **Existing Plan:**
 ${JSON.stringify(existingPlan, null, 2)}
 
@@ -120,7 +122,7 @@ Return ONLY valid JSON, no markdown formatting.`
       // Tier 3: Generate new plan
       prompt = `You are a professional strength and conditioning coach. Generate a complete periodized training plan.
 
-**Requirements:**
+${methodologyContext ? `${methodologyContext}\n` : ''}**Requirements:**
 - Sport: ${sport || 'general fitness'}
 - Goal: ${goal || 'improve performance'}
 - Duration: ${durationWeeks || 12} weeks

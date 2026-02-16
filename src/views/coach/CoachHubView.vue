@@ -56,14 +56,7 @@ const tools: ToolSection[] = [
         icon: 'clipboard',
         color: 'bg-valencia-600'
       },
-      {
-        name: 'Programs',
-        description: '4-12 week training plans',
-        path: '/coach/programs',
-        icon: 'calendar',
-        color: 'bg-summit-600'
-      },
-      {
+{
         name: 'AI Planner',
         description: 'Periodized training plans with AI',
         path: '/coach/planner',

@@ -33,7 +33,13 @@
       "Bash(git -C \"C:\\\\Users\\\\hkmit\\\\OneDrive\\\\Documents\\\\GitHub\\\\vumation\" ls-files dist/)",
       "Bash(git -C:*)",
       "Bash(git rm:*)",
-      "Bash(npx supabase:*)"
+      "Bash(npx supabase:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(where:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: Sprint 10 — Smart Import + Philosophy Detection\n\nSmart Import: AI-powered training program import from any file format.\n- File type routing: Excel → Code Execution sandbox \\(pandas/openpyxl\\),\n  CSV → text parsing, PDF → native document, Images → vision OCR\n- Drag & drop upload UI with processing stages and preview\n- Import history tracking with cost metadata\n\nPhilosophy Detection: AI analysis of coaching patterns.\n- Analyzes all programs to detect periodization style, exercise\n  preferences, movement patterns, and generates recommendations\n- Auto-analysis via pg_net database webhook when program count\n  thresholds are crossed \\(10, 20, 30...\\)\n- Dual auth Edge Function: JWT for user calls, trigger secret for\n  server-to-server DB trigger calls\n\nNew files: config/ai.ts, types/import.ts, services/aiImport.ts,\nservices/philosophyDetection.ts, SmartImportView.vue,\nPhilosophyInsightsView.vue, smart-import Edge Function,\nanalyze-philosophy Edge Function, DB migration\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: Sprint 11 — Real-time messaging system\n\nAdd 1-on-1 direct messaging with Supabase Realtime subscriptions.\n\nDatabase: conversations + messages tables with RLS, unique pair index,\nauto-updating last_message_at trigger, message-attachments storage bucket,\nand realtime publication for live message delivery.\n\nFrontend: MessagesView \\(conversation list with \"+\" new message button and\nuser search modal with debounced search\\), MessageThreadView \\(full-screen\nchat with message bubbles, date dividers, image/video attachments,\nauto-scroll, and realtime updates\\). Messages service layer handles\nget/create conversations, send/mark-read, file upload, subscriptions,\nand unread counts.\n\nNavigation: TopHeader message icon wired up with unread badge \\(30s poll\\),\nProfileView and PublicProfileView \"Message\" buttons now create/find\nconversations and navigate to thread. Message thread hides bottom nav\nand top header for full-screen chat experience.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npx tsc:*)"
     ]
   }
 }

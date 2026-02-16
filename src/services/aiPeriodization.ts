@@ -1,10 +1,13 @@
 import { supabase } from '@/lib/supabase'
 import { athleteHistoryService } from './athleteHistory'
 import { adaptiveService, type AdaptiveSuggestion } from './adaptive'
+import { getCoachMethodologyMatches } from './methodologyDetection'
+import { getFingerprint } from '@/data/methodologyFingerprints'
 
 // ============================================
 // AI Periodization Service — Frontend caller
 // Connects Tier 1 (adaptive rules), Tier 2 (modifications), Tier 3 (generation)
+// Now injects methodology guardrails for style-consistent AI output
 // ============================================
 
 export interface AiPlanResult {
@@ -63,11 +66,12 @@ export const aiPeriodizationService = {
     conversationHistory?: ConversationMessage[]
   }): Promise<AiPlanResult> {
     try {
-      let athleteContext: string | undefined
-      if (options.athleteId) {
-        const summary = await athleteHistoryService.getAthleteSummary(options.athleteId)
-        athleteContext = summary.contextText
-      }
+      const [athleteContext, methodologyContext] = await Promise.all([
+        options.athleteId
+          ? athleteHistoryService.getAthleteSummary(options.athleteId).then(s => s.contextText)
+          : Promise.resolve(undefined),
+        this.getMethodologyContext(options.coachId),
+      ])
 
       const { data, error } = await supabase.functions.invoke('generate-plan', {
         body: {
@@ -78,6 +82,7 @@ export const aiPeriodizationService = {
           modificationRequest: options.modificationRequest,
           coachPrompt: options.coachPrompt || options.modificationRequest,
           athleteContext,
+          methodologyContext,
           conversationHistory: options.conversationHistory || [],
         },
       })
@@ -130,11 +135,12 @@ export const aiPeriodizationService = {
     conversationHistory?: ConversationMessage[]
   }): Promise<AiPlanResult> {
     try {
-      let athleteContext: string | undefined
-      if (options.athleteId) {
-        const summary = await athleteHistoryService.getAthleteSummary(options.athleteId)
-        athleteContext = summary.contextText
-      }
+      const [athleteContext, methodologyContext] = await Promise.all([
+        options.athleteId
+          ? athleteHistoryService.getAthleteSummary(options.athleteId).then(s => s.contextText)
+          : Promise.resolve(undefined),
+        this.getMethodologyContext(options.coachId),
+      ])
 
       const { data, error } = await supabase.functions.invoke('generate-plan', {
         body: {
@@ -149,6 +155,7 @@ export const aiPeriodizationService = {
           injuries: options.injuries,
           coachPrompt: options.coachPrompt,
           athleteContext,
+          methodologyContext,
           conversationHistory: options.conversationHistory || [],
         },
       })
@@ -207,11 +214,12 @@ export const aiPeriodizationService = {
     conversationHistory?: ConversationMessage[]
   }): Promise<AiSessionResult> {
     try {
-      let athleteContext: string | undefined
-      if (options.athleteId) {
-        const summary = await athleteHistoryService.getAthleteSummary(options.athleteId)
-        athleteContext = summary.contextText
-      }
+      const [athleteContext, methodologyContext] = await Promise.all([
+        options.athleteId
+          ? athleteHistoryService.getAthleteSummary(options.athleteId).then(s => s.contextText)
+          : Promise.resolve(undefined),
+        this.getMethodologyContext(options.coachId),
+      ])
 
       const { data, error } = await supabase.functions.invoke('generate-session', {
         body: {
@@ -231,6 +239,7 @@ export const aiPeriodizationService = {
           equipment: options.equipment,
           coachPrompt: options.coachPrompt,
           athleteContext,
+          methodologyContext,
           conversationHistory: options.conversationHistory || [],
         },
       })
@@ -259,6 +268,68 @@ export const aiPeriodizationService = {
         rawText: null,
         error: e instanceof Error ? e.message : 'Unknown error',
       }
+    }
+  },
+
+  // ============================================
+  // Methodology Context Builder
+  // ============================================
+
+  /**
+   * Build compact methodology context for AI prompts.
+   * Returns a short string with guardrails (MUST/MUST NOT) instead of full philosophy essay.
+   * ~100-200 tokens vs ~500+ tokens for full analysis text.
+   */
+  async getMethodologyContext(coachId: string): Promise<string | undefined> {
+    try {
+      const matches = await getCoachMethodologyMatches(coachId)
+      if (!matches || matches.length === 0) return undefined
+
+      // Get the confirmed or highest-confidence match
+      const confirmed = matches.find(m => m.status === 'confirmed')
+      const topMatch = confirmed || matches[0]
+
+      if (!topMatch || topMatch.confidence < 40) return undefined
+
+      // Get the fingerprint data for guardrails
+      const fingerprint = getFingerprint(topMatch.methodology_id)
+      if (!fingerprint) return undefined
+
+      const confidence = topMatch.status === 'confirmed' ? 'confirmed' : `${topMatch.confidence}% detected`
+      const lines: string[] = [
+        `**Coach Methodology:** ${fingerprint.name} (${confidence})`,
+      ]
+
+      if (fingerprint.ai_guardrails.must.length > 0) {
+        lines.push(`**MUST:** ${fingerprint.ai_guardrails.must.join('; ')}`)
+      }
+      if (fingerprint.ai_guardrails.must_not.length > 0) {
+        lines.push(`**MUST NOT:** ${fingerprint.ai_guardrails.must_not.join('; ')}`)
+      }
+
+      // Add secondary methodologies if blended
+      const secondaryMatches = matches.filter(m =>
+        m.methodology_id !== topMatch.methodology_id &&
+        m.confidence > 30
+      )
+      if (secondaryMatches.length > 0) {
+        const secondaryNames = secondaryMatches
+          .map(m => {
+            const fp = getFingerprint(m.methodology_id)
+            return fp ? `${fp.shortName} (${m.confidence}%)` : null
+          })
+          .filter(Boolean)
+        if (secondaryNames.length > 0) {
+          lines.push(`**Secondary influences:** ${secondaryNames.join(', ')}`)
+        }
+      }
+
+      lines.push('Flag any suggestions that conflict with these methodology constraints.')
+
+      return lines.join('\n')
+    } catch (e) {
+      console.error('Error building methodology context:', e)
+      return undefined
     }
   },
 

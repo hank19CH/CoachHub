@@ -1,278 +1,73 @@
-// Supabase Edge Function: smart-import
-// Uses Anthropic Claude Sonnet for AI-powered training program parsing
-// Routes by file type:
-//   - Excel (.xlsx/.xls) → Code Execution sandbox (pandas/openpyxl)
-//   - CSV → Direct text parsing
-//   - PDF → Native document parsing
-//   - Images → Vision OCR
+// smart-import Edge Function (v12 - block-aware import → planner tables)
+// Pre-parsed spreadsheets (SheetJS on frontend) -> Haiku 4.5 for JSON structuring
+// PDF/Images -> Sonnet 4.5 for vision/document parsing
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929'
+const HAIKU = 'claude-haiku-4-5'
+const SONNET = 'claude-sonnet-4-5'
 
-const EXTRACTION_SCHEMA = `Extract the training program and return ONLY a valid JSON object matching this exact schema (no markdown, no explanations, just the JSON):
+// ── CORS ────────────────────────────────────────────────────────────────
+const CORS = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+}
 
+function json(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: CORS })
+}
+
+// ── Prompts ─────────────────────────────────────────────────────────────
+const SYSTEM = `You are a training program parser. Output ONLY valid JSON. No markdown, no code fences, no commentary.
+CRITICAL: You must extract EVERY exercise from EVERY workout. Never return an empty exercises array when exercises exist in the data. If a row in a spreadsheet contains an exercise name, sets, reps, or distances, include it.`
+
+const SCHEMA = `Return a JSON object with this structure:
 {
-  "programName": "string - program name",
+  "programName": "string",
   "durationWeeks": number,
-  "periodization": "linear" | "undulating" | "block" | "conjugate" | "mixed",
+  "periodization": "linear"|"undulating"|"block"|"conjugate"|"mixed",
   "sport": "string or null",
-  "weeks": [
-    {
-      "weekNumber": 1,
-      "name": "optional week name",
-      "workouts": [
-        {
-          "name": "Workout name",
-          "dayOfWeek": 1,
-          "description": "optional",
-          "exercises": [
-            {
-              "name": "Exercise name",
-              "sets": 3,
-              "reps": "8-10",
-              "weight": "80%" or null,
-              "rpe": 7 or null,
-              "notes": "optional"
-            }
-          ]
-        }
-      ]
-    }
-  ]
+  "blocks": [{
+    "name": "string",
+    "blockType": "string or null",
+    "weeks": [{
+      "weekNumber": number,
+      "name": "string",
+      "workouts": [{
+        "name": "string",
+        "dayOfWeek": 1-7,
+        "sessionType": "speed"|"strength"|"power"|"hypertrophy"|"conditioning"|"endurance"|"recovery"|"technique"|"competition"|"mixed"|null,
+        "exercises": [{
+          "name": "string",
+          "sets": number,
+          "reps": "string"
+        }]
+      }]
+    }]
+  }]
 }
 
-Rules:
-- dayOfWeek: 1=Monday through 7=Sunday
-- If you can only detect partial data, fill in reasonable defaults
-- periodization: analyze volume/intensity progression patterns
-- Detect the sport from exercise selection and context
-- Return ONLY the JSON, nothing else`
+RULES:
+1. Extract ALL exercises for every workout. Each exercise must have at least a name. If sets/reps are not clear, use reasonable defaults (sets: 1, reps: "1").
+2. For sprint/track data: treat drills like "Power Pole", "High Start", "3 Point" as exercises. Distances (e.g. "20m", "30m", "60m") should go in the reps field as a string.
+3. Group weeks into training blocks/phases if detectable (GPP, SPP, Competition, Accumulation, Intensification, Peaking, Hypertrophy, Strength, Power, Taper). If no phases are detectable, use one block.
+4. blockType examples: "hypertrophy", "strength", "power", "peaking", "gpp", "spp", "competition", "recovery".
+5. weekNumber must be sequential within each block starting at 1.
+6. dayOfWeek: 1=Monday, 7=Sunday. If specific days aren't clear, assign workouts sequentially starting from Monday.
+7. sessionType: classify each workout's primary focus. For sprint training, "speed" is typical.
+8. Optional exercise fields (include ONLY when data exists): "weight", "rpe", "notes", "duration_seconds", "distance_meters".
+9. Detect the sport and periodization from context.
+10. Be CONSISTENT: given the same input data, always produce the same output structure and the same number of workouts and exercises.
+Output ONLY the JSON.`
 
-const SYSTEM_PROMPT = `You are a training program parser. Your job is to extract structured workout data from uploaded files (images, CSVs, PDFs, spreadsheets). Always output ONLY valid JSON matching the requested schema. Never include markdown formatting, code blocks, or explanations — just the raw JSON object.`
-
-function isExcel(fileType: string): boolean {
-  return fileType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    fileType === 'application/vnd.ms-excel'
-}
-
-/**
- * Upload file to Anthropic Files API and return file_id
- */
-async function uploadToFilesAPI(fileContent: string, fileName: string): Promise<string> {
-  // Convert base64 to binary
-  const binaryString = atob(fileContent)
-  const bytes = new Uint8Array(binaryString.length)
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-
-  const formData = new FormData()
-  const blob = new Blob([bytes])
-  formData.append('file', blob, fileName)
-
-  const response = await fetch('https://api.anthropic.com/v1/files', {
-    method: 'POST',
-    headers: {
-      'x-api-key': ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'files-api-2025-04-14',
-    },
-    body: formData,
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Files API upload failed: ${response.status} - ${errorText}`)
-  }
-
-  const fileObj = await response.json()
-  return fileObj.id
-}
-
-/**
- * Process Excel file using Code Execution sandbox (pandas/openpyxl)
- */
-async function processExcelWithCodeExecution(
-  fileContent: string,
-  fileName: string
-): Promise<{ text: string; usage: any }> {
-  // Step 1: Upload file to Anthropic Files API
-  const fileId = await uploadToFilesAPI(fileContent, fileName)
-
-  // Step 2: Call Messages API with Code Execution tool + file reference
-  // Claude will use openpyxl/pandas (pre-installed) to parse the Excel file
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'code-execution-2025-08-25,files-api-2025-04-14',
-      'x-api-key': ANTHROPIC_API_KEY!,
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      tools: [{
-        type: 'code_execution_20250825',
-        name: 'code_execution',
-      }],
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'container_upload',
-            file_id: fileId,
-          },
-          {
-            type: 'text',
-            text: `This is an Excel training program file called "${fileName}".
-
-Use the code execution tool to:
-1. Read the Excel file with openpyxl or pandas (both are pre-installed)
-2. Inspect all sheets - list sheet names and preview data from each
-3. Identify the training program structure (weeks, days, exercises, sets, reps, etc.)
-4. Extract ALL data into a structured format
-
-After reading the file with code, ${EXTRACTION_SCHEMA}`,
-          },
-        ],
-      }],
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Code Execution API error: ${response.status} - ${errorText}`)
-  }
-
-  let data = await response.json()
-  let totalUsage = { input_tokens: data.usage?.input_tokens || 0, output_tokens: data.usage?.output_tokens || 0 }
-
-  // Handle pause_turn: Claude may need multiple turns to complete code execution
-  let maxContinuations = 5
-  while (data.stop_reason === 'pause_turn' && maxContinuations > 0) {
-    // Continue the conversation with the response so far
-    const continueResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'code-execution-2025-08-25,files-api-2025-04-14',
-        'x-api-key': ANTHROPIC_API_KEY!,
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 16000,
-        system: SYSTEM_PROMPT,
-        container: data.container?.id,
-        tools: [{
-          type: 'code_execution_20250825',
-          name: 'code_execution',
-        }],
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'container_upload', file_id: fileId },
-              {
-                type: 'text',
-                text: `This is an Excel training program file called "${fileName}". Use the code execution tool to read and parse it, then ${EXTRACTION_SCHEMA}`,
-              },
-            ],
-          },
-          {
-            role: 'assistant',
-            content: data.content,
-          },
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'Please continue.' }],
-          },
-        ],
-      }),
-    })
-
-    if (!continueResponse.ok) {
-      break
-    }
-
-    data = await continueResponse.json()
-    totalUsage.input_tokens += data.usage?.input_tokens || 0
-    totalUsage.output_tokens += data.usage?.output_tokens || 0
-    maxContinuations--
-  }
-
-  // Extract the final text from the response content blocks
-  // The response may contain server_tool_use, bash_code_execution_tool_result, and text blocks
-  // We want the last text block which should contain the JSON
-  const textBlocks = (data.content || []).filter((c: any) => c.type === 'text')
-  const lastText = textBlocks.length > 0 ? textBlocks[textBlocks.length - 1].text : null
-
-  if (!lastText) {
-    // Try extracting from code execution stdout as fallback
-    const codeResults = (data.content || []).filter((c: any) => c.type === 'bash_code_execution_tool_result')
-    for (const result of codeResults) {
-      const stdout = result.content?.stdout || ''
-      if (stdout.includes('"programName"') || stdout.includes('"weeks"')) {
-        return { text: stdout, usage: totalUsage }
-      }
-    }
-    throw new Error('No parseable output from Code Execution')
-  }
-
-  return { text: lastText, usage: totalUsage }
-}
-
-/**
- * Process non-Excel files with direct Claude API (vision, document, text)
- */
-async function processWithDirectAPI(
-  fileContent: string,
-  fileType: string,
-  fileName: string
-): Promise<{ text: string; usage: any }> {
-  const isImage = fileType.startsWith('image/')
-  const isCsv = fileType === 'text/csv'
-  const isPdf = fileType === 'application/pdf'
-
-  const userContent: any[] = []
-
-  if (isImage) {
-    userContent.push({
-      type: 'image',
-      source: { type: 'base64', media_type: fileType, data: fileContent },
-    })
-    userContent.push({
-      type: 'text',
-      text: `This is an image of a training program called "${fileName}". Extract the complete program structure from this image.\n\n${EXTRACTION_SCHEMA}`,
-    })
-  } else if (isCsv) {
-    const csvText = atob(fileContent)
-    userContent.push({
-      type: 'text',
-      text: `Parse this CSV training program file ("${fileName}"):\n\n${csvText}\n\n${EXTRACTION_SCHEMA}`,
-    })
-  } else if (isPdf) {
-    userContent.push({
-      type: 'document',
-      source: { type: 'base64', media_type: 'application/pdf', data: fileContent },
-    })
-    userContent.push({
-      type: 'text',
-      text: `This is a PDF of a training program called "${fileName}". Extract the complete program structure.\n\n${EXTRACTION_SCHEMA}`,
-    })
-  } else {
-    // Unknown type fallback
-    userContent.push({
-      type: 'text',
-      text: `I have a training program file called "${fileName}" (type: ${fileType}). Raw base64 preview:\n\n${fileContent.substring(0, 3000)}...\n\nExtract what you can.\n\n${EXTRACTION_SCHEMA}`,
-    })
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+// ── Call Anthropic Messages API ─────────────────────────────────────────
+async function callClaude(
+  model: string,
+  maxTokens: number,
+  messages: Array<{ role: string; content: any }>,
+): Promise<{ text: string; usage: any; stopReason: string }> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -280,163 +75,191 @@ async function processWithDirectAPI(
       'x-api-key': ANTHROPIC_API_KEY!,
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }],
+      model,
+      max_tokens: maxTokens,
+      temperature: 0,
+      system: SYSTEM,
+      messages,
     }),
   })
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`AI processing failed: ${response.status} - ${errorText}`)
+  if (!res.ok) {
+    const errBody = await res.text()
+    console.error(`Claude API ${res.status}:`, errBody.substring(0, 500))
+    throw new Error(`Claude API ${res.status}: ${errBody.substring(0, 300)}`)
   }
 
-  const data = await response.json()
-  const textContent = data.content?.find((c: any) => c.type === 'text')
+  const data = await res.json()
+  const stopReason = data.stop_reason
+  const usage = data.usage
 
-  if (!textContent) {
-    throw new Error('No text content in AI response')
+  console.log(`Claude response: model=${model}, stop_reason=${stopReason}, input=${usage?.input_tokens}, output=${usage?.output_tokens}`)
+
+  if (stopReason === 'max_tokens') {
+    throw new Error(
+      `Response truncated at ${usage?.output_tokens ?? '?'} tokens (limit: ${maxTokens}). Program too large for single pass.`,
+    )
   }
 
-  return { text: textContent.text, usage: data.usage }
+  const textBlock = data.content?.find((b: any) => b.type === 'text')
+  if (!textBlock?.text) {
+    throw new Error('No text in Claude response')
+  }
+
+  return { text: textBlock.text, usage, stopReason }
 }
 
-// ============================================
-// Main handler
-// ============================================
+// ── Extract JSON from AI text ───────────────────────────────────────────
+function extractJSON(raw: string): any {
+  let text = raw.trim()
+
+  // Strip markdown code fences
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fenced) text = fenced[1].trim()
+
+  // Extract outermost { ... }
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start !== -1 && end > start) {
+    text = text.substring(start, end + 1)
+  }
+
+  return JSON.parse(text) // throws on invalid JSON
+}
+
+// ── Main handler ────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      },
+    })
+  }
+
   try {
-    // CORS
-    if (req.method === 'OPTIONS') {
-      return new Response('ok', {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST',
-          'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-        },
-      })
-    }
-
-    // Auth
+    // ── Auth ──
     const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }
+    if (!authHeader) return json({ error: 'Missing authorization header' }, 401)
 
-    const supabaseClient = createClient(
+    const sb = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
+      { global: { headers: { Authorization: authHeader } } },
     )
+    const { data: { user }, error: authErr } = await sb.auth.getUser()
+    if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }
-
-    // Parse request
-    const body = await req.json()
-    const { fileContent, fileType, fileName } = body
-
+    // ── Parse request ──
+    const { fileContent, fileType, fileName, preParsed } = await req.json()
     if (!fileContent || !fileType || !fileName) {
-      return new Response(JSON.stringify({ error: 'Missing required fields: fileContent, fileType, fileName' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
-
     if (!ANTHROPIC_API_KEY) {
-      return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
     }
 
-    // Route by file type
-    let rawText: string
-    let usage: any
+    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${fileContent.length}`)
 
-    if (isExcel(fileType)) {
-      // Excel → Code Execution sandbox (pandas/openpyxl)
-      console.log(`Processing Excel file via Code Execution: ${fileName}`)
-      const result = await processExcelWithCodeExecution(fileContent, fileName)
-      rawText = result.text
-      usage = result.usage
+    // ── Route to correct model ──
+    let result: { text: string; usage: any; stopReason: string }
+    let modelUsed: string
+
+    if (preParsed) {
+      // Spreadsheet text from SheetJS -> Haiku (fast, cheap)
+      modelUsed = HAIKU
+      result = await callClaude(HAIKU, 32000, [
+        {
+          role: 'user',
+          content: `Parse this spreadsheet data from "${fileName}":\n\n${fileContent}\n\n${SCHEMA}`,
+        },
+      ])
     } else {
-      // CSV, PDF, images → Direct API
-      console.log(`Processing ${fileType} via Direct API: ${fileName}`)
-      const result = await processWithDirectAPI(fileContent, fileType, fileName)
-      rawText = result.text
-      usage = result.usage
+      // PDF or image -> Sonnet with vision/document blocks
+      modelUsed = SONNET
+      const contentBlocks: any[] = []
+
+      if (fileType === 'application/pdf') {
+        contentBlocks.push({
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: fileContent },
+        })
+      } else if (fileType.startsWith('image/')) {
+        contentBlocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: fileType, data: fileContent },
+        })
+      } else {
+        contentBlocks.push({
+          type: 'text',
+          text: `File "${fileName}" (${fileType}), base64 preview:\n${fileContent.substring(0, 3000)}`,
+        })
+      }
+
+      contentBlocks.push({
+        type: 'text',
+        text: `Extract the training program from "${fileName}".\n\n${SCHEMA}`,
+      })
+
+      result = await callClaude(SONNET, 32000, [
+        { role: 'user', content: contentBlocks },
+      ])
     }
 
-    // Extract JSON from response
-    let jsonText = rawText.trim()
-
-    // Remove markdown code blocks if present
-    const codeBlockMatch = jsonText.match(/```(?:json)?\n?([\s\S]*?)\n?```/)
-    if (codeBlockMatch) {
-      jsonText = codeBlockMatch[1].trim()
-    }
-
-    // If text has content before/after JSON, try to extract just the JSON object
-    const jsonObjMatch = jsonText.match(/\{[\s\S]*\}/)
-    if (jsonObjMatch && jsonObjMatch[0] !== jsonText) {
-      jsonText = jsonObjMatch[0]
-    }
-
-    // Parse and validate
-    let importResult
+    // ── Parse the JSON ──
+    let importResult: any
     try {
-      importResult = JSON.parse(jsonText)
-    } catch (parseError) {
-      console.error('Failed to parse AI response:', jsonText.substring(0, 500))
-      return new Response(JSON.stringify({ error: 'Failed to parse AI response as JSON' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      importResult = extractJSON(result.text)
+    } catch (parseErr) {
+      console.error('[smart-import] JSON parse failed. Raw (first 1000):', result.text.substring(0, 1000))
+      return json({
+        error: 'Failed to parse AI response as JSON',
+        raw: result.text.substring(0, 500),
+      }, 500)
     }
 
-    if (!importResult.programName || !importResult.weeks || importResult.weeks.length === 0) {
-      return new Response(JSON.stringify({ error: 'AI response missing required fields (programName, weeks)' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    // Validate required fields
+    if (!importResult.programName) {
+      return json({ error: 'AI response missing programName' }, 500)
+    }
+    if (!Array.isArray(importResult.blocks) || importResult.blocks.length === 0) {
+      // Backward compat: if AI returned flat weeks[] instead of blocks[], wrap in a single block
+      if (Array.isArray(importResult.weeks) && importResult.weeks.length > 0) {
+        importResult.blocks = [{
+          name: importResult.programName,
+          blockType: null,
+          weeks: importResult.weeks,
+        }]
+        delete importResult.weeks
+      } else {
+        return json({ error: 'AI response missing blocks[] or weeks[]' }, 500)
+      }
     }
 
-    // Log to ai_plan_logs
-    await supabaseClient.from('ai_plan_logs').insert({
-      coach_id: user.id,
-      tier: 'import',
-      action: 'smart_import',
-      prompt: `Smart Import: ${fileName} (${fileType})${isExcel(fileType) ? ' [Code Execution]' : ' [Direct API]'}`,
-      response: JSON.stringify(importResult).substring(0, 5000),
-      model: CLAUDE_MODEL,
-      tokens_used: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
-    } as any)
+    // ── Log (non-blocking) ──
+    const tokens = (result.usage?.input_tokens || 0) + (result.usage?.output_tokens || 0)
+    try {
+      await sb.from('ai_plan_logs').insert({
+        coach_id: user.id,
+        tier: 'import',
+        action: 'smart_import',
+        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}]`,
+        response: JSON.stringify(importResult).substring(0, 5000),
+        model: modelUsed,
+        tokens_used: tokens,
+      } as any)
+    } catch (e) {
+      console.warn('[smart-import] ai_plan_logs insert failed (non-fatal):', e)
+    }
 
-    return new Response(JSON.stringify({
-      success: true,
-      importResult,
-      usage,
-    }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-    })
-  } catch (error) {
-    console.error('smart-import error:', error)
-    return new Response(JSON.stringify({ error: error.message || 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ success: true, importResult, model: modelUsed, usage: result.usage })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[smart-import] ERROR:', msg)
+    if (err instanceof Error && err.stack) console.error(err.stack)
+    return json({ error: msg || 'Internal server error' }, 500)
   }
 })

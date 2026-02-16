@@ -14,6 +14,8 @@ const authStore = useAuthStore()
 const workouts = ref<Workout[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
+const activeTypeFilter = ref('')
+const activeDurationFilter = ref('')
 const showCreateModal = ref(false)
 
 // Confirm dialog state
@@ -44,16 +46,64 @@ const workoutForm = ref({
 const saving = ref(false)
 const errorMessage = ref('')
 
+// Duration filter ranges (in minutes)
+const durationFilters = [
+  { label: '< 30min', min: 0, max: 30 },
+  { label: '30-60min', min: 30, max: 60 },
+  { label: '60-90min', min: 60, max: 90 },
+  { label: '90min+', min: 90, max: Infinity },
+]
+
 // Computed
 const filteredWorkouts = computed(() => {
-  if (!searchQuery.value) return workouts.value
-  
-  const query = searchQuery.value.toLowerCase()
-  return workouts.value.filter(workout => 
-    workout.name.toLowerCase().includes(query) ||
-    (workout.description && workout.description.toLowerCase().includes(query))
-  )
+  let result = workouts.value
+
+  // Text search: match name, description, workout_type, session_type
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(workout =>
+      workout.name.toLowerCase().includes(query) ||
+      (workout.description && workout.description.toLowerCase().includes(query)) ||
+      (workout.workout_type && workout.workout_type.toLowerCase().includes(query)) ||
+      (workout.session_type && workout.session_type.toLowerCase().includes(query))
+    )
+  }
+
+  // Workout type filter
+  if (activeTypeFilter.value) {
+    result = result.filter(workout =>
+      workout.workout_type && workout.workout_type.toLowerCase() === activeTypeFilter.value.toLowerCase()
+    )
+  }
+
+  // Duration range filter
+  if (activeDurationFilter.value) {
+    const range = durationFilters.find(d => d.label === activeDurationFilter.value)
+    if (range) {
+      result = result.filter(workout => {
+        const dur = workout.estimated_duration_min
+        if (!dur) return false
+        return dur >= range.min && dur < range.max
+      })
+    }
+  }
+
+  return result
 })
+
+function toggleTypeFilter(type: string) {
+  activeTypeFilter.value = activeTypeFilter.value === type ? '' : type
+}
+
+function toggleDurationFilter(label: string) {
+  activeDurationFilter.value = activeDurationFilter.value === label ? '' : label
+}
+
+function clearAllFilters() {
+  searchQuery.value = ''
+  activeTypeFilter.value = ''
+  activeDurationFilter.value = ''
+}
 
 const hasWorkouts = computed(() => workouts.value.length > 0)
 
@@ -82,7 +132,6 @@ async function loadWorkouts() {
       .from('workouts')
       .select('*')
       .eq('coach_id', authStore.user.id)
-      .is('program_week_id', null) // Only standalone workouts for now
       .order('created_at', { ascending: false })
     
     if (error) throw error
@@ -279,18 +328,69 @@ function formatDuration(minutes: number | null): string {
       </div>
     </div>
 
-    <!-- Search bar (only show if has workouts) -->
-    <div v-if="hasWorkouts" class="p-4">
+    <!-- Search bar + filters (only show if has workouts) -->
+    <div v-if="hasWorkouts" class="px-4 pt-4 pb-2 space-y-3">
       <div class="relative">
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="Search workouts..."
+          placeholder="Search workouts by name, type..."
           class="input pl-10"
         />
         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
+      </div>
+
+      <!-- Type filter chips -->
+      <div class="flex flex-wrap gap-2">
+        <button
+          v-for="type in workoutTypes"
+          :key="type"
+          @click="toggleTypeFilter(type)"
+          :class="[
+            'px-3 py-1 text-xs font-medium rounded-full border transition-colors',
+            activeTypeFilter === type
+              ? 'bg-summit-600 text-white border-summit-600'
+              : 'bg-white text-gray-600 border-gray-200 hover:border-summit-300 hover:text-summit-700'
+          ]"
+        >
+          {{ type }}
+        </button>
+      </div>
+
+      <!-- Duration filter chips -->
+      <div class="flex flex-wrap gap-2">
+        <span class="text-xs text-gray-400 self-center mr-1">Duration:</span>
+        <button
+          v-for="dur in durationFilters"
+          :key="dur.label"
+          @click="toggleDurationFilter(dur.label)"
+          :class="[
+            'px-3 py-1 text-xs font-medium rounded-full border transition-colors',
+            activeDurationFilter === dur.label
+              ? 'bg-peak-500 text-white border-peak-500'
+              : 'bg-white text-gray-600 border-gray-200 hover:border-peak-300 hover:text-peak-700'
+          ]"
+        >
+          {{ dur.label }}
+        </button>
+      </div>
+
+      <!-- Active filters summary / clear -->
+      <div
+        v-if="activeTypeFilter || activeDurationFilter"
+        class="flex items-center justify-between"
+      >
+        <p class="text-xs text-gray-500">
+          {{ filteredWorkouts.length }} of {{ workouts.length }} workouts
+        </p>
+        <button
+          @click="clearAllFilters"
+          class="text-xs text-summit-600 hover:text-summit-800 font-medium"
+        >
+          Clear filters
+        </button>
       </div>
     </div>
 
@@ -397,9 +497,16 @@ function formatDuration(minutes: number | null): string {
         </div>
       </div>
 
-      <!-- No results from search -->
+      <!-- No results from search/filter -->
       <div v-if="filteredWorkouts.length === 0" class="text-center py-8 text-gray-500">
-        <p>No workouts found matching "{{ searchQuery }}"</p>
+        <p v-if="searchQuery">No workouts found matching "{{ searchQuery }}"</p>
+        <p v-else>No workouts match the selected filters</p>
+        <button
+          @click="clearAllFilters"
+          class="mt-2 text-sm text-summit-600 hover:text-summit-800 font-medium"
+        >
+          Clear all filters
+        </button>
       </div>
     </div>
 

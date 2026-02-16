@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { importProgram, saveImportedProgram, getImportHistory } from '@/services/aiImport'
+import { ref, computed, onBeforeUnmount } from 'vue'
+import type { ImportBlock, ImportWeek } from '@/types/import'
+import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { importProgram, saveImportedProgram, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord } from '@/types/import'
 import { AI_CONFIG } from '@/config/ai'
 
@@ -16,6 +17,9 @@ const historyRecord = ref<ImportHistoryRecord | null>(null)
 const error = ref<string | null>(null)
 const importHistory = ref<ImportHistoryRecord[]>([])
 
+// Abort controller for the current import
+let importAbortController: AbortController | null = null
+
 // Load import history on mount
 const loadHistory = async () => {
   try {
@@ -27,6 +31,30 @@ const loadHistory = async () => {
 
 loadHistory()
 
+// Warn user before navigating away during processing
+onBeforeRouteLeave((_to, _from, next) => {
+  if (isProcessing.value) {
+    const leave = window.confirm(
+      'An import is still processing. Leaving will cancel it. Continue?'
+    )
+    if (leave) {
+      cancelActiveImport()
+      importAbortController?.abort()
+    }
+    next(leave)
+  } else {
+    next()
+  }
+})
+
+// Also cancel on component destroy (e.g. browser refresh)
+onBeforeUnmount(() => {
+  if (isProcessing.value) {
+    cancelActiveImport()
+    importAbortController?.abort()
+  }
+})
+
 const fileTypeLabel = computed(() => {
   if (!file.value) return ''
   const type = file.value.type
@@ -36,6 +64,22 @@ const fileTypeLabel = computed(() => {
   if (type.includes('image')) return 'Image'
   return 'File'
 })
+
+// Normalize import blocks for preview (handles both new blocks[] and legacy weeks[] format)
+const previewBlocks = computed<ImportBlock[]>(() => {
+  if (!importResult.value) return []
+  if (importResult.value.blocks && importResult.value.blocks.length > 0) {
+    return importResult.value.blocks
+  }
+  if (importResult.value.weeks && importResult.value.weeks.length > 0) {
+    return [{ name: importResult.value.programName, weeks: importResult.value.weeks }]
+  }
+  return []
+})
+
+const totalPreviewWeeks = computed(() =>
+  previewBlocks.value.reduce((sum, b) => sum + (b.weeks?.length ?? 0), 0)
+)
 
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
@@ -60,18 +104,19 @@ const handleDrop = (event: DragEvent) => {
 const isDragging = ref(false)
 
 const handleImport = async () => {
-  if (!file.value) return
+  if (!file.value || isProcessing.value) return
 
   isProcessing.value = true
   error.value = null
   processingStage.value = 'uploading'
+  importAbortController = new AbortController()
 
   try {
     processingStage.value = 'uploading'
     await new Promise(resolve => setTimeout(resolve, 500))
 
     processingStage.value = 'parsing'
-    const result = await importProgram(file.value)
+    const result = await importProgram(file.value, importAbortController.signal)
 
     processingStage.value = 'validating'
     await new Promise(resolve => setTimeout(resolve, 300))
@@ -86,6 +131,7 @@ const handleImport = async () => {
     console.error('Import error:', err)
   } finally {
     isProcessing.value = false
+    importAbortController = null
   }
 }
 
@@ -93,9 +139,10 @@ const handleConfirmImport = async () => {
   if (!importResult.value) return
 
   isSaving.value = true
+  error.value = null
   try {
-    const programId = await saveImportedProgram(importResult.value)
-    router.push(`/coach/programs/${programId}`)
+    const planId = await saveImportedProgram(importResult.value, historyRecord.value?.id)
+    router.push(`/coach/planner/${planId}`)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to save program'
     console.error('Save error:', err)
@@ -104,7 +151,33 @@ const handleConfirmImport = async () => {
   }
 }
 
+const handleResumeSave = async (record: ImportHistoryRecord) => {
+  isSaving.value = true
+  error.value = null
+  try {
+    const cached = await getCachedImportResult(record.id)
+    if (!cached) {
+      error.value = 'Cached result expired or not found. Please re-import the file.'
+      return
+    }
+    importResult.value = cached
+    historyRecord.value = record
+    // Show the preview — user can then hit "Confirm & Save"
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Failed to load cached result'
+    console.error('Resume error:', err)
+  } finally {
+    isSaving.value = false
+  }
+}
+
 const handleCancel = () => {
+  // If processing, abort the in-flight request
+  if (isProcessing.value) {
+    cancelActiveImport()
+    importAbortController?.abort()
+    isProcessing.value = false
+  }
   file.value = null
   importResult.value = null
   historyRecord.value = null
@@ -282,11 +355,11 @@ const statusIcon = (status: string) => {
             <button
               v-if="file"
               @click="handleCancel"
-              :disabled="isProcessing"
               class="px-6 py-3 border border-gray-300 rounded-xl font-medium
-                hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                hover:bg-gray-50 transition-colors"
+              :class="isProcessing ? 'border-red-300 text-red-600 hover:bg-red-50' : ''"
             >
-              Cancel
+              {{ isProcessing ? 'Cancel Import' : 'Cancel' }}
             </button>
           </div>
         </div>
@@ -344,23 +417,47 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
-          <!-- Week Preview -->
+          <!-- Block & Week Preview -->
           <div class="space-y-3">
-            <h3 class="font-semibold text-gray-900 text-sm">Preview (First 2 Weeks)</h3>
-            <div v-for="week in importResult.weeks.slice(0, 2)" :key="week.weekNumber" class="border border-gray-200 rounded-lg p-3">
-              <p class="font-medium text-gray-900 text-sm mb-2">
-                Week {{ week.weekNumber }}{{ week.name ? ': ' + week.name : '' }}
-              </p>
-              <div class="space-y-1.5">
-                <div v-for="workout in week.workouts" :key="workout.name" class="pl-3 border-l-2 border-summit-300">
-                  <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
-                  <p class="text-xs text-gray-500">{{ workout.exercises.length }} exercises</p>
+            <h3 class="font-semibold text-gray-900 text-sm">
+              Preview — {{ previewBlocks.length }} {{ previewBlocks.length === 1 ? 'block' : 'blocks' }}, {{ totalPreviewWeeks }} weeks
+            </h3>
+            <div v-for="(block, bi) in previewBlocks" :key="bi" class="space-y-2">
+              <!-- Block header (only show if multiple blocks) -->
+              <div v-if="previewBlocks.length > 1" class="flex items-center gap-2 mt-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-summit-600"></div>
+                <p class="text-sm font-semibold text-summit-700">{{ block.name }}</p>
+                <span class="text-xs text-gray-400">{{ (block.weeks ?? []).length }} weeks</span>
+              </div>
+              <!-- Show first 2 weeks of each block -->
+              <div v-for="week in (block.weeks ?? []).slice(0, 2)" :key="`${bi}-${week.weekNumber}`" class="border border-gray-200 rounded-lg p-3">
+                <p class="font-medium text-gray-900 text-sm mb-2">
+                  Week {{ week.weekNumber }}{{ week.name ? ': ' + week.name : '' }}
+                </p>
+                <div class="space-y-1.5">
+                  <div v-for="workout in (week.workouts ?? [])" :key="workout.name" class="pl-3 border-l-2 border-summit-300">
+                    <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
+                    <p class="text-xs text-gray-500">{{ (workout.exercises ?? []).length }} exercises</p>
+                  </div>
                 </div>
               </div>
+              <p v-if="(block.weeks ?? []).length > 2" class="text-xs text-gray-500 text-center">
+                + {{ (block.weeks ?? []).length - 2 }} more weeks in this block
+              </p>
             </div>
-            <p v-if="importResult.weeks.length > 2" class="text-xs text-gray-500 text-center">
-              + {{ importResult.weeks.length - 2 }} more weeks
-            </p>
+          </div>
+
+          <!-- Save Error -->
+          <div v-if="error" class="bg-red-50 border border-red-200 rounded-xl p-4">
+            <div class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-red-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <div>
+                <p class="font-medium text-red-800">Save Failed</p>
+                <p class="text-sm text-red-700 mt-1">{{ error }}</p>
+              </div>
+            </div>
           </div>
 
           <!-- Actions -->
@@ -371,7 +468,7 @@ const statusIcon = (status: string) => {
               class="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium
                 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
             >
-              {{ isSaving ? 'Saving...' : 'Confirm & Save to CoachHub' }}
+              {{ isSaving ? 'Saving...' : 'Save to AI Planner' }}
             </button>
             <button
               @click="handleCancel"
@@ -412,11 +509,20 @@ const statusIcon = (status: string) => {
                 </p>
               </div>
             </div>
-            <div class="text-right shrink-0 ml-3">
-              <p class="text-xs font-medium capitalize" :class="statusColor(record.status)">
-                {{ record.status }}
-              </p>
-              <p v-if="record.processing_time_ms" class="text-xs text-gray-400">{{ (record.processing_time_ms / 1000).toFixed(1) }}s</p>
+            <div class="flex items-center gap-2 shrink-0 ml-3">
+              <button
+                v-if="record.has_cached_result && record.status === 'success'"
+                @click.stop="handleResumeSave(record)"
+                class="px-3 py-1 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+              >
+                Save
+              </button>
+              <div class="text-right">
+                <p class="text-xs font-medium capitalize" :class="statusColor(record.status)">
+                  {{ record.status }}
+                </p>
+                <p v-if="record.processing_time_ms" class="text-xs text-gray-400">{{ (record.processing_time_ms / 1000).toFixed(1) }}s</p>
+              </div>
             </div>
           </div>
         </div>

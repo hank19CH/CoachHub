@@ -1,9 +1,16 @@
+export interface ImportBlock {
+  name: string
+  blockType?: string  // e.g. "hypertrophy", "strength", "peaking", "gpp", "spp"
+  weeks: ImportWeek[]
+}
+
 export interface ImportResult {
   programName: string
   durationWeeks: number
   periodization: 'linear' | 'undulating' | 'block' | 'conjugate' | 'mixed'
   sport?: string
-  weeks: ImportWeek[]
+  blocks: ImportBlock[]   // primary: blocks containing weeks
+  weeks?: ImportWeek[]    // backward compat: cached results from old flat format
 }
 
 export interface ImportWeek {
@@ -16,6 +23,7 @@ export interface ImportWorkout {
   name: string
   dayOfWeek: number // 1-7 (Monday-Sunday)
   description?: string
+  sessionType?: string // e.g. "speed", "strength", "power", "conditioning"
   exercises: ImportExercise[]
 }
 
@@ -48,6 +56,7 @@ export interface ImportHistoryRecord {
   detected_sport?: string
   status: 'processing' | 'success' | 'partial' | 'failed'
   error_message?: string
+  has_cached_result?: boolean
   created_at: string
 }
 
