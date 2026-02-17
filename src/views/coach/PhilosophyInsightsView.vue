@@ -8,7 +8,13 @@ import {
   getCoachMethodologyMatches,
   getCoachExtractedMetrics,
 } from '@/services/methodologyDetection'
+import {
+  getCoachAbbreviationsFull,
+  upsertAbbreviation,
+  deleteAbbreviation,
+} from '@/services/coachAbbreviations'
 import type { CoachPhilosophy } from '@/types/import'
+import type { CoachAbbreviationRow } from '@/types/database'
 import type { MatchingOutput, CoachMethodologyMatch, ExtractedMetrics } from '@/types/methodology'
 import MethodologyConfirmationCard from '@/components/planner/MethodologyConfirmationCard.vue'
 import Toast from '@/components/ui/Toast.vue'
@@ -132,6 +138,9 @@ onMounted(async () => {
     programCount.value = count
     methodologyMatches.value = matches
     extractedMetrics.value = metrics
+
+    // Load abbreviations (non-blocking)
+    loadAbbreviations()
   } catch (error) {
     console.error('Failed to load philosophy:', error)
   } finally {
@@ -200,6 +209,58 @@ function handleMethodologyCorrected(fromId: string, toId: string) {
   const coachId = authStore.user?.id
   if (coachId) {
     getCoachMethodologyMatches(coachId).then(m => { methodologyMatches.value = m })
+  }
+}
+
+// === Abbreviation Glossary ===
+const abbreviations = ref<CoachAbbreviationRow[]>([])
+const glossaryExpanded = ref(false)
+const newAbbr = ref('')
+const newExpansion = ref('')
+const isSavingAbbr = ref(false)
+const isDeletingAbbr = ref<string | null>(null) // id being deleted
+
+const loadAbbreviations = async () => {
+  const coachId = authStore.user?.id
+  if (!coachId) return
+  try {
+    abbreviations.value = await getCoachAbbreviationsFull(coachId)
+  } catch (e) {
+    console.error('[Glossary] Failed to load:', e)
+  }
+}
+
+const handleAddAbbreviation = async () => {
+  const coachId = authStore.user?.id
+  if (!coachId || !newAbbr.value.trim() || !newExpansion.value.trim()) return
+
+  isSavingAbbr.value = true
+  try {
+    await upsertAbbreviation(coachId, newAbbr.value, newExpansion.value, 'manual')
+    newAbbr.value = ''
+    newExpansion.value = ''
+    await loadAbbreviations()
+    showToast('Abbreviation saved', 'success')
+  } catch (e) {
+    showToast('Failed to save abbreviation', 'error')
+  } finally {
+    isSavingAbbr.value = false
+  }
+}
+
+const handleDeleteAbbreviation = async (id: string) => {
+  const coachId = authStore.user?.id
+  if (!coachId) return
+
+  isDeletingAbbr.value = id
+  try {
+    await deleteAbbreviation(coachId, id)
+    await loadAbbreviations()
+    showToast('Abbreviation deleted', 'info')
+  } catch (e) {
+    showToast('Failed to delete abbreviation', 'error')
+  } finally {
+    isDeletingAbbr.value = null
   }
 }
 
@@ -507,6 +568,103 @@ const formatDate = (dateStr: string) => {
           </div>
         </template>
       </template>
+
+      <!-- Abbreviation Glossary Card (always visible, even without enough programs) -->
+      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Glossary Header (clickable to expand) -->
+        <button
+          @click="glossaryExpanded = !glossaryExpanded"
+          class="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+        >
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
+              <svg class="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <div class="text-left">
+              <h3 class="font-bold text-gray-900 text-sm">Abbreviation Glossary</h3>
+              <p class="text-xs text-gray-500">{{ abbreviations.length }} shorthand{{ abbreviations.length !== 1 ? 's' : '' }} saved</p>
+            </div>
+          </div>
+          <svg
+            class="w-5 h-5 text-gray-400 transition-transform"
+            :class="glossaryExpanded ? 'rotate-180' : ''"
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        <!-- Glossary Content -->
+        <div v-if="glossaryExpanded" class="border-t border-gray-200">
+          <!-- Empty State -->
+          <div v-if="abbreviations.length === 0 && !isSavingAbbr" class="px-5 py-8 text-center">
+            <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+              <svg class="w-6 h-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <p class="text-sm text-gray-600 mb-1">No abbreviations yet</p>
+            <p class="text-xs text-gray-500">Correct exercise names during import and they'll appear here automatically. Or add them manually below.</p>
+          </div>
+
+          <!-- Abbreviation Table -->
+          <div v-if="abbreviations.length > 0" class="divide-y divide-gray-100">
+            <div
+              v-for="abbr in abbreviations"
+              :key="abbr.id"
+              class="flex items-center justify-between px-5 py-2.5 hover:bg-gray-50"
+            >
+              <div class="flex items-center gap-3 min-w-0">
+                <code class="bg-summit-100 text-summit-700 px-2 py-0.5 rounded text-xs font-mono font-semibold shrink-0">
+                  {{ abbr.abbreviation }}
+                </code>
+                <span class="text-sm text-gray-700 truncate">{{ abbr.expansion }}</span>
+              </div>
+              <div class="flex items-center gap-3 shrink-0 ml-3">
+                <span class="text-xs text-gray-400">{{ abbr.usage_count }}x</span>
+                <button
+                  @click="handleDeleteAbbreviation(abbr.id)"
+                  :disabled="isDeletingAbbr === abbr.id"
+                  class="p-1 text-gray-400 hover:text-red-500 rounded hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Add New Abbreviation Form -->
+          <div class="px-5 py-3 bg-gray-50 border-t border-gray-200">
+            <div class="flex items-center gap-2">
+              <input
+                v-model="newAbbr"
+                placeholder="Abbr"
+                maxlength="10"
+                class="w-20 text-xs px-2 py-1.5 border border-gray-300 rounded-md font-mono uppercase focus:outline-none focus:ring-1 focus:ring-summit-400"
+                @keydown.enter="handleAddAbbreviation"
+              />
+              <span class="text-gray-400 text-xs">=</span>
+              <input
+                v-model="newExpansion"
+                placeholder="Full exercise name"
+                class="flex-1 text-xs px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-summit-400"
+                @keydown.enter="handleAddAbbreviation"
+              />
+              <button
+                @click="handleAddAbbreviation"
+                :disabled="!newAbbr.trim() || !newExpansion.trim() || isSavingAbbr"
+                class="px-3 py-1.5 bg-summit-600 text-white text-xs font-medium rounded-md hover:bg-summit-700 disabled:opacity-50 transition-colors shrink-0"
+              >
+                {{ isSavingAbbr ? '...' : 'Add' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Toast -->

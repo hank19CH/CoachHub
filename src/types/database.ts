@@ -1419,6 +1419,40 @@ export interface Database {
           error_message?: string | null
         }
       }
+      // ============================================
+      // Coach Abbreviation Glossary
+      // ============================================
+      coach_abbreviations: {
+        Row: {
+          id: string
+          coach_id: string
+          abbreviation: string
+          expansion: string
+          sport_context: string[]
+          usage_count: number
+          source: 'manual' | 'import_correction' | 'bulk'
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          abbreviation: string
+          expansion: string
+          sport_context?: string[]
+          usage_count?: number
+          source?: 'manual' | 'import_correction' | 'bulk'
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          expansion?: string
+          sport_context?: string[]
+          usage_count?: number
+          source?: string
+          updated_at?: string
+        }
+      }
     }
   }
 }
@@ -1532,6 +1566,10 @@ export interface TrainingBlockWithWeeks extends TrainingBlock {
 export interface BlockWeekWithWorkouts extends BlockWeek {
   workouts?: Workout[]
 }
+
+// Coach Abbreviation Glossary
+export type CoachAbbreviationRow = Database['public']['Tables']['coach_abbreviations']['Row']
+export type CoachAbbreviationInsert = Database['public']['Tables']['coach_abbreviations']['Insert']
 
 // AI Chat types
 export type AiChatSession = Database['public']['Tables']['ai_chat_sessions']['Row']

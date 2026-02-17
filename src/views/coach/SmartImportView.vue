@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import type { ImportBlock, ImportWeek } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { importProgram, saveImportedProgram, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord } from '@/types/import'
+import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
+import { useAuthStore } from '@/stores/auth'
 import { AI_CONFIG } from '@/config/ai'
 
 const router = useRouter()
+const authStore = useAuthStore()
 
 const file = ref<File | null>(null)
 const isProcessing = ref(false)
@@ -16,6 +19,92 @@ const importResult = ref<ImportResult | null>(null)
 const historyRecord = ref<ImportHistoryRecord | null>(null)
 const error = ref<string | null>(null)
 const importHistory = ref<ImportHistoryRecord[]>([])
+
+// Exercise review & abbreviation learning
+const expandedWorkouts = ref<Set<string>>(new Set())
+const originalExerciseNames = ref<Map<string, string>>(new Map()) // key: "blockIdx-weekIdx-workoutIdx-exerciseIdx" → original name
+const expandedAbbreviations = ref<string[]>([]) // abbreviations that were auto-expanded by Edge Function
+
+// Toggle a workout's exercise list expanded/collapsed
+const toggleWorkout = (key: string) => {
+  const s = new Set(expandedWorkouts.value)
+  if (s.has(key)) s.delete(key)
+  else s.add(key)
+  expandedWorkouts.value = s
+}
+
+// Count how many exercise names were edited
+const editCount = computed(() => {
+  let count = 0
+  for (const [key, original] of originalExerciseNames.value) {
+    const [bi, wi, woi, ei] = key.split('-').map(Number)
+    const block = previewBlocks.value[bi]
+    const week = block?.weeks?.[wi]
+    const workout = week?.workouts?.[woi]
+    const exercise = workout?.exercises?.[ei]
+    if (exercise && exercise.name !== original) count++
+  }
+  return count
+})
+
+// Snapshot all exercise names when importResult changes (for tracking edits)
+watch(() => importResult.value, (result) => {
+  if (!result) {
+    originalExerciseNames.value = new Map()
+    expandedWorkouts.value = new Set()
+    expandedAbbreviations.value = []
+    return
+  }
+  const map = new Map<string, string>()
+  const blocks = result.blocks?.length ? result.blocks :
+    result.weeks?.length ? [{ name: result.programName, weeks: result.weeks }] : []
+  for (let bi = 0; bi < blocks.length; bi++) {
+    for (let wi = 0; wi < (blocks[bi].weeks ?? []).length; wi++) {
+      const week = blocks[bi].weeks[wi]
+      for (let woi = 0; woi < (week.workouts ?? []).length; woi++) {
+        const workout = week.workouts[woi]
+        for (let ei = 0; ei < (workout.exercises ?? []).length; ei++) {
+          map.set(`${bi}-${wi}-${woi}-${ei}`, workout.exercises[ei].name)
+        }
+      }
+    }
+  }
+  originalExerciseNames.value = map
+}, { immediate: true })
+
+// Collect corrections and save as abbreviations (non-blocking, after plan save)
+const saveCorrectionsAsAbbreviations = async () => {
+  const coachId = authStore.user?.id
+  if (!coachId || editCount.value === 0) return
+
+  const corrections: Array<{ original: string; corrected: string }> = []
+  for (const [key, original] of originalExerciseNames.value) {
+    const [bi, wi, woi, ei] = key.split('-').map(Number)
+    const block = previewBlocks.value[bi]
+    const week = block?.weeks?.[wi]
+    const workout = week?.workouts?.[woi]
+    const exercise = workout?.exercises?.[ei]
+    if (exercise && exercise.name !== original) {
+      corrections.push({ original, corrected: exercise.name })
+    }
+  }
+
+  if (corrections.length === 0) return
+
+  const detected = detectAbbreviationsFromCorrections(corrections)
+  if (detected.length === 0) {
+    console.log('[SmartImport] No abbreviation patterns detected from corrections')
+    return
+  }
+
+  try {
+    const saved = await batchSaveAbbreviations(coachId, detected)
+    console.log(`[SmartImport] Auto-saved ${saved} abbreviations from corrections`)
+  } catch (err) {
+    // Non-critical — log but don't block save
+    console.warn('[SmartImport] Failed to save abbreviation corrections:', err)
+  }
+}
 
 // Abort controller for the current import
 let importAbortController: AbortController | null = null
@@ -124,6 +213,9 @@ const handleImport = async () => {
     processingStage.value = 'complete'
     importResult.value = result.importResult
     historyRecord.value = result.historyRecord
+    if (result.expandedAbbreviations?.length) {
+      expandedAbbreviations.value = result.expandedAbbreviations
+    }
 
     await loadHistory()
   } catch (err) {
@@ -142,6 +234,12 @@ const handleConfirmImport = async () => {
   error.value = null
   try {
     const planId = await saveImportedProgram(importResult.value, historyRecord.value?.id)
+
+    // Non-blocking: save exercise name corrections as abbreviations
+    if (editCount.value > 0) {
+      saveCorrectionsAsAbbreviations().catch(() => {})
+    }
+
     router.push(`/coach/planner/${planId}`)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to save program'
@@ -259,9 +357,12 @@ const statusIcon = (status: string) => {
               </svg>
             </div>
             <p class="text-lg font-medium text-gray-700 mb-1">Drop your file here or click to browse</p>
-            <p class="text-sm text-gray-500">
+            <p class="text-sm text-gray-500 mb-2">
               Supports Excel, CSV, PDF, or images (max {{ AI_CONFIG.import.maxFileSize / 1024 / 1024 }}MB)
             </p>
+            <router-link to="/coach/philosophy" class="text-xs text-summit-600 hover:text-summit-700 font-medium">
+              Manage abbreviation glossary &rarr;
+            </router-link>
             <input
               ref="fileInput"
               type="file"
@@ -417,11 +518,45 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
+          <!-- Expanded Abbreviations Banner -->
+          <div v-if="expandedAbbreviations.length > 0" class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-blue-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p class="font-medium text-blue-800 text-sm">Auto-expanded {{ expandedAbbreviations.length }} abbreviation{{ expandedAbbreviations.length > 1 ? 's' : '' }}</p>
+                <p class="text-xs text-blue-700 mt-1">
+                  <span v-for="(abbr, idx) in expandedAbbreviations" :key="abbr">
+                    <code class="bg-blue-100 px-1.5 py-0.5 rounded font-mono text-blue-800">{{ abbr }}</code>
+                    <span v-if="idx < expandedAbbreviations.length - 1">, </span>
+                  </span>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Edit Count Banner -->
+          <div v-if="editCount > 0" class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <div class="flex items-center gap-3">
+              <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <p class="text-sm text-amber-800">
+                <span class="font-semibold">{{ editCount }} exercise name{{ editCount > 1 ? 's' : '' }} corrected</span>
+                — will be saved to your glossary for future imports
+              </p>
+            </div>
+          </div>
+
           <!-- Block & Week Preview -->
           <div class="space-y-3">
-            <h3 class="font-semibold text-gray-900 text-sm">
-              Preview — {{ previewBlocks.length }} {{ previewBlocks.length === 1 ? 'block' : 'blocks' }}, {{ totalPreviewWeeks }} weeks
-            </h3>
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold text-gray-900 text-sm">
+                Preview — {{ previewBlocks.length }} {{ previewBlocks.length === 1 ? 'block' : 'blocks' }}, {{ totalPreviewWeeks }} weeks
+              </h3>
+              <p class="text-xs text-gray-500">Click workouts to review & edit exercise names</p>
+            </div>
             <div v-for="(block, bi) in previewBlocks" :key="bi" class="space-y-2">
               <!-- Block header (only show if multiple blocks) -->
               <div v-if="previewBlocks.length > 1" class="flex items-center gap-2 mt-2">
@@ -430,14 +565,58 @@ const statusIcon = (status: string) => {
                 <span class="text-xs text-gray-400">{{ (block.weeks ?? []).length }} weeks</span>
               </div>
               <!-- Show first 2 weeks of each block -->
-              <div v-for="week in (block.weeks ?? []).slice(0, 2)" :key="`${bi}-${week.weekNumber}`" class="border border-gray-200 rounded-lg p-3">
+              <div v-for="(week, wi) in (block.weeks ?? []).slice(0, 2)" :key="`${bi}-${week.weekNumber}`" class="border border-gray-200 rounded-lg p-3">
                 <p class="font-medium text-gray-900 text-sm mb-2">
                   Week {{ week.weekNumber }}{{ week.name ? ': ' + week.name : '' }}
                 </p>
                 <div class="space-y-1.5">
-                  <div v-for="workout in (week.workouts ?? [])" :key="workout.name" class="pl-3 border-l-2 border-summit-300">
-                    <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
-                    <p class="text-xs text-gray-500">{{ (workout.exercises ?? []).length }} exercises</p>
+                  <div v-for="(workout, woi) in (week.workouts ?? [])" :key="`${bi}-${wi}-${woi}`">
+                    <!-- Workout row: clickable to expand -->
+                    <div
+                      @click="toggleWorkout(`${bi}-${wi}-${woi}`)"
+                      class="pl-3 border-l-2 border-summit-300 cursor-pointer hover:bg-gray-50 rounded-r-md py-1 pr-2 flex items-center justify-between group"
+                    >
+                      <div>
+                        <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
+                        <p class="text-xs text-gray-500">{{ (workout.exercises ?? []).length }} exercises</p>
+                      </div>
+                      <svg
+                        class="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-transform shrink-0"
+                        :class="expandedWorkouts.has(`${bi}-${wi}-${woi}`) ? 'rotate-180' : ''"
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                    <!-- Expanded exercise list with inline editing -->
+                    <div
+                      v-if="expandedWorkouts.has(`${bi}-${wi}-${woi}`)"
+                      class="ml-5 mt-1 mb-2 space-y-1"
+                    >
+                      <div
+                        v-for="(exercise, ei) in (workout.exercises ?? [])"
+                        :key="`${bi}-${wi}-${woi}-${ei}`"
+                        class="flex items-center gap-2"
+                      >
+                        <span class="text-[10px] text-gray-400 w-4 text-right shrink-0">{{ ei + 1 }}</span>
+                        <input
+                          v-model="exercise.name"
+                          class="flex-1 text-xs px-2 py-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-summit-400 transition-colors"
+                          :class="originalExerciseNames.get(`${bi}-${wi}-${woi}-${ei}`) !== exercise.name
+                            ? 'bg-amber-50 border-amber-300 text-amber-900'
+                            : 'border-gray-200 bg-white text-gray-700'"
+                        />
+                        <span v-if="exercise.sets || exercise.reps" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                          {{ exercise.sets ? exercise.sets + '×' : '' }}{{ exercise.reps || '' }}
+                        </span>
+                        <span v-if="exercise.distance_meters" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                          {{ exercise.distance_meters }}m
+                        </span>
+                        <span v-if="exercise.duration_seconds" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                          {{ exercise.duration_seconds }}s
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -468,7 +647,7 @@ const statusIcon = (status: string) => {
               class="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium
                 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
             >
-              {{ isSaving ? 'Saving...' : 'Save to AI Planner' }}
+              {{ isSaving ? 'Saving...' : editCount > 0 ? `Save to AI Planner (${editCount} corrections)` : 'Save to AI Planner' }}
             </button>
             <button
               @click="handleCancel"

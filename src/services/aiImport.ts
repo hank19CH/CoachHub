@@ -165,7 +165,20 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
       fileContent = await fileToBase64(file)
     }
 
-    // 4. Process with AI via Edge Function
+    // 4. Fetch coach abbreviation glossary (for pre-expansion + prompt injection)
+    let coachAbbreviations: Record<string, string> = {}
+    try {
+      const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
+      coachAbbreviations = await getAbbreviationMap(coachId)
+      const abbrCount = Object.keys(coachAbbreviations).length
+      if (abbrCount > 0) {
+        console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
+      }
+    } catch (e) {
+      console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
+    }
+
+    // 5. Process with AI via Edge Function
     console.log(`[SmartImport] Sending to Edge Function: preParsed=${sendAsText}, contentLength=${fileContent.length}`)
 
     // Use raw fetch() instead of supabase.functions.invoke() so we can read
@@ -176,6 +189,8 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
 
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+    const hasAbbreviations = Object.keys(coachAbbreviations).length > 0
 
     const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
       method: 'POST',
@@ -189,6 +204,7 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
         fileType: file.type,
         fileName: file.name,
         preParsed: sendAsText,
+        ...(hasAbbreviations ? { coachAbbreviations } : {}),
       }),
       signal: abortController.signal,
     })
@@ -257,7 +273,8 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
 
     return {
       importResult,
-      historyRecord: updatedHistory
+      historyRecord: updatedHistory,
+      expandedAbbreviations: (data.expandedAbbreviations as string[]) || [],
     }
 
   } catch (error) {

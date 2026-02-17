@@ -591,15 +591,48 @@ Deno.serve(async (req) => {
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     // ── Parse request ──
-    const { fileContent, fileType, fileName, preParsed } = await req.json()
-    if (!fileContent || !fileType || !fileName) {
+    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations } = await req.json()
+    if (!rawContent || !fileType || !fileName) {
       return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
     if (!ANTHROPIC_API_KEY) {
       return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
     }
 
-    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${fileContent.length}`)
+    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}`)
+
+    // ── Coach Abbreviation Pre-Expansion ──
+    // Replace known coach shorthand in text BEFORE sending to AI
+    let fileContent = rawContent
+    const expandedAbbrs: string[] = []
+
+    if (coachAbbreviations && typeof coachAbbreviations === 'object' && preParsed) {
+      // Sort by length descending to prevent partial matches (e.g., "FEF60" before "FE")
+      const sorted = Object.entries(coachAbbreviations as Record<string, string>)
+        .sort((a, b) => b[0].length - a[0].length)
+
+      for (const [abbr, expansion] of sorted) {
+        const escaped = abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const regex = new RegExp(`\\b${escaped}\\b`, 'gi')
+        if (regex.test(fileContent)) {
+          fileContent = fileContent.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), expansion)
+          expandedAbbrs.push(abbr)
+        }
+      }
+
+      if (expandedAbbrs.length > 0) {
+        console.log(`[smart-import] Pre-expanded ${expandedAbbrs.length} abbreviations: ${expandedAbbrs.join(', ')}`)
+      }
+    }
+
+    // ── Build glossary prompt section (for AI context, especially PDFs/images) ──
+    let glossaryPrompt = ''
+    if (coachAbbreviations && Object.keys(coachAbbreviations).length > 0) {
+      const entries = Object.entries(coachAbbreviations as Record<string, string>)
+        .map(([a, e]) => `${a} = ${e}`)
+        .join(', ')
+      glossaryPrompt = `\n\nCOACH PERSONAL ABBREVIATIONS (OVERRIDE sport defaults — always use these expansions):\n${entries}\n`
+    }
 
     // ── Sport Detection (local, fast) ──
     // For pre-parsed text we can detect sport directly from content.
@@ -620,7 +653,7 @@ Deno.serve(async (req) => {
       result = await callClaude(HAIKU, 32000, [
         {
           role: 'user',
-          content: `Parse this spreadsheet data from "${fileName}":\n\n${fileContent}\n\n${schema}`,
+          content: `Parse this spreadsheet data from "${fileName}":\n\n${fileContent}\n\n${schema}${glossaryPrompt}`,
         },
       ])
     } else {
@@ -647,7 +680,7 @@ Deno.serve(async (req) => {
 
       contentBlocks.push({
         type: 'text',
-        text: `Extract the training program from "${fileName}".\n\n${schema}`,
+        text: `Extract the training program from "${fileName}".\n\n${schema}${glossaryPrompt}`,
       })
 
       result = await callClaude(SONNET, 32000, [
@@ -709,6 +742,7 @@ Deno.serve(async (req) => {
       detectedSport: sportSignal?.sport ?? importResult.sport ?? null,
       sportCategory: sportSignal?.category ?? null,
       sportConfidence: sportSignal?.confidence ?? 0,
+      expandedAbbreviations: expandedAbbrs,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

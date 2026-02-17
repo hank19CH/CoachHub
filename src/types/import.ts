@@ -43,6 +43,12 @@ export interface ImportExercise {
   notes?: string
 }
 
+export interface CoachAbbreviation {
+  abbreviation: string  // UPPERCASE
+  expansion: string
+  sport_context?: string[]
+}
+
 export interface ImportHistoryRecord {
   id: string
   coach_id: string
