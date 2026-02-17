@@ -30,11 +30,16 @@ export interface ImportWorkout {
 export interface ImportExercise {
   name: string
   sets?: number
-  reps?: string // Can be "8-10" or "5"
+  reps?: string // Can be "8-10" or "5" or "max" or "2+1"
   weight?: string // Can be "80%" or "135 lbs"
   duration_seconds?: number
   distance_meters?: number
-  rpe?: number
+  intensity_percent?: number // % of max (e.g. 80 for 80% 1RM, 95 for 95% sprint)
+  rest_seconds?: number // rest between sets/reps in seconds
+  target_time_seconds?: number // target completion time
+  tempo?: string // lifting tempo "3-1-X-0"
+  rpe?: number // rate of perceived exertion 1-10
+  category?: string // movement category (sprint, drill, interval, compound_lift, etc.)
   notes?: string
 }
 

@@ -8,6 +8,32 @@ import * as XLSX from 'xlsx'
 /** Max time (ms) to wait for AI processing before aborting */
 const IMPORT_TIMEOUT_MS = 120_000 // 2 minutes
 
+/**
+ * Parse a weight string from AI into database-compatible fields.
+ * "100kg" → { weight_kg: 100 }
+ * "225lbs" → { weight_kg: ~102 }
+ * "80%" → handled via intensity_percent, skip here
+ * Anything else → append to notes
+ */
+function parseWeight(weight: string): Record<string, any> {
+  if (!weight) return {}
+  const trimmed = weight.trim().toLowerCase()
+
+  // Skip percentages — already mapped to intensity_percent by AI
+  if (trimmed.endsWith('%')) return {}
+
+  // kg value
+  const kgMatch = trimmed.match(/^([\d.]+)\s*kg$/i)
+  if (kgMatch) return { weight_kg: parseFloat(kgMatch[1]) }
+
+  // lbs → convert to kg
+  const lbMatch = trimmed.match(/^([\d.]+)\s*(lbs?|pounds?)$/i)
+  if (lbMatch) return { weight_kg: Math.round(parseFloat(lbMatch[1]) * 0.4536 * 10) / 10 }
+
+  // Unrecognized format — don't lose it
+  return { intensity_prescription: weight }
+}
+
 /** Active abort controller - allows cancellation from outside */
 let activeAbortController: AbortController | null = null
 
@@ -280,6 +306,10 @@ function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
 /**
  * Save imported program to database using Sprint 9 Planner tables.
  * Creates: plan → training_blocks → block_weeks → workouts → exercises + plan_sessions
+ *
+ * Optimized for large programs: batches workout/exercise/session inserts per-week
+ * to minimize round-trips (~3 per week instead of ~3 per workout).
+ *
  * Returns the plan ID for navigation to /coach/planner/:planId
  */
 export async function saveImportedProgram(
@@ -292,105 +322,163 @@ export async function saveImportedProgram(
 
   const blocks = normalizeImportBlocks(importData)
 
+  const totalWorkouts = blocks.reduce((s, b) => s + (b.weeks ?? []).reduce((ws, w) => ws + (w.workouts ?? []).length, 0), 0)
+  console.log(`[SmartImport Save] Starting: ${blocks.length} blocks, ${totalWorkouts} workouts`)
+
   // 1. Create plan
   const today = new Date()
   const endDate = new Date(today)
   endDate.setDate(endDate.getDate() + (importData.durationWeeks || 1) * 7)
 
-  const plan = await plansService.createPlan({
-    coach_id: coachId,
-    name: importData.programName,
-    periodization_model: importData.periodization || null,
-    status: 'draft',
-    start_date: today.toISOString().split('T')[0],
-    end_date: endDate.toISOString().split('T')[0],
-    goal_description: `Imported via Smart Import — ${importData.periodization} periodization`,
-    ai_generated: false,
-  })
+  let plan: any
+  try {
+    plan = await plansService.createPlan({
+      coach_id: coachId,
+      name: importData.programName,
+      periodization_model: importData.periodization || null,
+      status: 'draft',
+      start_date: today.toISOString().split('T')[0],
+      end_date: endDate.toISOString().split('T')[0],
+      goal_description: `Imported via Smart Import — ${importData.periodization} periodization`,
+      ai_generated: false,
+    })
+    console.log(`[SmartImport Save] Plan created: ${plan.id}`)
+  } catch (err) {
+    console.error('[SmartImport Save] Failed to create plan:', err)
+    throw err
+  }
 
   // 2. For each block: create training_block (auto-creates block_weeks), then workouts + sessions
+  let savedWorkouts = 0
+  let savedExercises = 0
+
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const blockData = blocks[blockIndex]
 
-    const trainingBlock = await plansService.createBlock({
-      plan_id: plan.id,
-      name: blockData.name || `Block ${blockIndex + 1}`,
-      block_type: blockData.blockType ?? null,
-      duration_weeks: blockData.weeks.length,
-      order_index: blockIndex,
-      ai_generated: false,
-    })
+    let trainingBlock: any
+    try {
+      trainingBlock = await plansService.createBlock({
+        plan_id: plan.id,
+        name: blockData.name || `Block ${blockIndex + 1}`,
+        block_type: blockData.blockType ?? null,
+        duration_weeks: blockData.weeks.length,
+        order_index: blockIndex,
+        ai_generated: false,
+      })
+      console.log(`[SmartImport Save] Block ${blockIndex + 1}/${blocks.length}: "${blockData.name}" (${blockData.weeks.length} weeks)`)
+    } catch (err) {
+      console.error(`[SmartImport Save] Failed to create block ${blockIndex + 1}:`, err)
+      throw err
+    }
 
     // Fetch the auto-created block_weeks
     const blockWeeks = await plansService.getBlockWeeks(trainingBlock.id)
 
-    // 3. For each week in this block
+    // 3. For each week in this block — batch all workouts for the week
     for (const weekData of blockData.weeks ?? []) {
-      // Find matching block_week by week_number (1-indexed)
       const blockWeek = blockWeeks.find(bw => bw.week_number === weekData.weekNumber)
       if (!blockWeek) {
-        console.warn(`[saveImportedProgram] No block_week found for week ${weekData.weekNumber} in block "${blockData.name}"`)
+        console.warn(`[SmartImport Save] No block_week for week ${weekData.weekNumber} in "${blockData.name}"`)
         continue
       }
 
-      // 4. For each workout in the week
-      // Track per-day session count for correct order_index
-      const daySessionCounts: Record<number, number> = {}
+      const weekWorkouts = weekData.workouts ?? []
+      if (weekWorkouts.length === 0) continue
 
-      for (const workoutData of weekData.workouts ?? []) {
-        // Create workout — standalone (no program_week_id, no block_week_id)
-        // Link goes through plan_sessions
-        const { data: workout, error: workoutError } = await (supabase as any)
-          .from('workouts')
-          .insert({
-            coach_id: coachId,
-            name: workoutData.name,
-            description: workoutData.description || null,
-            day_of_week: workoutData.dayOfWeek,
-            session_type: workoutData.sessionType || null,
-            is_template: false,
+      // --- Batch insert all workouts for this week in one call ---
+      const workoutRows = weekWorkouts.map(w => ({
+        coach_id: coachId,
+        name: w.name,
+        description: w.description || null,
+        day_of_week: w.dayOfWeek,
+        session_type: w.sessionType || null,
+        is_template: false,
+      }))
+
+      const { data: createdWorkouts, error: wErr } = await (supabase as any)
+        .from('workouts')
+        .insert(workoutRows)
+        .select('id')
+
+      if (wErr) {
+        console.error(`[SmartImport Save] Workout batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, wErr)
+        throw new Error(wErr.message)
+      }
+
+      if (!createdWorkouts || createdWorkouts.length !== weekWorkouts.length) {
+        console.error(`[SmartImport Save] Workout count mismatch: expected ${weekWorkouts.length}, got ${createdWorkouts?.length ?? 0}`)
+        throw new Error('Workout batch insert returned wrong count')
+      }
+
+      savedWorkouts += createdWorkouts.length
+
+      // --- Batch insert all exercises for this week in one call ---
+      const allExercises: any[] = []
+      for (let wi = 0; wi < weekWorkouts.length; wi++) {
+        const workoutData = weekWorkouts[wi]
+        const workoutId = createdWorkouts[wi].id
+
+        for (let ei = 0; ei < (workoutData.exercises ?? []).length; ei++) {
+          const ex = workoutData.exercises[ei]
+          allExercises.push({
+            workout_id: workoutId,
+            name: ex.name,
+            order_index: ei,
+            sets: ex.sets ?? null,
+            reps: ex.reps ?? null,
+            notes: ex.notes ?? null,
+            duration_seconds: ex.duration_seconds ?? null,
+            distance_meters: ex.distance_meters ?? null,
+            rpe: ex.rpe ?? null,
+            intensity_percent: ex.intensity_percent ?? null,
+            rest_seconds: ex.rest_seconds ?? null,
+            target_time_seconds: ex.target_time_seconds ?? null,
+            tempo: ex.tempo ?? null,
+            category: ex.category ?? null,
+            ...(ex.weight ? parseWeight(ex.weight) : {}),
           })
-          .select()
-          .single()
+        }
+      }
 
-        if (workoutError) throw new Error(workoutError.message)
+      if (allExercises.length > 0) {
+        const { error: exErr } = await (supabase as any)
+          .from('exercises')
+          .insert(allExercises)
 
-        // Batch insert exercises
-        const exercises = (workoutData.exercises ?? []).map((ex, i) => ({
-          workout_id: workout.id,
-          name: ex.name,
-          order_index: i,
-          sets: ex.sets,
-          reps: ex.reps,
-          notes: ex.notes,
-          duration_seconds: ex.duration_seconds,
-          distance_meters: ex.distance_meters,
-          rpe: ex.rpe,
-        }))
-
-        if (exercises.length > 0) {
-          const { error: exError } = await (supabase as any)
-            .from('exercises')
-            .insert(exercises)
-
-          if (exError) throw new Error(exError.message)
+        if (exErr) {
+          console.error(`[SmartImport Save] Exercise batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, exErr)
+          throw new Error(exErr.message)
         }
 
-        // Create plan_session linking workout to the block week + day
-        // Import dayOfWeek is 1-7 (Mon-Sun), plan_sessions uses 0-6 (Mon-Sun)
-        const dayKey = workoutData.dayOfWeek - 1
+        savedExercises += allExercises.length
+      }
+
+      // --- Batch insert all plan_sessions for this week in one call ---
+      const daySessionCounts: Record<number, number> = {}
+      const sessionRows = weekWorkouts.map((w, wi) => {
+        const dayKey = w.dayOfWeek - 1
         const orderIndex = daySessionCounts[dayKey] || 0
         daySessionCounts[dayKey] = orderIndex + 1
-
-        await planSessionsService.createPlanSession({
+        return {
           block_week_id: blockWeek.id,
           day_of_week: dayKey,
-          workout_id: workout.id,
+          workout_id: createdWorkouts[wi].id,
           order_index: orderIndex,
-        })
+        }
+      })
+
+      const { error: sessErr } = await (supabase as any)
+        .from('plan_sessions')
+        .insert(sessionRows)
+
+      if (sessErr) {
+        console.error(`[SmartImport Save] Session batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, sessErr)
+        throw new Error(sessErr.message)
       }
     }
   }
+
+  console.log(`[SmartImport Save] Complete: ${savedWorkouts} workouts, ${savedExercises} exercises saved to plan ${plan.id}`)
 
   // Clear cached AI result now that plan is saved
   if (historyId) {
