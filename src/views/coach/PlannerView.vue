@@ -122,6 +122,24 @@ function handleCreateSession(dayIndex: number) {
   })
 }
 
+function handleOpenSession(payload: { workoutId: string; sessionId: string }) {
+  // Navigate to existing workout (not /new)
+  if (!plansStore.activePlan || !plansStore.selectedWeek) return
+
+  router.push({
+    path: `/coach/workouts/${payload.workoutId}/edit`,
+    query: {
+      mode: 'plan-session',
+      planId: plansStore.activePlan.id,
+      blockId: plansStore.selectedBlockId,
+      weekId: plansStore.selectedWeekId,
+      weekNumber: plansStore.selectedWeek.week_number?.toString() || '1',
+      blockType: plansStore.selectedBlock?.block_type || '',
+      isDeload: plansStore.selectedWeek.is_deload ? 'true' : 'false'
+    }
+  })
+}
+
 function handlePublished(result: { workoutsCreated: number; assignmentsCreated: number }) {
   showPublishModal.value = false
   showToast(`Published! ${result.assignmentsCreated} assignments created across ${result.workoutsCreated} sessions.`)
@@ -228,7 +246,7 @@ function goBackToList() {
             Publish Week
           </button>
         </div>
-        <WeekEditor @create-session="handleCreateSession" />
+        <WeekEditor @create-session="handleCreateSession" @open-session="handleOpenSession" />
       </div>
 
       <!-- RIGHT: Block Details / Changelog / Analytics -->
@@ -331,7 +349,7 @@ function goBackToList() {
         </div>
       </div>
 
-      <!-- Week tab: day strip + sessions -->
+      <!-- Week tab: day strip + sessions (uses WeekEditor component) -->
       <div v-if="mobileTab === 'week'">
         <div v-if="plansStore.selectedBlock">
           <!-- Week selector horizontal strip -->
@@ -366,27 +384,8 @@ function goBackToList() {
             </button>
           </div>
 
-          <!-- Day cards (stacked on mobile) -->
-          <div class="p-4 space-y-2.5">
-            <div
-              v-for="(day, i) in 7"
-              :key="i"
-              @click="handleCreateSession(i)"
-              class="bg-white rounded-xl border border-gray-100 p-3.5 cursor-pointer hover:bg-gray-50 transition-colors active:scale-[0.98]"
-            >
-              <div class="flex items-center justify-between">
-                <div>
-                  <span class="text-[10px] font-bold uppercase tracking-wide text-gray-400">
-                    {{ ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i] }}
-                  </span>
-                  <span class="text-xs text-gray-500 ml-2">Day {{ i + 1 }}</span>
-                </div>
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-            </div>
-          </div>
+          <!-- Reuse WeekEditor for mobile too (shows actual sessions) -->
+          <WeekEditor @create-session="handleCreateSession" @open-session="handleOpenSession" />
         </div>
 
         <div v-else class="p-6 text-center">

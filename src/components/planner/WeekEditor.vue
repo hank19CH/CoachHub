@@ -10,6 +10,7 @@ const plansStore = usePlansStore()
 
 const emit = defineEmits<{
   (e: 'create-session', dayIndex: number): void
+  (e: 'open-session', payload: { workoutId: string; sessionId: string }): void
 }>()
 
 // Sessions for the current week
@@ -87,6 +88,11 @@ const weekLoadSummary = computed(() => {
     completed: 0,
   }
 })
+
+function handleSessionClick(event: Event, session: { id: string; workoutId: string }) {
+  event.stopPropagation() // Prevent day card's create-session from firing
+  emit('open-session', { workoutId: session.workoutId, sessionId: session.id })
+}
 
 function getSessionTypeStyle(type: string) {
   const styles: Record<string, string> = {
@@ -176,7 +182,8 @@ function getSessionTypeStyle(type: string) {
           <div
             v-for="session in day.sessions"
             :key="session.id"
-            :class="['mt-1 py-1.5 px-2 rounded-md text-[10px] font-semibold', getSessionTypeStyle(session.type)]"
+            @click="handleSessionClick($event, session)"
+            :class="['mt-1 py-1.5 px-2 rounded-md text-[10px] font-semibold cursor-pointer hover:ring-2 hover:ring-summit-400 transition-all', getSessionTypeStyle(session.type)]"
           >
             {{ session.name }}
           </div>
