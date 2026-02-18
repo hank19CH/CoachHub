@@ -102,42 +102,43 @@ async function handleTemplateApplied() {
   await plansStore.refreshPlan()
 }
 
-function handleCreateSession(dayIndex: number) {
-  // Navigate to workout builder with plan context
-  if (!plansStore.activePlan || !plansStore.selectedWeek) return
-
-  // Pass context via route query params
-  router.push({
-    path: '/coach/workouts/new',
-    query: {
-      mode: 'plan-session',
-      planId: plansStore.activePlan.id,
-      blockId: plansStore.selectedBlockId,
-      weekId: plansStore.selectedWeekId,
-      weekNumber: plansStore.selectedWeek.week_number?.toString() || '1',
-      dayIndex: dayIndex.toString(),
-      blockType: plansStore.selectedBlock?.block_type || '',
-      isDeload: plansStore.selectedWeek.is_deload ? 'true' : 'false'
-    }
-  })
+function handleCreateSession(_dayIndex: number) {
+  // Sprint 12: Sessions are now created inline by WeekEditor (self-contained).
+  // This handler is kept for backward compatibility but the actual creation
+  // happens in WeekEditor.handleAddSession().
+  // No navigation needed — WeekEditor refreshes its own session list.
 }
 
 function handleOpenSession(payload: { workoutId: string; sessionId: string }) {
-  // Navigate to existing workout (not /new)
   if (!plansStore.activePlan || !plansStore.selectedWeek) return
 
-  router.push({
-    path: `/coach/workouts/${payload.workoutId}/edit`,
-    query: {
-      mode: 'plan-session',
-      planId: plansStore.activePlan.id,
-      blockId: plansStore.selectedBlockId,
-      weekId: plansStore.selectedWeekId,
-      weekNumber: plansStore.selectedWeek.week_number?.toString() || '1',
-      blockType: plansStore.selectedBlock?.block_type || '',
-      isDeload: plansStore.selectedWeek.is_deload ? 'true' : 'false'
-    }
-  })
+  const planQuery = {
+    mode: 'plan-session',
+    planId: plansStore.activePlan.id,
+    blockId: plansStore.selectedBlockId,
+    weekId: plansStore.selectedWeekId,
+    weekNumber: plansStore.selectedWeek.week_number?.toString() || '1',
+    blockType: plansStore.selectedBlock?.block_type || '',
+    isDeload: plansStore.selectedWeek.is_deload ? 'true' : 'false',
+  }
+
+  if (payload.workoutId) {
+    // Promoted session — open linked workout in WorkoutBuilder
+    router.push({
+      path: `/coach/workouts/${payload.workoutId}/edit`,
+      query: planQuery,
+    })
+  } else {
+    // Self-contained session — open in WorkoutBuilder with sessionMode
+    router.push({
+      path: '/coach/workouts/new',
+      query: {
+        ...planQuery,
+        sessionMode: 'true',
+        sessionId: payload.sessionId,
+      },
+    })
+  }
 }
 
 function handlePublished(result: { workoutsCreated: number; assignmentsCreated: number }) {

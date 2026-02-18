@@ -128,10 +128,13 @@ async function loadWorkouts() {
   try {
     loading.value = true
     
+    // Only show library workouts — coach-promoted or manually created.
+    // Plan session instances (is_library = false) stay hidden from this view.
     const { data, error } = await supabase
       .from('workouts')
       .select('*')
       .eq('coach_id', authStore.user.id)
+      .eq('is_library', true)
       .order('created_at', { ascending: false })
     
     if (error) throw error
@@ -178,7 +181,8 @@ async function createWorkout() {
         description: workoutForm.value.description || null,
         workout_type: workoutForm.value.workout_type || null,
         estimated_duration_min: workoutForm.value.estimated_duration_min,
-        is_template: workoutForm.value.is_template
+        is_template: workoutForm.value.is_template,
+        is_library: true, // manually created workouts are always library items
       } as any)
       .select()
       .single()) as { data: any; error: any }
@@ -212,7 +216,8 @@ async function duplicateWorkout(workout: Workout) {
         description: workout.description,
         workout_type: workout.workout_type,
         estimated_duration_min: workout.estimated_duration_min,
-        is_template: workout.is_template
+        is_template: workout.is_template,
+        is_library: true, // duplicated workouts stay in library
       } as any)
       .select()
       .single()) as { data: any; error: any }

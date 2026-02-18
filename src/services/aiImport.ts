@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { AI_CONFIG } from '@/config/ai'
-import type { ImportResult, ImportBlock, ImportHistoryRecord } from '@/types/import'
+import type { ImportResult, ImportBlock, ImportWeek, ImportWorkout, ImportExercise, ImportHistoryRecord, EvolvingExercise } from '@/types/import'
 import { plansService } from '@/services/plans'
 import { planSessionsService } from '@/services/planSessions'
 import * as XLSX from 'xlsx'
@@ -228,6 +228,14 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
 
     const importResult: ImportResult = data.importResult
 
+    // 4b. Normalize evolving_session format → standard blocks[] format
+    // The AI returns { exercises: [...], session_name, evolution_weeks } for evolving sessions.
+    // We convert that into blocks[].weeks[].workouts[].exercises[] so the preview UI and
+    // save logic work without any special casing.
+    if (importResult.detectedPlanType === 'evolving_session' && (importResult as any).exercises) {
+      normalizeEvolvingSession(importResult)
+    }
+
     // 5. Calculate processing metrics
     const processingTime = Date.now() - startTime
     const estimatedCost = AI_CONFIG.import.estimatedCostPerImport
@@ -262,6 +270,8 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
         detected_periodization: importResult.periodization,
         detected_duration_weeks: importResult.durationWeeks,
         detected_sport: importResult.sport,
+        detected_plan_type: importResult.detectedPlanType ?? null,
+        plan_type_confidence: importResult.planTypeConfidence ?? null,
         status: 'success',
         ai_result: importResult,
       })
@@ -303,6 +313,80 @@ export async function importProgram(file: File, signal?: AbortSignal): Promise<{
 }
 
 /**
+ * Convert evolving_session format (exercises[] with weeks[] per exercise)
+ * into standard blocks[] format so the preview UI and save logic work unchanged.
+ *
+ * Input:  { exercises: [{ name, weeks: [{ week_number, sets, reps, ... }] }] }
+ * Output: { blocks: [{ weeks: [{ workouts: [{ exercises: [...] }] }] }] }
+ *
+ * Each week gets ONE workout containing all exercises with that week's prescription.
+ */
+function normalizeEvolvingSession(importData: any): void {
+  const exercises = importData.exercises as EvolvingExercise[] | undefined
+  if (!exercises || exercises.length === 0) return
+
+  const sessionName = importData.session_name || importData.programName || 'Session'
+  const weekCount = importData.evolution_weeks || importData.durationWeeks || 1
+
+  // Collect all unique week numbers
+  const weekNumbers = new Set<number>()
+  for (const ex of exercises) {
+    for (const w of ex.weeks ?? []) {
+      weekNumbers.add(w.week_number)
+    }
+  }
+  const sortedWeeks = Array.from(weekNumbers).sort((a, b) => a - b)
+  // Fallback: if exercises have no weeks, create a single week
+  if (sortedWeeks.length === 0) {
+    sortedWeeks.push(1)
+  }
+
+  // Build weeks with one workout each
+  const weeks: ImportWeek[] = sortedWeeks.map(weekNum => {
+    const weekExercises: ImportExercise[] = exercises.map(ex => {
+      const weekData = (ex.weeks ?? []).find(w => w.week_number === weekNum)
+      return {
+        name: ex.name,
+        sets: weekData?.sets,
+        reps: weekData?.reps,
+        weight: weekData?.weight,
+        intensity_percent: weekData?.load_percent,
+        rest_seconds: ex.rest_seconds,
+        notes: ex.notes,
+      }
+    })
+
+    return {
+      weekNumber: weekNum,
+      name: `Week ${weekNum}`,
+      workouts: [{
+        name: sessionName,
+        dayOfWeek: 1,
+        sessionType: undefined,
+        exercises: weekExercises,
+      }],
+    }
+  })
+
+  // Set blocks on the importData (mutates in place)
+  importData.blocks = [{
+    name: importData.programName || sessionName,
+    blockType: undefined,
+    weeks,
+  }]
+
+  // Update duration if not set
+  if (!importData.durationWeeks || importData.durationWeeks < sortedWeeks.length) {
+    importData.durationWeeks = sortedWeeks.length
+  }
+
+  // Clean up evolving-specific fields
+  delete importData.exercises
+  delete importData.session_name
+  delete importData.evolution_weeks
+}
+
+/**
  * Normalize import data: ensure blocks[] exists (backward compat for cached old results)
  */
 function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
@@ -322,27 +406,35 @@ function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
 
 /**
  * Save imported program to database using Sprint 9 Planner tables.
- * Creates: plan → training_blocks → block_weeks → workouts → exercises + plan_sessions
  *
- * Optimized for large programs: batches workout/exercise/session inserts per-week
- * to minimize round-trips (~3 per week instead of ~3 per workout).
+ * Sprint 12 architecture: sessions are self-contained by default.
+ * Exercise data is stored in plan_sessions.session_data JSONB.
+ * Workouts records are NOT auto-created (they flood the coach's library).
+ *
+ * Sessions flagged for library promotion (via libraryFlags) get a linked
+ * workouts record with is_library = true + exercises copied to the exercises table.
+ *
+ * Creates: plan → training_blocks → block_weeks → plan_sessions (with session_data)
+ * Optionally: workouts + exercises (only for library-flagged sessions)
  *
  * Returns the plan ID for navigation to /coach/planner/:planId
  */
 export async function saveImportedProgram(
   importData: ImportResult,
-  historyId?: string
+  historyId?: string,
+  libraryFlags?: Set<string>, // Set of "blockIdx-weekIdx-workoutIdx" keys to auto-promote
 ): Promise<string> {
   const user = await supabase.auth.getUser()
   const coachId = user.data.user?.id
   if (!coachId) throw new Error('Not authenticated')
 
   const blocks = normalizeImportBlocks(importData)
+  const planType = importData.detectedPlanType ?? 'block_plan'
 
   const totalWorkouts = blocks.reduce((s, b) => s + (b.weeks ?? []).reduce((ws, w) => ws + (w.workouts ?? []).length, 0), 0)
-  console.log(`[SmartImport Save] Starting: ${blocks.length} blocks, ${totalWorkouts} workouts`)
+  console.log(`[SmartImport Save] Starting: ${blocks.length} blocks, ${totalWorkouts} sessions, planType=${planType}`)
 
-  // 1. Create plan
+  // 1. Create plan (with plan_type)
   const today = new Date()
   const endDate = new Date(today)
   endDate.setDate(endDate.getDate() + (importData.durationWeeks || 1) * 7)
@@ -358,16 +450,18 @@ export async function saveImportedProgram(
       end_date: endDate.toISOString().split('T')[0],
       goal_description: `Imported via Smart Import — ${importData.periodization} periodization`,
       ai_generated: false,
-    })
+      plan_type: planType,
+    } as any)
     console.log(`[SmartImport Save] Plan created: ${plan.id}`)
   } catch (err) {
     console.error('[SmartImport Save] Failed to create plan:', err)
     throw err
   }
 
-  // 2. For each block: create training_block (auto-creates block_weeks), then workouts + sessions
-  let savedWorkouts = 0
+  // 2. For each block: create training_block, then self-contained plan_sessions
+  let savedSessions = 0
   let savedExercises = 0
+  let libraryWorkouts = 0
 
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const blockData = blocks[blockIndex]
@@ -391,8 +485,9 @@ export async function saveImportedProgram(
     // Fetch the auto-created block_weeks
     const blockWeeks = await plansService.getBlockWeeks(trainingBlock.id)
 
-    // 3. For each week in this block — batch all workouts for the week
-    for (const weekData of blockData.weeks ?? []) {
+    // 3. For each week: create self-contained plan_sessions with session_data
+    for (let weekIndex = 0; weekIndex < (blockData.weeks ?? []).length; weekIndex++) {
+      const weekData = blockData.weeks[weekIndex]
       const blockWeek = blockWeeks.find(bw => bw.week_number === weekData.weekNumber)
       if (!blockWeek) {
         console.warn(`[SmartImport Save] No block_week for week ${weekData.weekNumber} in "${blockData.name}"`)
@@ -402,106 +497,130 @@ export async function saveImportedProgram(
       const weekWorkouts = weekData.workouts ?? []
       if (weekWorkouts.length === 0) continue
 
-      // --- Batch insert all workouts for this week in one call ---
-      const workoutRows = weekWorkouts.map(w => ({
-        coach_id: coachId,
-        name: w.name,
-        description: w.description || null,
-        day_of_week: w.dayOfWeek,
-        session_type: w.sessionType || null,
-        is_template: false,
-      }))
+      // Build session rows with exercise data in session_data JSONB
+      const daySessionCounts: Record<number, number> = {}
+      const sessionRows: any[] = []
 
-      const { data: createdWorkouts, error: wErr } = await (supabase as any)
-        .from('workouts')
-        .insert(workoutRows)
-        .select('id')
+      for (let woi = 0; woi < weekWorkouts.length; woi++) {
+        const w = weekWorkouts[woi]
+        const dayKey = w.dayOfWeek - 1
+        const orderIndex = daySessionCounts[dayKey] || 0
+        daySessionCounts[dayKey] = orderIndex + 1
 
-      if (wErr) {
-        console.error(`[SmartImport Save] Workout batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, wErr)
-        throw new Error(wErr.message)
-      }
+        // Convert ImportExercise[] → SessionExercise[] for session_data JSONB
+        const sessionExercises = (w.exercises ?? []).map((ex, ei) => ({
+          order: ei,
+          name: ex.name,
+          sets: ex.sets ?? 0,
+          reps: ex.reps ?? undefined,
+          rest_seconds: ex.rest_seconds ?? undefined,
+          load_percent: ex.intensity_percent ?? undefined,
+          weight: ex.weight ?? undefined,
+          notes: [
+            ex.notes,
+            ex.duration_seconds ? `${ex.duration_seconds}s` : null,
+            ex.distance_meters ? `${ex.distance_meters}m` : null,
+            ex.rpe ? `RPE ${ex.rpe}` : null,
+            ex.tempo ? `@${ex.tempo}` : null,
+            ex.category ? `[${ex.category}]` : null,
+          ].filter(Boolean).join(' | ') || undefined,
+        }))
 
-      if (!createdWorkouts || createdWorkouts.length !== weekWorkouts.length) {
-        console.error(`[SmartImport Save] Workout count mismatch: expected ${weekWorkouts.length}, got ${createdWorkouts?.length ?? 0}`)
-        throw new Error('Workout batch insert returned wrong count')
-      }
+        savedExercises += sessionExercises.length
 
-      savedWorkouts += createdWorkouts.length
+        // Check if this session should be auto-promoted to library
+        const flagKey = `${blockIndex}-${weekIndex}-${woi}`
+        const shouldPromote = libraryFlags?.has(flagKey) ?? false
 
-      // --- Batch insert all exercises for this week in one call ---
-      const allExercises: any[] = []
-      for (let wi = 0; wi < weekWorkouts.length; wi++) {
-        const workoutData = weekWorkouts[wi]
-        const workoutId = createdWorkouts[wi].id
+        if (shouldPromote) {
+          // Create a workouts record + exercises + linked plan_session
+          const { data: workout, error: wErr } = await (supabase as any)
+            .from('workouts')
+            .insert({
+              coach_id: coachId,
+              name: w.name,
+              description: w.description || null,
+              session_type: w.sessionType || null,
+              is_library: true,
+              is_template: true,
+            })
+            .select('id')
+            .single()
 
-        for (let ei = 0; ei < (workoutData.exercises ?? []).length; ei++) {
-          const ex = workoutData.exercises[ei]
-          allExercises.push({
-            workout_id: workoutId,
-            name: ex.name,
-            order_index: ei,
-            sets: ex.sets ?? null,
-            reps: ex.reps ?? null,
-            notes: ex.notes ?? null,
-            duration_seconds: ex.duration_seconds ?? null,
-            distance_meters: ex.distance_meters ?? null,
-            rpe: ex.rpe ?? null,
-            intensity_percent: ex.intensity_percent ?? null,
-            rest_seconds: ex.rest_seconds ?? null,
-            target_time_seconds: ex.target_time_seconds ?? null,
-            tempo: ex.tempo ?? null,
-            category: ex.category ?? null,
-            ...(ex.weight ? parseWeight(ex.weight) : {}),
+          if (wErr) throw new Error(wErr.message)
+
+          // Insert exercises for the library workout
+          if (w.exercises?.length) {
+            const exerciseRows = w.exercises.map((ex, ei) => ({
+              workout_id: workout.id,
+              name: ex.name,
+              order_index: ei,
+              sets: ex.sets ?? null,
+              reps: ex.reps ?? null,
+              notes: ex.notes ?? null,
+              duration_seconds: ex.duration_seconds ?? null,
+              distance_meters: ex.distance_meters ?? null,
+              rpe: ex.rpe ?? null,
+              intensity_percent: ex.intensity_percent ?? null,
+              rest_seconds: ex.rest_seconds ?? null,
+              target_time_seconds: ex.target_time_seconds ?? null,
+              tempo: ex.tempo ?? null,
+              category: ex.category ?? null,
+              ...(ex.weight ? parseWeight(ex.weight) : {}),
+            }))
+
+            await (supabase as any).from('exercises').insert(exerciseRows)
+          }
+
+          sessionRows.push({
+            block_week_id: blockWeek.id,
+            day_of_week: dayKey,
+            order_index: orderIndex,
+            session_name: w.name,
+            session_data: sessionExercises,
+            workout_id: workout.id, // linked to library
+          })
+          libraryWorkouts++
+        } else {
+          // Self-contained session — no workouts record
+          sessionRows.push({
+            block_week_id: blockWeek.id,
+            day_of_week: dayKey,
+            order_index: orderIndex,
+            session_name: w.name,
+            session_data: sessionExercises,
+            // workout_id omitted — self-contained
           })
         }
       }
 
-      if (allExercises.length > 0) {
-        const { error: exErr } = await (supabase as any)
-          .from('exercises')
-          .insert(allExercises)
+      // Batch insert all plan_sessions for this week
+      if (sessionRows.length > 0) {
+        const { error: sessErr } = await (supabase as any)
+          .from('plan_sessions')
+          .insert(sessionRows)
 
-        if (exErr) {
-          console.error(`[SmartImport Save] Exercise batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, exErr)
-          throw new Error(exErr.message)
+        if (sessErr) {
+          console.error(`[SmartImport Save] Session batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, sessErr)
+          throw new Error(sessErr.message)
         }
 
-        savedExercises += allExercises.length
-      }
-
-      // --- Batch insert all plan_sessions for this week in one call ---
-      const daySessionCounts: Record<number, number> = {}
-      const sessionRows = weekWorkouts.map((w, wi) => {
-        const dayKey = w.dayOfWeek - 1
-        const orderIndex = daySessionCounts[dayKey] || 0
-        daySessionCounts[dayKey] = orderIndex + 1
-        return {
-          block_week_id: blockWeek.id,
-          day_of_week: dayKey,
-          workout_id: createdWorkouts[wi].id,
-          order_index: orderIndex,
-        }
-      })
-
-      const { error: sessErr } = await (supabase as any)
-        .from('plan_sessions')
-        .insert(sessionRows)
-
-      if (sessErr) {
-        console.error(`[SmartImport Save] Session batch insert failed (block ${blockIndex + 1}, week ${weekData.weekNumber}):`, sessErr)
-        throw new Error(sessErr.message)
+        savedSessions += sessionRows.length
       }
     }
   }
 
-  console.log(`[SmartImport Save] Complete: ${savedWorkouts} workouts, ${savedExercises} exercises saved to plan ${plan.id}`)
+  console.log(`[SmartImport Save] Complete: ${savedSessions} sessions (${libraryWorkouts} promoted), ${savedExercises} exercises saved to plan ${plan.id}`)
 
-  // Clear cached AI result now that plan is saved
+  // Update import_history with plan type + clear cached AI result
   if (historyId) {
     await (supabase as any)
       .from('import_history')
-      .update({ ai_result: null })
+      .update({
+        ai_result: null,
+        detected_plan_type: importData.detectedPlanType ?? null,
+        plan_type_confidence: importData.planTypeConfidence ?? null,
+      })
       .eq('id', historyId)
   }
 
@@ -525,7 +644,14 @@ export async function getCachedImportResult(historyId: string): Promise<ImportRe
   const age = Date.now() - new Date(data.created_at).getTime()
   if (age > 24 * 60 * 60 * 1000) return null
 
-  return data.ai_result as ImportResult
+  const result = data.ai_result as ImportResult
+
+  // Normalize evolving_session cached results into blocks[] format
+  if (result.detectedPlanType === 'evolving_session' && (result as any).exercises) {
+    normalizeEvolvingSession(result)
+  }
+
+  return result
 }
 
 /**

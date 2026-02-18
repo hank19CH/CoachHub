@@ -4,8 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { Workout, Exercise, FavoriteExercise, ExerciseLibraryItem } from '@/types/database'
+import type { SessionExercise } from '@/types/import'
 import { trackEvent } from '@/utils/analytics'
 import { exerciseLibraryService } from '@/services/exerciseLibrary'
+import { planSessionsService } from '@/services/planSessions'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Toast from '@/components/ui/Toast.vue'
 import ExerciseLibrary from '@/components/planner/ExerciseLibrary.vue'
@@ -23,6 +25,15 @@ const saving = ref(false)
 const showExerciseModal = ref(false)
 const showFavoritesPanel = ref(false)
 const showExerciseLibrary = ref(false)
+
+// --- Session Mode (Sprint 12.6) ---
+// When sessionMode=true, exercises are stored in plan_sessions.session_data JSONB
+// instead of the exercises table. No workouts record is created.
+const isSessionMode = computed(() => route.query.sessionMode === 'true')
+const sessionId = computed(() => route.query.sessionId as string | undefined)
+const sessionExercises = ref<SessionExercise[]>([])
+const sessionName = ref('') // editable session name
+const promotingToLibrary = ref(false)
 
 // Session header fields (Sprint 9.3b)
 const sessionType = ref('')
@@ -118,7 +129,9 @@ const isPlanSession = computed(() => planContext.value !== null)
 
 // Handle back navigation
 function handleBack() {
-  if (isPlanSession.value && planContext.value) {
+  if (isSessionMode.value && route.query.planId) {
+    router.push(`/coach/planner/${route.query.planId}`)
+  } else if (isPlanSession.value && planContext.value) {
     router.push(`/coach/planner/${planContext.value.planId}`)
   } else {
     router.push('/coach/workouts')
@@ -126,8 +139,14 @@ function handleBack() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadWorkout(), loadFavorites()])
-  await loadExercises()
+  if (isSessionMode.value && sessionId.value) {
+    // Session mode: load from plan_sessions.session_data
+    await loadSessionData()
+    await loadFavorites()
+  } else {
+    await Promise.all([loadWorkout(), loadFavorites()])
+    await loadExercises()
+  }
 })
 
 async function loadFavorites() {
@@ -179,6 +198,115 @@ async function toggleFavorite(exercise: Exercise) {
       favorites.value.push(data)
       trackEvent('exercise_favorited', { exercise_name: exercise.name })
     }
+  }
+}
+
+// --- Session Mode helpers (Sprint 12.6) ---
+
+async function loadSessionData() {
+  if (!sessionId.value) return
+  loading.value = true
+  try {
+    const session = await planSessionsService.getSessionById(sessionId.value)
+    if (!session) {
+      showToast('Session not found', 'error')
+      handleBack()
+      return
+    }
+    sessionName.value = session.session_name || 'Session'
+    const data = session.session_data as any
+    sessionExercises.value = Array.isArray(data) ? data : []
+
+    // Convert sessionExercises → exercises format for display
+    exercises.value = sessionExercises.value.map((se, i) => ({
+      id: `session-${i}`,
+      workout_id: '',
+      name: se.name,
+      description: null,
+      order_index: se.order ?? i,
+      sets: se.sets ?? null,
+      reps: se.reps ?? null,
+      weight_kg: se.weight ? parseSessionWeight(se.weight) : null,
+      duration_seconds: null,
+      distance_meters: null,
+      rpe: null,
+      intensity_percent: se.load_percent ?? null,
+      rest_seconds: se.rest_seconds ?? null,
+      notes: se.notes ?? null,
+      video_url: null,
+      target_time_seconds: null,
+      created_at: '',
+      updated_at: '',
+    } as Exercise))
+  } catch (e) {
+    console.error('Error loading session data:', e)
+    showToast('Failed to load session', 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+function parseSessionWeight(w: string): number | null {
+  if (!w) return null
+  const match = w.match(/^([\d.]+)/)
+  return match ? parseFloat(match[1]) : null
+}
+
+function exercisesToSessionData(): SessionExercise[] {
+  return exercises.value.map((ex, i) => ({
+    order: ex.order_index ?? i,
+    name: ex.name,
+    sets: ex.sets ?? 0,
+    reps: ex.reps ?? undefined,
+    rest_seconds: ex.rest_seconds ?? undefined,
+    load_percent: ex.intensity_percent ?? undefined,
+    weight: ex.weight_kg ? `${ex.weight_kg}kg` : undefined,
+    notes: ex.notes ?? undefined,
+    superset_group: (ex as any).superset_group ?? undefined,
+  }))
+}
+
+async function saveSessionData() {
+  if (!sessionId.value) return
+  try {
+    const data = exercisesToSessionData()
+    await planSessionsService.updateSessionData(sessionId.value, data, sessionName.value || undefined)
+  } catch (e) {
+    console.error('Error saving session data:', e)
+    throw e
+  }
+}
+
+async function handlePromoteToLibrary() {
+  if (!sessionId.value || !authStore.user) return
+  promotingToLibrary.value = true
+  try {
+    // First save current exercise state
+    await saveSessionData()
+
+    const { workoutId: newWorkoutId } = await planSessionsService.promoteSessionToLibrary({
+      planSessionId: sessionId.value,
+      workoutName: sessionName.value || 'Session',
+      coachId: authStore.user.id,
+      sessionType: sessionType.value || undefined,
+    })
+    showToast('Saved to Workout Library')
+
+    // Navigate to the promoted workout (now a real workout)
+    router.replace({
+      path: `/coach/workouts/${newWorkoutId}/edit`,
+      query: {
+        mode: 'plan-session',
+        planId: route.query.planId,
+        blockId: route.query.blockId,
+        weekId: route.query.weekId,
+      },
+    })
+  } catch (e) {
+    console.error('Error promoting to library:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save to library', 'error')
+  } finally {
+    promotingToLibrary.value = false
   }
 }
 
@@ -396,66 +524,109 @@ function closeExerciseModal() {
 
 async function saveExercise() {
   if (!exerciseForm.value.name) return
-  
+
   try {
     saving.value = true
     errorMessage.value = ''
-    
-    if (editingExerciseId.value) {
-      // Update existing exercise
-      const { error } = (await (supabase
-        .from('exercises') as any)
-        .update({
-          name: exerciseForm.value.name,
-          description: exerciseForm.value.description || null,
-          sets: exerciseForm.value.sets,
-          reps: exerciseForm.value.reps || null,
-          weight_kg: exerciseForm.value.weight_kg,
-          duration_seconds: exerciseForm.value.duration_seconds,
-          distance_meters: exerciseForm.value.distance_meters,
-          rpe: exerciseForm.value.rpe,
-          intensity_percent: exerciseForm.value.intensity_percent,
-          target_time_seconds: exerciseForm.value.target_time_seconds,
-          rest_seconds: exerciseForm.value.rest_seconds,
-          notes: exerciseForm.value.notes || null,
-          video_url: exerciseForm.value.video_url || null,
-          intensity_prescription: exerciseForm.value.intensity_prescription || null,
-          tempo: exerciseForm.value.tempo || null,
-          superset_group: exerciseForm.value.superset_group || null,
-        })
-        .eq('id', editingExerciseId.value)) as { error: any }
 
-      if (error) throw error
+    if (isSessionMode.value) {
+      // Session mode: update local exercises array, then persist to session_data JSONB
+      const newExercise: Exercise = {
+        id: editingExerciseId.value || `session-${Date.now()}`,
+        workout_id: '',
+        name: exerciseForm.value.name,
+        description: exerciseForm.value.description || null,
+        order_index: exercises.value.length,
+        sets: exerciseForm.value.sets,
+        reps: exerciseForm.value.reps || null,
+        weight_kg: exerciseForm.value.weight_kg,
+        duration_seconds: exerciseForm.value.duration_seconds,
+        distance_meters: exerciseForm.value.distance_meters,
+        rpe: exerciseForm.value.rpe,
+        intensity_percent: exerciseForm.value.intensity_percent,
+        target_time_seconds: exerciseForm.value.target_time_seconds,
+        rest_seconds: exerciseForm.value.rest_seconds,
+        notes: exerciseForm.value.notes || null,
+        video_url: exerciseForm.value.video_url || null,
+        created_at: '',
+        updated_at: '',
+      } as Exercise
+      // Attach extra fields
+      ;(newExercise as any).intensity_prescription = exerciseForm.value.intensity_prescription || null
+      ;(newExercise as any).tempo = exerciseForm.value.tempo || null
+      ;(newExercise as any).superset_group = exerciseForm.value.superset_group || null
+
+      if (editingExerciseId.value) {
+        const idx = exercises.value.findIndex(e => e.id === editingExerciseId.value)
+        if (idx >= 0) {
+          newExercise.order_index = exercises.value[idx].order_index
+          exercises.value[idx] = newExercise
+        }
+      } else {
+        exercises.value.push(newExercise)
+      }
+
+      // Persist to session_data
+      await saveSessionData()
+      closeExerciseModal()
     } else {
-      // Create new exercise
-      const { error } = (await (supabase
-        .from('exercises') as any)
-        .insert({
-          workout_id: workoutId.value,
-          name: exerciseForm.value.name,
-          description: exerciseForm.value.description || null,
-          order_index: exercises.value.length,
-          sets: exerciseForm.value.sets,
-          reps: exerciseForm.value.reps || null,
-          weight_kg: exerciseForm.value.weight_kg,
-          duration_seconds: exerciseForm.value.duration_seconds,
-          distance_meters: exerciseForm.value.distance_meters,
-          rpe: exerciseForm.value.rpe,
-          intensity_percent: exerciseForm.value.intensity_percent,
-          target_time_seconds: exerciseForm.value.target_time_seconds,
-          rest_seconds: exerciseForm.value.rest_seconds,
-          notes: exerciseForm.value.notes || null,
-          video_url: exerciseForm.value.video_url || null,
-          intensity_prescription: exerciseForm.value.intensity_prescription || null,
-          tempo: exerciseForm.value.tempo || null,
-          superset_group: exerciseForm.value.superset_group || null,
-        })) as { error: any }
+      // Standard mode: save to exercises table
+      if (editingExerciseId.value) {
+        // Update existing exercise
+        const { error } = (await (supabase
+          .from('exercises') as any)
+          .update({
+            name: exerciseForm.value.name,
+            description: exerciseForm.value.description || null,
+            sets: exerciseForm.value.sets,
+            reps: exerciseForm.value.reps || null,
+            weight_kg: exerciseForm.value.weight_kg,
+            duration_seconds: exerciseForm.value.duration_seconds,
+            distance_meters: exerciseForm.value.distance_meters,
+            rpe: exerciseForm.value.rpe,
+            intensity_percent: exerciseForm.value.intensity_percent,
+            target_time_seconds: exerciseForm.value.target_time_seconds,
+            rest_seconds: exerciseForm.value.rest_seconds,
+            notes: exerciseForm.value.notes || null,
+            video_url: exerciseForm.value.video_url || null,
+            intensity_prescription: exerciseForm.value.intensity_prescription || null,
+            tempo: exerciseForm.value.tempo || null,
+            superset_group: exerciseForm.value.superset_group || null,
+          })
+          .eq('id', editingExerciseId.value)) as { error: any }
 
-      if (error) throw error
+        if (error) throw error
+      } else {
+        // Create new exercise
+        const { error } = (await (supabase
+          .from('exercises') as any)
+          .insert({
+            workout_id: workoutId.value,
+            name: exerciseForm.value.name,
+            description: exerciseForm.value.description || null,
+            order_index: exercises.value.length,
+            sets: exerciseForm.value.sets,
+            reps: exerciseForm.value.reps || null,
+            weight_kg: exerciseForm.value.weight_kg,
+            duration_seconds: exerciseForm.value.duration_seconds,
+            distance_meters: exerciseForm.value.distance_meters,
+            rpe: exerciseForm.value.rpe,
+            intensity_percent: exerciseForm.value.intensity_percent,
+            target_time_seconds: exerciseForm.value.target_time_seconds,
+            rest_seconds: exerciseForm.value.rest_seconds,
+            notes: exerciseForm.value.notes || null,
+            video_url: exerciseForm.value.video_url || null,
+            intensity_prescription: exerciseForm.value.intensity_prescription || null,
+            tempo: exerciseForm.value.tempo || null,
+            superset_group: exerciseForm.value.superset_group || null,
+          })) as { error: any }
+
+        if (error) throw error
+      }
+
+      await loadExercises()
+      closeExerciseModal()
     }
-
-    await loadExercises()
-    closeExerciseModal()
   } catch (e) {
     console.error('Error saving exercise:', e)
     errorMessage.value = e instanceof Error ? e.message : 'Failed to save exercise'
@@ -474,16 +645,25 @@ async function handleDeleteExercise() {
   deletingExercise.value = true
 
   try {
-    const { error } = await supabase
-      .from('exercises')
-      .delete()
-      .eq('id', exerciseToDeleteId.value)
+    if (isSessionMode.value) {
+      // Session mode: remove from local array and persist
+      exercises.value = exercises.value.filter(e => e.id !== exerciseToDeleteId.value)
+      await saveSessionData()
+      showDeleteConfirm.value = false
+      exerciseToDeleteId.value = null
+      showToast('Exercise deleted')
+    } else {
+      const { error } = await supabase
+        .from('exercises')
+        .delete()
+        .eq('id', exerciseToDeleteId.value)
 
-    if (error) throw error
-    showDeleteConfirm.value = false
-    exerciseToDeleteId.value = null
-    await loadExercises()
-    showToast('Exercise deleted')
+      if (error) throw error
+      showDeleteConfirm.value = false
+      exerciseToDeleteId.value = null
+      await loadExercises()
+      showToast('Exercise deleted')
+    }
   } catch (e) {
     console.error('Error deleting exercise:', e)
     showToast('Failed to delete exercise', 'error')
@@ -556,11 +736,27 @@ function formatTime(seconds: number | null): string {
           </svg>
         </button>
         <div class="flex-1 min-w-0">
-          <h1 class="font-display text-lg font-bold text-gray-900 truncate">
+          <h1 v-if="isSessionMode" class="font-display text-lg font-bold text-gray-900 truncate">
+            {{ sessionName || 'Session' }}
+          </h1>
+          <h1 v-else class="font-display text-lg font-bold text-gray-900 truncate">
             {{ workout?.name || 'Workout' }}
           </h1>
           <p class="text-sm text-gray-500">{{ exercises.length }} exercise{{ exercises.length !== 1 ? 's' : '' }}</p>
         </div>
+        <!-- Save to Library button (session mode only) -->
+        <button
+          v-if="isSessionMode"
+          @click="handlePromoteToLibrary"
+          :disabled="promotingToLibrary || exercises.length === 0"
+          class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors
+                 bg-summit-100 text-summit-700 hover:bg-summit-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+          </svg>
+          {{ promotingToLibrary ? 'Saving...' : 'To Library' }}
+        </button>
       </div>
     </div>
 
@@ -578,8 +774,19 @@ function formatTime(seconds: number | null): string {
 
     <!-- Content -->
     <div v-else class="p-4 space-y-4">
-      <!-- Plan context banner -->
-      <div v-if="isPlanSession && planContext" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
+      <!-- Session mode banner -->
+      <div v-if="isSessionMode" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
+        <div class="flex items-center gap-2 text-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-summit-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span class="font-semibold text-summit-900">Plan Session</span>
+          <span class="text-summit-700">Exercises auto-save to plan</span>
+        </div>
+      </div>
+
+      <!-- Plan context banner (legacy mode) -->
+      <div v-else-if="isPlanSession && planContext" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
         <div class="flex items-center gap-2 text-sm">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-summit-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -597,8 +804,8 @@ function formatTime(seconds: number | null): string {
         <p class="text-sm text-gray-700">{{ workout.description }}</p>
       </div>
 
-      <!-- Session Metadata Panel (Sprint 9.3b) -->
-      <div class="card p-4 border-l-4 border-l-summit-600">
+      <!-- Session Metadata Panel (Sprint 9.3b) — hidden in session mode (no workouts record) -->
+      <div v-if="!isSessionMode" class="card p-4 border-l-4 border-l-summit-600">
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-sm font-bold text-gray-900">Session Details</h3>
           <button

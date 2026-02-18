@@ -251,10 +251,13 @@ Individual training sessions. Can belong to a program week, plan block week, or 
 | target_rpe | `numeric` | YES | — | |
 | energy_system | `text` | YES | — | |
 | is_template | `boolean` | YES | `false` | |
+| is_library | `boolean` | YES | `false` | true = visible in WorkoutsView (Sprint 12) |
+| is_evolving | `boolean` | YES | `false` | Evolving session flag (Sprint 12) |
+| evolution_weeks | `integer` | YES | — | Number of weeks for evolving sessions (Sprint 12) |
 | created_at | `timestamptz` | YES | `now()` | |
 | updated_at | `timestamptz` | YES | `now()` | |
 
-**Indexes:** `idx_workouts_coach`, `idx_workouts_program_week`, `idx_workouts_block_week_id`, `idx_workouts_plan_id`
+**Indexes:** `idx_workouts_coach`, `idx_workouts_program_week`, `idx_workouts_block_week_id`, `idx_workouts_plan_id`, `idx_workouts_library`
 
 ---
 
@@ -366,11 +369,12 @@ Top-level training plans. The primary training design entity.
 | status | `text` | YES | `'draft'` | draft/active/completed/archived |
 | version | `integer` | YES | `1` | |
 | ai_generated | `boolean` | YES | `false` | |
+| plan_type | `text` | YES | `'block_plan'` | single_session/evolving_session/block_plan/season_plan (Sprint 12) |
 | created_at | `timestamptz` | YES | `now()` | |
 | updated_at | `timestamptz` | YES | `now()` | |
 
 **RLS:** Coach can CRUD own plans (coach_id = auth.uid())
-**Indexes:** `idx_plans_coach_id`, `idx_plans_sport_id`, `idx_plans_status`
+**Indexes:** `idx_plans_coach_id`, `idx_plans_sport_id`, `idx_plans_status`, `idx_plans_type`
 
 ---
 
@@ -418,15 +422,17 @@ Individual weeks within a training block.
 ---
 
 ### `plan_sessions`
-Scheduled session slots within a block week.
+Scheduled session slots within a block week. Since Sprint 12, sessions can be self-contained (no workout_id) with exercise data in session_data JSONB.
 
 | Column | Type | Nullable | Default | Notes |
 |--------|------|----------|---------|-------|
 | **id** | `uuid` PK | NO | `gen_random_uuid()` | |
 | block_week_id | `uuid` | NO | — | FK → block_weeks |
 | day_of_week | `integer` | NO | — | 0 = Monday |
-| workout_id | `uuid` | NO | — | FK → workouts |
+| workout_id | `uuid` | **YES** | — | FK → workouts. NULL for self-contained sessions (Sprint 12) |
 | order_index | `integer` | YES | `0` | |
+| session_data | `jsonb` | YES | `'[]'` | SessionExercise[] — self-contained exercise data (Sprint 12) |
+| session_name | `text` | YES | — | Display name for self-contained sessions (Sprint 12) |
 | created_at | `timestamptz` | YES | `now()` | |
 | updated_at | `timestamptz` | YES | `now()` | |
 
@@ -897,6 +903,8 @@ Log of all file imports processed by the smart-import Edge Function.
 | detected_periodization | `text` | YES | — | |
 | detected_duration_weeks | `integer` | YES | — | |
 | detected_sport | `text` | YES | — | |
+| detected_plan_type | `text` | YES | — | single_session/evolving_session/block_plan/season_plan (Sprint 12) |
+| plan_type_confidence | `numeric(4,3)` | YES | — | 0-1 confidence score (Sprint 12) |
 | status | `text` | NO | `'processing'` | processing/completed/error |
 | error_message | `text` | YES | — | |
 | ai_result | `jsonb` | YES | — | Full AI response payload |

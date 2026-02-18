@@ -1,5 +1,6 @@
-// smart-import Edge Function (v13 - sport-context-aware parsing)
-// Two-pass: detect sport first, then parse with sport-specific rules
+// smart-import Edge Function (v14 - plan type classification + sport-context-aware parsing)
+// Step 1: Classify document type (single_session / evolving_session / block_plan / season_plan)
+// Step 2: Sport detection → sport-specific parsing rules
 // Pre-parsed spreadsheets (SheetJS on frontend) -> Haiku 4.5 for JSON structuring
 // PDF/Images -> Sonnet 4.5 for vision/document parsing
 
@@ -428,11 +429,49 @@ NO SPECIFIC SPORT DETECTED. Use these general rules:
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 const SYSTEM = `You are a training program parser. Output ONLY valid JSON. No markdown, no code fences, no commentary.
-CRITICAL: You must extract EVERY exercise from EVERY workout/session. Never return an empty exercises array when training prescriptions exist in the data. A "prescription" is ANY instruction that tells an athlete what physical activity to perform — this includes distances, intervals, drills, rounds, holds, and traditional exercises.`
+CRITICAL: You must extract EVERY exercise from EVERY workout/session. Never return an empty exercises array when training prescriptions exist in the data. A "prescription" is ANY instruction that tells an athlete what physical activity to perform — this includes distances, intervals, drills, rounds, holds, and traditional exercises.
+
+STEP 1 — CLASSIFY THE DOCUMENT TYPE before extracting data.
+Examine the structure and determine which of the four types it is:
+
+single_session
+  One workout. No week columns. One set of prescriptions for all exercises.
+
+evolving_session
+  A single named session where the same exercises appear with DIFFERENT
+  prescriptions for each week. Key signals:
+  - A "Week" column with integer values (1, 2, 3, 4) repeating per exercise
+  - A "Duration: N Weeks" header
+  - Set columns that change values across week groups
+  IMPORTANT: This is ONE session run repeatedly, not multiple sessions.
+
+block_plan
+  Multiple distinct named sessions (e.g. Session A, Session B, or separate
+  tabs/sheets), each potentially evolving across weeks.
+
+season_plan
+  Multiple named phases across many weeks or months (e.g. GPP, SPP, PreComp,
+  Competition, Taper). Key signals:
+  - Date-stamped weekly rows spanning months
+  - Named competition events or meets
+  - Multiple session types per day (Speed, Tempo, Weights, etc.)
+  - Volume tracking across the full season
+
+Include your classification in the output JSON:
+  "detected_plan_type": "block_plan",
+  "plan_type_confidence": 0.9,
+  "classification_reasoning": "Brief explanation of why"
+
+For evolving_session, use a DIFFERENT output format (see schema below).`
 
 function buildSchema(sportContext: string): string {
-  return `Return a JSON object with this structure:
+  return `Return a JSON object. The structure DEPENDS on the detected_plan_type:
+
+=== FOR single_session, block_plan, season_plan ===
 {
+  "detected_plan_type": "block_plan",
+  "plan_type_confidence": 0.9,
+  "classification_reasoning": "string",
   "programName": "string",
   "durationWeeks": number,
   "periodization": "linear"|"undulating"|"block"|"conjugate"|"mixed",
@@ -463,6 +502,33 @@ function buildSchema(sportContext: string): string {
           "notes": "string"
         }]
       }]
+    }]
+  }]
+}
+
+=== FOR evolving_session ONLY ===
+{
+  "detected_plan_type": "evolving_session",
+  "plan_type_confidence": 0.95,
+  "classification_reasoning": "string",
+  "programName": "string",
+  "durationWeeks": number,
+  "periodization": "linear"|"undulating"|"block"|"conjugate"|"mixed",
+  "sport": "string or null",
+  "session_name": "string (name of the single session)",
+  "evolution_weeks": number,
+  "exercises": [{
+    "order": number,
+    "name": "string (REQUIRED)",
+    "rest_seconds": number,
+    "superset_group": "string or null",
+    "notes": "string",
+    "weeks": [{
+      "week_number": number,
+      "sets": number,
+      "reps": "string",
+      "load_percent": number,
+      "weight": "string"
     }]
   }]
 }
@@ -700,23 +766,41 @@ Deno.serve(async (req) => {
       }, 500)
     }
 
+    // Extract plan type classification from AI response
+    const detectedPlanType = importResult.detected_plan_type || 'block_plan'
+    const planTypeConfidence = importResult.plan_type_confidence ?? 0.5
+    console.log(`[smart-import] Plan type: ${detectedPlanType} (confidence: ${planTypeConfidence})`)
+
     // Validate required fields
     if (!importResult.programName) {
       return json({ error: 'AI response missing programName' }, 500)
     }
-    if (!Array.isArray(importResult.blocks) || importResult.blocks.length === 0) {
-      // Backward compat: if AI returned flat weeks[] instead of blocks[], wrap in a single block
-      if (Array.isArray(importResult.weeks) && importResult.weeks.length > 0) {
-        importResult.blocks = [{
-          name: importResult.programName,
-          blockType: null,
-          weeks: importResult.weeks,
-        }]
-        delete importResult.weeks
-      } else {
-        return json({ error: 'AI response missing blocks[] or weeks[]' }, 500)
+
+    // Evolving session uses a different structure (exercises[] with weeks[], no blocks[])
+    const isEvolving = detectedPlanType === 'evolving_session'
+      && Array.isArray(importResult.exercises)
+      && importResult.exercises.length > 0
+
+    if (!isEvolving) {
+      // Standard block-based validation for single_session, block_plan, season_plan
+      if (!Array.isArray(importResult.blocks) || importResult.blocks.length === 0) {
+        // Backward compat: if AI returned flat weeks[] instead of blocks[], wrap in a single block
+        if (Array.isArray(importResult.weeks) && importResult.weeks.length > 0) {
+          importResult.blocks = [{
+            name: importResult.programName,
+            blockType: null,
+            weeks: importResult.weeks,
+          }]
+          delete importResult.weeks
+        } else {
+          return json({ error: 'AI response missing blocks[] or weeks[]' }, 500)
+        }
       }
     }
+
+    // Ensure detectedPlanType and planTypeConfidence are on the importResult
+    importResult.detectedPlanType = detectedPlanType
+    importResult.planTypeConfidence = planTypeConfidence
 
     // ── Log (non-blocking) ──
     const tokens = (result.usage?.input_tokens || 0) + (result.usage?.output_tokens || 0)
@@ -725,7 +809,7 @@ Deno.serve(async (req) => {
         coach_id: user.id,
         tier: 'import',
         action: 'smart_import',
-        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}]`,
+        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}] type=${detectedPlanType}`,
         response: JSON.stringify(importResult).substring(0, 5000),
         model: modelUsed,
         tokens_used: tokens,
@@ -743,6 +827,8 @@ Deno.serve(async (req) => {
       sportCategory: sportSignal?.category ?? null,
       sportConfidence: sportSignal?.confidence ?? 0,
       expandedAbbreviations: expandedAbbrs,
+      detectedPlanType,
+      planTypeConfidence,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

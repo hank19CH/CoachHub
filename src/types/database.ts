@@ -421,6 +421,9 @@ export interface Database {
           target_rpe: number | null
           energy_system: string | null
           is_template: boolean
+          is_library: boolean
+          is_evolving: boolean
+          evolution_weeks: number | null
           created_at: string
           updated_at: string
         }
@@ -439,6 +442,9 @@ export interface Database {
           target_rpe?: number | null
           energy_system?: string | null
           is_template?: boolean
+          is_library?: boolean
+          is_evolving?: boolean
+          evolution_weeks?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -455,6 +461,9 @@ export interface Database {
           target_rpe?: number | null
           energy_system?: string | null
           is_template?: boolean
+          is_library?: boolean
+          is_evolving?: boolean
+          evolution_weeks?: number | null
           updated_at?: string
         }
       }
@@ -827,6 +836,7 @@ export interface Database {
           status: PlanStatus
           version: number
           ai_generated: boolean
+          plan_type: string // 'single_session' | 'evolving_session' | 'block_plan' | 'season_plan'
           created_at: string
           updated_at: string
         }
@@ -842,6 +852,7 @@ export interface Database {
           status?: PlanStatus
           version?: number
           ai_generated?: boolean
+          plan_type?: string
           created_at?: string
           updated_at?: string
         }
@@ -855,6 +866,7 @@ export interface Database {
           status?: PlanStatus
           version?: number
           ai_generated?: boolean
+          plan_type?: string
           updated_at?: string
         }
       }
@@ -958,8 +970,10 @@ export interface Database {
           id: string
           block_week_id: string
           day_of_week: number
-          workout_id: string
+          workout_id: string | null  // nullable: sessions are self-contained by default (Sprint 12)
           order_index: number
+          session_data: Json         // JSONB exercise data for self-contained sessions
+          session_name: string | null
           created_at: string
           updated_at: string
         }
@@ -967,14 +981,19 @@ export interface Database {
           id?: string
           block_week_id: string
           day_of_week: number
-          workout_id: string
+          workout_id?: string | null
           order_index?: number
+          session_data?: Json
+          session_name?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           day_of_week?: number
+          workout_id?: string | null
           order_index?: number
+          session_data?: Json
+          session_name?: string | null
           updated_at?: string
         }
       }
@@ -1381,6 +1400,8 @@ export interface Database {
           detected_periodization: string | null
           detected_duration_weeks: number | null
           detected_sport: string | null
+          detected_plan_type: string | null
+          plan_type_confidence: number | null
           status: string
           error_message: string | null
           created_at: string
@@ -1401,6 +1422,8 @@ export interface Database {
           detected_periodization?: string | null
           detected_duration_weeks?: number | null
           detected_sport?: string | null
+          detected_plan_type?: string | null
+          plan_type_confidence?: number | null
           status?: string
           error_message?: string | null
         }
@@ -1415,6 +1438,8 @@ export interface Database {
           detected_periodization?: string | null
           detected_duration_weeks?: number | null
           detected_sport?: string | null
+          detected_plan_type?: string | null
+          plan_type_confidence?: number | null
           status?: string
           error_message?: string | null
         }

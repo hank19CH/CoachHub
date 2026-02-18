@@ -1,15 +1,27 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import type { ImportBlock, ImportWeek } from '@/types/import'
+import type { ImportBlock, ImportWeek, PlanType } from '@/types/import'
+import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { importProgram, saveImportedProgram, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord } from '@/types/import'
 import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CONFIG } from '@/config/ai'
+import Toast from '@/components/ui/Toast.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error' | 'info'>('success')
+
+function showToast(message: string, type: 'success' | 'error' | 'info' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 const file = ref<File | null>(null)
 const isProcessing = ref(false)
@@ -24,6 +36,52 @@ const importHistory = ref<ImportHistoryRecord[]>([])
 const expandedWorkouts = ref<Set<string>>(new Set())
 const originalExerciseNames = ref<Map<string, string>>(new Map()) // key: "blockIdx-weekIdx-workoutIdx-exerciseIdx" → original name
 const expandedAbbreviations = ref<string[]>([]) // abbreviations that were auto-expanded by Edge Function
+
+// Plan type selector
+const selectedPlanType = ref<PlanType>('block_plan')
+const planTypeOverridden = ref(false) // true when coach manually picks a type
+
+// Per-session library flags: "blockIdx-weekIdx-workoutIdx" keys
+const libraryFlags = ref<Set<string>>(new Set())
+
+const selectPlanType = (type: PlanType) => {
+  selectedPlanType.value = type
+  planTypeOverridden.value = true
+
+  // Reset library defaults when type changes
+  applyDefaultLibraryFlags()
+}
+
+// Set default library flags based on plan type
+const applyDefaultLibraryFlags = () => {
+  const flags = new Set<string>()
+  if (!importResult.value) {
+    libraryFlags.value = flags
+    return
+  }
+  const blocks = previewBlocks.value
+  // single_session: default ON (only 1 session, user likely wants it in library)
+  // others: default OFF
+  if (selectedPlanType.value === 'single_session') {
+    for (let bi = 0; bi < blocks.length; bi++) {
+      for (let wi = 0; wi < (blocks[bi].weeks ?? []).length; wi++) {
+        for (let woi = 0; woi < (blocks[bi].weeks[wi].workouts ?? []).length; woi++) {
+          flags.add(`${bi}-${wi}-${woi}`)
+        }
+      }
+    }
+  }
+  libraryFlags.value = flags
+}
+
+const toggleLibraryFlag = (key: string) => {
+  const flags = new Set(libraryFlags.value)
+  if (flags.has(key)) flags.delete(key)
+  else flags.add(key)
+  libraryFlags.value = flags
+}
+
+const libraryFlagCount = computed(() => libraryFlags.value.size)
 
 // Toggle a workout's exercise list expanded/collapsed
 const toggleWorkout = (key: string) => {
@@ -48,13 +106,23 @@ const editCount = computed(() => {
 })
 
 // Snapshot all exercise names when importResult changes (for tracking edits)
+// Also auto-select plan type from AI detection
 watch(() => importResult.value, (result) => {
   if (!result) {
     originalExerciseNames.value = new Map()
     expandedWorkouts.value = new Set()
     expandedAbbreviations.value = []
+    planTypeOverridden.value = false
+    selectedPlanType.value = 'block_plan'
+    libraryFlags.value = new Set()
     return
   }
+
+  // Auto-select plan type from AI detection
+  if (result.detectedPlanType && !planTypeOverridden.value) {
+    selectedPlanType.value = result.detectedPlanType
+  }
+
   const map = new Map<string, string>()
   const blocks = result.blocks?.length ? result.blocks :
     result.weeks?.length ? [{ name: result.programName, weeks: result.weeks }] : []
@@ -70,6 +138,9 @@ watch(() => importResult.value, (result) => {
     }
   }
   originalExerciseNames.value = map
+
+  // Apply default library flags after plan type is set
+  applyDefaultLibraryFlags()
 }, { immediate: true })
 
 // Collect corrections and save as abbreviations (non-blocking, after plan save)
@@ -217,9 +288,14 @@ const handleImport = async () => {
       expandedAbbreviations.value = result.expandedAbbreviations
     }
 
+    const workouts = result.historyRecord?.workouts_imported ?? 0
+    const exercises = result.historyRecord?.exercises_imported ?? 0
+    showToast(`Imported ${workouts} workouts & ${exercises} exercises — review below`)
+
     await loadHistory()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Import failed'
+    showToast(error.value, 'error')
     console.error('Import error:', err)
   } finally {
     isProcessing.value = false
@@ -233,7 +309,14 @@ const handleConfirmImport = async () => {
   isSaving.value = true
   error.value = null
   try {
-    const planId = await saveImportedProgram(importResult.value, historyRecord.value?.id)
+    // Override the plan type in the import result with the user's selection
+    importResult.value.detectedPlanType = selectedPlanType.value
+
+    const planId = await saveImportedProgram(
+      importResult.value,
+      historyRecord.value?.id,
+      libraryFlags.value.size > 0 ? libraryFlags.value : undefined,
+    )
 
     // Non-blocking: save exercise name corrections as abbreviations
     if (editCount.value > 0) {
@@ -281,6 +364,9 @@ const handleCancel = () => {
   historyRecord.value = null
   error.value = null
   processingStage.value = 'uploading'
+  selectedPlanType.value = 'block_plan'
+  planTypeOverridden.value = false
+  libraryFlags.value = new Set()
 }
 
 const formatFileSize = (bytes: number) => {
@@ -500,6 +586,45 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
+          <!-- Plan Type Selector -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold text-gray-900 text-sm">Plan Type</h3>
+              <div v-if="importResult.detectedPlanType && importResult.planTypeConfidence !== undefined">
+                <span
+                  v-if="importResult.planTypeConfidence >= 0.6"
+                  class="text-xs font-medium text-summit-700 bg-summit-100 px-2 py-0.5 rounded-full"
+                >
+                  AI detected {{ Math.round(importResult.planTypeConfidence * 100) }}%
+                </span>
+                <span
+                  v-else
+                  class="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full"
+                >
+                  Couldn't determine type, please select
+                </span>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                v-for="ptype in (['single_session', 'evolving_session', 'block_plan', 'season_plan'] as PlanType[])"
+                :key="ptype"
+                @click="selectPlanType(ptype)"
+                class="text-left p-3 rounded-lg border-2 transition-all"
+                :class="selectedPlanType === ptype
+                  ? 'border-summit-500 bg-summit-50 ring-1 ring-summit-500/30'
+                  : 'border-gray-200 hover:border-gray-300 bg-white'"
+              >
+                <p class="text-sm font-semibold" :class="selectedPlanType === ptype ? 'text-summit-700' : 'text-gray-900'">
+                  {{ PLAN_TYPE_LABELS[ptype] }}
+                </p>
+                <p class="text-xs mt-0.5" :class="selectedPlanType === ptype ? 'text-summit-600' : 'text-gray-500'">
+                  {{ PLAN_TYPE_DESCRIPTIONS[ptype] }}
+                </p>
+              </button>
+            </div>
+          </div>
+
           <!-- Import Stats -->
           <div v-if="historyRecord" class="bg-summit-50 rounded-xl p-4">
             <div class="grid grid-cols-3 gap-4 text-center">
@@ -549,50 +674,42 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
-          <!-- Block & Week Preview -->
+          <!-- Adaptive Preview -->
           <div class="space-y-3">
             <div class="flex items-center justify-between">
               <h3 class="font-semibold text-gray-900 text-sm">
-                Preview — {{ previewBlocks.length }} {{ previewBlocks.length === 1 ? 'block' : 'blocks' }}, {{ totalPreviewWeeks }} weeks
+                <template v-if="selectedPlanType === 'single_session'">Session Preview</template>
+                <template v-else-if="selectedPlanType === 'evolving_session'">Week-by-Week Progression</template>
+                <template v-else>
+                  Preview — {{ previewBlocks.length }} {{ previewBlocks.length === 1 ? 'block' : 'blocks' }}, {{ totalPreviewWeeks }} weeks
+                </template>
               </h3>
               <p class="text-xs text-gray-500">Click workouts to review & edit exercise names</p>
             </div>
-            <div v-for="(block, bi) in previewBlocks" :key="bi" class="space-y-2">
-              <!-- Block header (only show if multiple blocks) -->
-              <div v-if="previewBlocks.length > 1" class="flex items-center gap-2 mt-2">
-                <div class="w-1.5 h-1.5 rounded-full bg-summit-600"></div>
-                <p class="text-sm font-semibold text-summit-700">{{ block.name }}</p>
-                <span class="text-xs text-gray-400">{{ (block.weeks ?? []).length }} weeks</span>
-              </div>
-              <!-- Show first 2 weeks of each block -->
-              <div v-for="(week, wi) in (block.weeks ?? []).slice(0, 2)" :key="`${bi}-${week.weekNumber}`" class="border border-gray-200 rounded-lg p-3">
-                <p class="font-medium text-gray-900 text-sm mb-2">
-                  Week {{ week.weekNumber }}{{ week.name ? ': ' + week.name : '' }}
-                </p>
-                <div class="space-y-1.5">
-                  <div v-for="(workout, woi) in (week.workouts ?? [])" :key="`${bi}-${wi}-${woi}`">
-                    <!-- Workout row: clickable to expand -->
-                    <div
-                      @click="toggleWorkout(`${bi}-${wi}-${woi}`)"
-                      class="pl-3 border-l-2 border-summit-300 cursor-pointer hover:bg-gray-50 rounded-r-md py-1 pr-2 flex items-center justify-between group"
-                    >
-                      <div>
-                        <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
-                        <p class="text-xs text-gray-500">{{ (workout.exercises ?? []).length }} exercises</p>
-                      </div>
-                      <svg
-                        class="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-transform shrink-0"
-                        :class="expandedWorkouts.has(`${bi}-${wi}-${woi}`) ? 'rotate-180' : ''"
-                        fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+
+            <!-- ===== SINGLE SESSION PREVIEW ===== -->
+            <template v-if="selectedPlanType === 'single_session'">
+              <div v-for="(block, bi) in previewBlocks" :key="bi">
+                <div v-for="(week, wi) in (block.weeks ?? []).slice(0, 1)" :key="`${bi}-${wi}`">
+                  <div v-for="(workout, woi) in (week.workouts ?? [])" :key="`${bi}-${wi}-${woi}`"
+                    class="border border-gray-200 rounded-lg p-3 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <p class="text-sm font-semibold text-gray-900">{{ workout.name }}</p>
+                      <!-- Library toggle -->
+                      <button
+                        @click="toggleLibraryFlag(`${bi}-${wi}-${woi}`)"
+                        class="flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-lg transition-colors"
+                        :class="libraryFlags.has(`${bi}-${wi}-${woi}`)
+                          ? 'bg-summit-100 text-summit-700 hover:bg-summit-200'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
                       >
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
+                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                        </svg>
+                        Library
+                      </button>
                     </div>
-                    <!-- Expanded exercise list with inline editing -->
-                    <div
-                      v-if="expandedWorkouts.has(`${bi}-${wi}-${woi}`)"
-                      class="ml-5 mt-1 mb-2 space-y-1"
-                    >
+                    <div class="space-y-1">
                       <div
                         v-for="(exercise, ei) in (workout.exercises ?? [])"
                         :key="`${bi}-${wi}-${woi}-${ei}`"
@@ -609,19 +726,179 @@ const statusIcon = (status: string) => {
                         <span v-if="exercise.sets || exercise.reps" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
                           {{ exercise.sets ? exercise.sets + '×' : '' }}{{ exercise.reps || '' }}
                         </span>
-                        <span v-if="exercise.distance_meters" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
-                          {{ exercise.distance_meters }}m
-                        </span>
-                        <span v-if="exercise.duration_seconds" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
-                          {{ exercise.duration_seconds }}s
+                        <span v-if="exercise.weight" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                          {{ exercise.weight }}
                         </span>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-              <p v-if="(block.weeks ?? []).length > 2" class="text-xs text-gray-500 text-center">
-                + {{ (block.weeks ?? []).length - 2 }} more weeks in this block
+            </template>
+
+            <!-- ===== EVOLVING SESSION PREVIEW (week-comparison table) ===== -->
+            <template v-else-if="selectedPlanType === 'evolving_session'">
+              <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="w-full text-xs">
+                    <thead class="bg-gray-50">
+                      <tr>
+                        <th class="text-left px-3 py-2 font-semibold text-gray-700 sticky left-0 bg-gray-50 min-w-[140px]">Exercise</th>
+                        <th
+                          v-for="(week, wi) in (previewBlocks[0]?.weeks ?? [])"
+                          :key="wi"
+                          class="text-center px-2 py-2 font-semibold text-gray-700 min-w-[64px]"
+                        >
+                          Wk {{ week.weekNumber }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                      <!-- Build rows from first workout of each week -->
+                      <tr
+                        v-for="(exercise, ei) in (previewBlocks[0]?.weeks?.[0]?.workouts?.[0]?.exercises ?? [])"
+                        :key="ei"
+                        class="hover:bg-gray-50"
+                      >
+                        <td class="px-3 py-1.5 sticky left-0 bg-white">
+                          <input
+                            v-model="exercise.name"
+                            class="w-full text-xs px-1.5 py-0.5 border rounded focus:outline-none focus:ring-1 focus:ring-summit-400"
+                            :class="originalExerciseNames.get(`0-0-0-${ei}`) !== exercise.name
+                              ? 'bg-amber-50 border-amber-300 text-amber-900'
+                              : 'border-gray-200 text-gray-700'"
+                          />
+                        </td>
+                        <td
+                          v-for="(week, wi) in (previewBlocks[0]?.weeks ?? [])"
+                          :key="wi"
+                          class="text-center px-2 py-1.5 text-gray-600"
+                        >
+                          <template v-if="week.workouts?.[0]?.exercises?.[ei]">
+                            <span class="whitespace-nowrap">
+                              {{ week.workouts[0].exercises[ei].sets ? week.workouts[0].exercises[ei].sets + '×' : '' }}{{ week.workouts[0].exercises[ei].reps || '--' }}
+                            </span>
+                          </template>
+                          <template v-else>
+                            <span class="text-gray-300">--</span>
+                          </template>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <!-- Library toggle for the evolving session -->
+              <div class="flex justify-end">
+                <button
+                  @click="toggleLibraryFlag('0-0-0')"
+                  class="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
+                  :class="libraryFlags.has('0-0-0')
+                    ? 'bg-summit-100 text-summit-700 hover:bg-summit-200'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                >
+                  <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                  </svg>
+                  Add to Library
+                </button>
+              </div>
+            </template>
+
+            <!-- ===== BLOCK / SEASON PLAN PREVIEW (existing style) ===== -->
+            <template v-else>
+              <div v-for="(block, bi) in previewBlocks" :key="bi" class="space-y-2">
+                <!-- Block header (only show if multiple blocks) -->
+                <div v-if="previewBlocks.length > 1" class="flex items-center gap-2 mt-2">
+                  <div class="w-1.5 h-1.5 rounded-full bg-summit-600"></div>
+                  <p class="text-sm font-semibold text-summit-700">{{ block.name }}</p>
+                  <span class="text-xs text-gray-400">{{ (block.weeks ?? []).length }} weeks</span>
+                </div>
+                <!-- Show first 2 weeks of each block -->
+                <div v-for="(week, wi) in (block.weeks ?? []).slice(0, 2)" :key="`${bi}-${week.weekNumber}`" class="border border-gray-200 rounded-lg p-3">
+                  <p class="font-medium text-gray-900 text-sm mb-2">
+                    Week {{ week.weekNumber }}{{ week.name ? ': ' + week.name : '' }}
+                  </p>
+                  <div class="space-y-1.5">
+                    <div v-for="(workout, woi) in (week.workouts ?? [])" :key="`${bi}-${wi}-${woi}`">
+                      <!-- Workout row: clickable to expand -->
+                      <div
+                        @click="toggleWorkout(`${bi}-${wi}-${woi}`)"
+                        class="pl-3 border-l-2 border-summit-300 cursor-pointer hover:bg-gray-50 rounded-r-md py-1 pr-2 flex items-center justify-between group"
+                      >
+                        <div class="flex-1 min-w-0">
+                          <p class="text-sm font-medium text-gray-700">{{ workout.name }}</p>
+                          <p class="text-xs text-gray-500">{{ (workout.exercises ?? []).length }} exercises</p>
+                        </div>
+                        <!-- Library toggle -->
+                        <button
+                          @click.stop="toggleLibraryFlag(`${bi}-${wi}-${woi}`)"
+                          class="mr-2 p-1 rounded transition-colors shrink-0"
+                          :class="libraryFlags.has(`${bi}-${wi}-${woi}`)
+                            ? 'text-summit-600 hover:text-summit-700'
+                            : 'text-gray-300 hover:text-gray-400'"
+                          :title="libraryFlags.has(`${bi}-${wi}-${woi}`) ? 'Remove from Library' : 'Add to Library'"
+                        >
+                          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                          </svg>
+                        </button>
+                        <svg
+                          class="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-transform shrink-0"
+                          :class="expandedWorkouts.has(`${bi}-${wi}-${woi}`) ? 'rotate-180' : ''"
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                      <!-- Expanded exercise list with inline editing -->
+                      <div
+                        v-if="expandedWorkouts.has(`${bi}-${wi}-${woi}`)"
+                        class="ml-5 mt-1 mb-2 space-y-1"
+                      >
+                        <div
+                          v-for="(exercise, ei) in (workout.exercises ?? [])"
+                          :key="`${bi}-${wi}-${woi}-${ei}`"
+                          class="flex items-center gap-2"
+                        >
+                          <span class="text-[10px] text-gray-400 w-4 text-right shrink-0">{{ ei + 1 }}</span>
+                          <input
+                            v-model="exercise.name"
+                            class="flex-1 text-xs px-2 py-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-summit-400 transition-colors"
+                            :class="originalExerciseNames.get(`${bi}-${wi}-${woi}-${ei}`) !== exercise.name
+                              ? 'bg-amber-50 border-amber-300 text-amber-900'
+                              : 'border-gray-200 bg-white text-gray-700'"
+                          />
+                          <span v-if="exercise.sets || exercise.reps" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                            {{ exercise.sets ? exercise.sets + '×' : '' }}{{ exercise.reps || '' }}
+                          </span>
+                          <span v-if="exercise.distance_meters" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                            {{ exercise.distance_meters }}m
+                          </span>
+                          <span v-if="exercise.duration_seconds" class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">
+                            {{ exercise.duration_seconds }}s
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p v-if="(block.weeks ?? []).length > 2" class="text-xs text-gray-500 text-center">
+                  + {{ (block.weeks ?? []).length - 2 }} more weeks in this block
+                </p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Library Summary -->
+          <div v-if="libraryFlagCount > 0" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-summit-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+              </svg>
+              <p class="text-xs text-summit-700">
+                <span class="font-semibold">{{ libraryFlagCount }} session{{ libraryFlagCount > 1 ? 's' : '' }}</span>
+                will be added to your Workout Library on save
               </p>
             </div>
           </div>
@@ -647,7 +924,10 @@ const statusIcon = (status: string) => {
               class="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium
                 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
             >
-              {{ isSaving ? 'Saving...' : editCount > 0 ? `Save to AI Planner (${editCount} corrections)` : 'Save to AI Planner' }}
+              {{ isSaving ? 'Saving...' :
+                 editCount > 0 ? `Save to Planner (${editCount} corrections)` :
+                 libraryFlagCount > 0 ? `Save to Planner (+${libraryFlagCount} to Library)` :
+                 'Save to Planner' }}
             </button>
             <button
               @click="handleCancel"
@@ -707,5 +987,7 @@ const statusIcon = (status: string) => {
         </div>
       </div>
     </div>
+
+    <Toast :message="toastMessage" :type="toastType" :visible="toastVisible" @close="toastVisible = false" />
   </div>
 </template>

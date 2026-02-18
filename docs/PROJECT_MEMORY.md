@@ -10,6 +10,7 @@
 - Claude Haiku 4.5 (claude-haiku-4-5-20250929) for structured JSON extraction (spreadsheet smart-import)
 - SheetJS (`xlsx` npm package) for client-side Excel/CSV pre-parsing before AI processing
 - Mobile-first design with fixed bottom nav
+- Stripe for payments (planned: checkout, webhooks, subscription management)
 - Supabase project: `mzrmivqwywinsffkaimw` (us-west-2)
 
 ## Key Patterns
@@ -39,9 +40,14 @@
 - **Training Design:** AI Planner is the primary training design tool; Workouts kept for one-off sessions. Programs card removed from Coach Hub (files/DB/routes retained, just hidden from UI)
 - **Plans table is `plans`**, NOT `training_plans`. training_blocks FK is `plan_id`.
 - **Methodology Detection Pipeline:** Local JS feature extraction → weighted fingerprint matching → DB storage → coach confirmation → AI guardrail injection ($0/call)
-- **Smart Import v12:** Frontend pre-parses via SheetJS, sends structured JSON to Edge Function; Haiku 4.5 for spreadsheets, Sonnet 4.5 for PDF/images; block-aware output format
+- **Four Plan Types** (Sprint 12): `single_session`, `evolving_session`, `block_plan`, `season_plan` — auto-detected by AI during import
+- **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
+- **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
+- **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
+- **Smart Import v14:** Plan type classification (4 types) + per-session library toggles + evolving session normalization. Sport-context-aware parsing.
 
 ## Common Gotchas
+- **PRICING**: Never use old placeholder pricing ($25/$50/$100). Confirmed pricing is Coach $19/$29, Team $59/$79 (beta/standard). See Sprint 13 section.
 - Edit tool requires file to be read first in current session
 - Build command: `npx vite build`
 - File at `src/utils/analytics.ts` exports `trackEvent` function
@@ -50,6 +56,11 @@
 - `sport_context` column is PostgreSQL `text[]` array, NOT JSONB — use `ARRAY['x','y']` not `'[\"x\",\"y\"]'::jsonb`
 - Smart Import: `cancelActiveImport()` in aiImport.ts uses AbortController for 2-minute timeout
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
+- **plan_sessions.workout_id is NOW NULLABLE** (Sprint 12). Self-contained sessions have no workout_id.
+- **workouts.is_library** column: `true` = show in WorkoutsView, `false` = plan instance only
+- `saveImportedProgram()` takes optional `libraryFlags?: Set<string>` param (key: `"blockIdx-weekIdx-workoutIdx"`)
+- WorkoutBuilder session mode: `route.query.sessionMode=true` + `sessionId` → loads/saves from session_data JSONB
+- Evolving session AI response returns `exercises[].weeks[]` format — normalized to `blocks[]` by `normalizeEvolvingSession()` in aiImport.ts
 
 ## Test Accounts
 - **Coach:** hencoach (user_id: `fa45c5af-741a-4356-aa3a-85dd64b142e4`)
@@ -549,6 +560,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 - `/login`, `/signup` (requiresGuest)
 - `/@:username` (public profile)
 - `/invite/:code` (invitation acceptance)
+- `/pricing` (planned - Sprint 13)
 
 ### Authenticated Routes (requiresAuth)
 - `/` (Feed), `/explore`, `/create` (post creation)
@@ -609,6 +621,16 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ### Messaging (Sprint 11)
 - `conversations`, `messages`
 
+### Training Document Intelligence (Sprint 12)
+- `plans` additions: plan_type
+- `workouts` additions: is_library, is_evolving, evolution_weeks
+- `plan_sessions` changes: workout_id now nullable; additions: session_data, session_name
+- `import_history` additions: detected_plan_type, plan_type_confidence
+
+### Pricing & Seat Management (Sprint 13 - Planned)
+- `upgrade_prompts`
+- `coach_profiles` additions: athlete_limit, bonus_seats_granted, bonus_seats_granted_at, bonus_seats_count, peak_athlete_count
+
 ### Storage Buckets
 - `post-media` - Social post media uploads
 - `program-imports` - Smart import file uploads
@@ -619,7 +641,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ## Supabase Edge Functions (All 4)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` - File type routing: Haiku 4.5 for spreadsheet JSON structuring, Sonnet 4.5 for PDF/images; accepts pre-parsed SheetJS data
+3. `smart-import` (v14/deployed v18) - Plan type classification (4 types), file type routing: Haiku 4.5 for spreadsheets, Sonnet 4.5 for PDF/images; evolving session schema; accepts pre-parsed SheetJS data
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
 
 All functions: `verify_jwt = false` at gateway level (see Technical Debt), internal JWT verification via `supabase.auth.getUser(token)`
@@ -672,8 +694,188 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 ---
 
 ## Key Project Docs
-- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (44 tables, 10 enums, 120+ indexes, RLS policies, future proposals)
+- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (44 tables, 10 enums, 120+ indexes, RLS policies, Sprint 12 columns, future proposals)
 - `docs/PROJECT_MEMORY.md` - This file
+
+---
+
+## Sprint 12: Training Document Intelligence + Planner Fixes (Completed)
+
+### Overview
+AI-powered document type classification for Smart Import, self-contained plan sessions that don't require backing workout records, WorkoutBuilder session mode for editing plan sessions in-place, and WeekEditor rewrite for direct session editing.
+
+### Database Changes (Migration: `20250218_sprint12_training_intelligence.sql`)
+- `plans.plan_type` — `text DEFAULT 'block_plan'` CHECK (`single_session`, `evolving_session`, `block_plan`, `season_plan`)
+- `workouts.is_library` — `boolean DEFAULT false` (true = show in WorkoutsView, false = plan instance only)
+- `workouts.is_evolving` — `boolean DEFAULT false`
+- `workouts.evolution_weeks` — `integer`
+- `plan_sessions.workout_id` — **NOW NULLABLE** (was NOT NULL)
+- `plan_sessions.session_data` — `jsonb DEFAULT '[]'` (self-contained exercise data)
+- `plan_sessions.session_name` — `text`
+- `import_history.detected_plan_type` — `text` CHECK (same 4 types)
+- `import_history.plan_type_confidence` — `numeric(4,3)`
+- Indexes: `idx_plans_type`, `idx_workouts_library`
+- Backfill: existing workouts → `is_library = true`, existing plans → `plan_type = 'block_plan'`
+
+### Sprint 12.1 — DB Migration
+- Additive migration with IF NOT EXISTS, safe to re-run
+- All existing workouts backfilled as library items
+- All existing plans backfilled as block_plan type
+
+### Sprint 12.2 — Edge Function Plan Type Classification
+- Smart Import Edge Function (v14/deployed as v18): SYSTEM prompt includes 4 plan type definitions + classification instructions
+- AI response includes `detected_plan_type` and `plan_type_confidence` fields
+- Evolving session schema: `exercises[].weeks[]` with per-week `sets/reps/weight/load_percent`
+- Stored in `import_history` alongside AI result
+
+### Sprint 12.3 — Coach Abbreviation Glossary (in prior commit)
+- Auto-learns shorthand exercise names from import corrections
+
+### Sprint 12.4 — WeekEditor Rewrite
+- `WeekEditor.vue` completely rewritten for self-contained sessions
+- Session cards show exercises from `session_data` JSONB
+- Direct session name editing, click-to-edit in WorkoutBuilder session mode
+- Handles both legacy (workout_id-backed) and new (session_data) sessions
+
+### Sprint 12.5 — Smart Import UI
+- **Plan Type Selector**: 4 cards (`single_session`, `evolving_session`, `block_plan`, `season_plan`)
+- Auto-selects from AI detection with confidence badge (green ≥0.7, yellow 0.4-0.69, gray <0.4)
+- Coach can override AI selection
+- **Adaptive Preview**: Different preview layouts per plan type
+- **Library Flags**: Per-session toggle to save to Workout Library (default off)
+- `saveImportedProgram()` accepts `libraryFlags?: Set<string>` with `"blockIdx-weekIdx-workoutIdx"` keys
+
+### Sprint 12.6 — WorkoutBuilder Session Mode + Planner Fix
+- `WorkoutBuilderView.vue`: New session mode via `route.query.sessionMode=true` + `sessionId`
+- Loads/saves from `plan_sessions.session_data` JSONB instead of `exercises` table
+- `PlannerView.vue`: Click-to-edit routes to WorkoutBuilder in session mode
+- `planSessions.ts`: Added `getSessionById()`, `updateSessionData()`, `promoteSessionToLibrary()`
+
+### Sprint 12.7 — Evolving Session Normalization + Edge Function Deploy
+- `normalizeEvolvingSession()` in `aiImport.ts` converts `exercises[].weeks[]` → `blocks[].weeks[].workouts[].exercises[]`
+- Called after import and on cached result retrieval
+- Ensures evolving sessions work with existing preview UI and save logic
+- Edge Function deployed as v18 with plan type classification
+
+### Key Files Modified
+- `supabase/functions/smart-import/index.ts` — Plan type classification prompts + evolving schema
+- `src/services/aiImport.ts` — Library flags, evolving normalization, plan type handling
+- `src/services/planSessions.ts` — getSessionById, updateSessionData, promoteSessionToLibrary
+- `src/views/coach/SmartImportView.vue` — Plan type selector, adaptive preview, library flags
+- `src/views/coach/WorkoutBuilderView.vue` — Session mode support
+- `src/views/coach/WorkoutsView.vue` — `is_library = true` filter
+- `src/components/planner/WeekEditor.vue` — Complete rewrite for self-contained sessions
+- `src/views/coach/PlannerView.vue` — Session mode routing
+- `src/types/database.ts` — Sprint 12 type additions
+- `src/types/import.ts` — PlanType, EvolvingExercise, SessionExercise types
+
+---
+
+## Sprint 13 (Planned): Pricing & Seat Management
+
+### Pricing Tiers
+
+**Beta Pricing (First 50 Coaches - Grandfathered Forever)**
+| Tier | Monthly | Annual | Savings |
+|------|---------|--------|---------|
+| Coach | $19/mo | $190/yr | $38 |
+| Team | $59/mo | $590/yr | $118 |
+
+**Post-Beta Standard Pricing**
+| Tier | Monthly | Annual | Savings |
+|------|---------|--------|---------|
+| Coach | $29/mo | $290/yr | $58 |
+| Team | $79/mo | $790/yr | $158 |
+
+- Annual discount: ~17% (2 free months)
+
+### Free Trial Strategy
+- **Coach Tier**: 9-day trial, NO card required (lower friction, more signups)
+- **Team Tier**: 9-day trial, CARD required (filters for serious users, prevents AI API abuse)
+- 9 days is intentionally unusual (stands out vs 7/14-day norms)
+
+**Trial Email Sequence:** Day 0 (welcome), Day 1 (onboarding), Day 3 (value stats), Day 6 (check-in), Day 8 (convert CTA), Day 9 (expires)
+
+### Athlete Seat Limits & Bonus Seats Strategy
+- Coach tier default: **20 athletes**
+- At 18 athletes: soft nudge upgrade prompt
+- At 20 athletes: auto-grant **3 bonus seats** (→ 23 cap), celebration modal
+- At 23 athletes: hard gate, must upgrade to Team
+- 14 days after bonus: follow-up upgrade offer if at 21-23 athletes
+- Track `peak_athlete_count` to prevent gaming via delete/re-add
+- Team tier: **unlimited athletes**
+
+**Psychological triggers:** reciprocity (free bonus), loss aversion (don't lose progress), commitment escalation (sunk cost at 20+), delight > friction (surprise bonus vs hard paywall)
+
+### Edge Cases
+- Coach deletes athletes to stay under 20 → bonus eligibility based on peak_athlete_count
+- Upgrades before hitting 20 → grant bonus as thanks
+- Downgrade from Team to Coach with >23 athletes → 30-day grace period
+
+### Database Changes (Sprint 12)
+```sql
+-- Add to coach_profiles
+ALTER TABLE coach_profiles ADD COLUMN IF NOT EXISTS
+  athlete_limit INTEGER DEFAULT 20,
+  bonus_seats_granted BOOLEAN DEFAULT FALSE,
+  bonus_seats_granted_at TIMESTAMP WITH TIME ZONE,
+  bonus_seats_count INTEGER DEFAULT 0,
+  peak_athlete_count INTEGER DEFAULT 0;
+
+-- New table: upgrade_prompts
+CREATE TABLE IF NOT EXISTS upgrade_prompts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  coach_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  prompt_type TEXT NOT NULL, -- 'soft_nudge', 'bonus_unlock', 'hard_gate', 'follow_up'
+  athlete_count INTEGER NOT NULL,
+  shown_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  action_taken TEXT, -- 'upgraded', 'dismissed', 'reminded_later', null
+  action_taken_at TIMESTAMP WITH TIME ZONE
+);
+
+-- DB function
+CREATE OR REPLACE FUNCTION can_add_athlete(coach_user_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  current_count INTEGER;
+  limit_count INTEGER;
+BEGIN
+  SELECT
+    (SELECT COUNT(*) FROM coach_athletes WHERE coach_id = coach_user_id AND status = 'active'),
+    (SELECT athlete_limit FROM coach_profiles WHERE id = coach_user_id)
+  INTO current_count, limit_count;
+  RETURN current_count < limit_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+```
+
+### Implementation Phases
+1. **Phase 1: Core Seat Logic (2-3 days)** — DB schema, RLS, `checkAthleteLimit()`, `grantBonusSeats()`
+2. **Phase 2: UI Components (2-3 days)** — UpgradePrompt.vue, SeatLimitBanner.vue, BonusSeatsUnlock.vue, athlete counter
+3. **Phase 3: Trigger Logic (1-2 days)** — invite checks, nudges at 18, bonus at 20, gate at 23, 14-day follow-up
+4. **Phase 4: Stripe Integration (2-3 days)** — products (Coach/Team x Beta/Standard x Monthly/Annual), checkout, webhooks, proration, trials
+5. **Phase 5: Pricing Page (1 day)** — `/pricing` with tier comparison, annual/monthly toggle, beta counter
+
+### Planned Components
+- `UpgradePrompt.vue` - Reusable upgrade modal
+- `SeatLimitBanner.vue` - Dashboard warning banner
+- `BonusSeatsUnlock.vue` - Celebration modal
+- Pricing page view
+
+### Planned Route
+- `/pricing` - Public pricing page with tier comparison and beta spots counter
+
+### Analytics Events
+- `athlete_limit_warning`, `bonus_seats_granted`, `upgrade_prompt_shown`, `upgrade_completed`
+
+### Target Metrics
+- Coach → Team conversion: 15-25%
+- Trial → Paid (Coach): 25-35%, (Team): 40-50%
+
+### Competitive Positioning
+- TrainHeroic: Hard limits, no grace period
+- TrueCoach: Strict athlete caps
+- CoachHub: "We grow with you" — bonus seats, delight moments, gradual nudges
 
 ---
 

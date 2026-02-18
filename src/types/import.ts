@@ -1,3 +1,57 @@
+// --- Plan Type Classification ---
+
+/** The four training document structures CoachHub recognises */
+export type PlanType =
+  | 'single_session'    // One workout, fixed prescription
+  | 'evolving_session'  // One session repeated N weeks, prescription changes each week
+  | 'block_plan'        // Multiple sessions across a mesocycle
+  | 'season_plan'       // Multiple blocks chained, full season or annual plan
+
+/** Human-readable labels for UI display */
+export const PLAN_TYPE_LABELS: Record<PlanType, string> = {
+  single_session:   'Single Session',
+  evolving_session: 'Evolving Session',
+  block_plan:       'Block Plan',
+  season_plan:      'Season / Annual Plan',
+}
+
+/** Descriptions shown in the plan type selector UI */
+export const PLAN_TYPE_DESCRIPTIONS: Record<PlanType, string> = {
+  single_session:   'One workout with a fixed prescription. No week-to-week changes.',
+  evolving_session: 'One session repeated over several weeks. Prescription changes each week.',
+  block_plan:       'Multiple sessions (e.g. Mon/Wed/Fri) that evolve across a training block.',
+  season_plan:      'Multiple blocks chained together. A full season or annual plan.',
+}
+
+/** Exercise prescription within a self-contained plan session */
+export interface SessionExercise {
+  order: number
+  name: string
+  sets: number
+  reps?: string           // e.g. "6", "6 e/s", "30s", "10 Fly"
+  rest_seconds?: number
+  load_percent?: number   // % of 1RM
+  weight?: string
+  notes?: string
+  superset_group?: string
+}
+
+/** Exercise prescription for an evolving session, varies week by week */
+export interface EvolvingExercise {
+  order: number
+  name: string
+  superset_group?: string
+  rest_seconds?: number
+  notes?: string
+  weeks: Array<{
+    week_number: number
+    sets: number
+    reps?: string
+    load_percent?: number
+    weight?: string
+  }>
+}
+
 export interface ImportBlock {
   name: string
   blockType?: string  // e.g. "hypertrophy", "strength", "peaking", "gpp", "spp"
@@ -11,6 +65,8 @@ export interface ImportResult {
   sport?: string
   blocks: ImportBlock[]   // primary: blocks containing weeks
   weeks?: ImportWeek[]    // backward compat: cached results from old flat format
+  detectedPlanType?: PlanType
+  planTypeConfidence?: number  // 0-1
 }
 
 export interface ImportWeek {
@@ -65,6 +121,8 @@ export interface ImportHistoryRecord {
   detected_periodization?: string
   detected_duration_weeks?: number
   detected_sport?: string
+  detected_plan_type?: PlanType | null
+  plan_type_confidence?: number | null
   status: 'processing' | 'success' | 'partial' | 'failed'
   error_message?: string
   has_cached_result?: boolean
