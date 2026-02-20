@@ -3,6 +3,8 @@ import { AI_CONFIG } from '@/config/ai'
 import type { ImportResult, ImportBlock, ImportWeek, ImportWorkout, ImportExercise, ImportHistoryRecord, EvolvingExercise, PreImportContext } from '@/types/import'
 import { plansService } from '@/services/plans'
 import { planSessionsService } from '@/services/planSessions'
+import { extractFromSheets } from '@/services/spreadsheetExtractor'
+import type { ParsedSheet } from '@/services/spreadsheetExtractor'
 import * as XLSX from 'xlsx'
 
 /** Max time (ms) to wait for AI processing before aborting */
@@ -170,6 +172,8 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     let fileContent: string
     let sendAsText = false
+    let forceModelSonnet = false
+    let coachAbbreviations: Record<string, string> = {}
 
     if (isSpreadsheet) {
       // Parse Excel/CSV with SheetJS → JSON objects keyed by column headers.
@@ -182,11 +186,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
       const sheetCount = workbook.SheetNames.length
       console.log(`[SmartImport] SheetJS workbook: ${sheetCount} sheet(s):`, workbook.SheetNames)
 
-      interface ParsedSheet {
-        name: string
-        headers: string[]
-        jsonRows: Record<string, string | number | null>[]
-      }
       const parsedSheets: ParsedSheet[] = []
 
       for (const sheetName of workbook.SheetNames) {
@@ -484,7 +483,111 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
         }
       }
 
-      // ── Season plan grid pre-grouping ──
+      // ── Fetch coach abbreviation glossary (needed for code extraction + AI prompt) ──
+      try {
+        const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
+        coachAbbreviations = await getAbbreviationMap(coachId)
+        const abbrCount = Object.keys(coachAbbreviations).length
+        if (abbrCount > 0) {
+          console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
+        }
+      } catch (e) {
+        console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
+      }
+
+      // ── Code-only extraction attempt (v30) ──
+      // Try deterministic extraction before AI. If confidence ≥ 0.55, return directly.
+      // This is instant, free, and never drops exercises.
+      const extraction = extractFromSheets(parsedSheets, {
+        fileName: file.name,
+        preImportContext,
+        coachAbbreviations,
+      })
+
+      if (extraction.success && extraction.confidence >= 0.55 && extraction.importResult) {
+        console.log(`[SmartImport] ✅ Code extraction succeeded: pattern=${extraction.pattern}, confidence=${extraction.confidence.toFixed(2)}`)
+
+        const importResult = extraction.importResult
+        const processingTime = Date.now() - startTime
+
+        // Count imported items
+        const codeAllWeeks = importResult.blocks
+          ? importResult.blocks.flatMap(b => b.weeks ?? [])
+          : (importResult.weeks ?? [])
+        const codeWorkoutsCount = codeAllWeeks.reduce(
+          (sum, week) => sum + (week.workouts ?? []).length, 0
+        )
+        const codeExercisesCount = codeAllWeeks.reduce(
+          (sum, week) => sum + (week.workouts ?? []).reduce(
+            (wsum, workout) => wsum + (workout.exercises ?? []).length, 0
+          ), 0
+        )
+
+        console.log(`[SmartImport] Code-only: ${codeWorkoutsCount} workouts, ${codeExercisesCount} exercises in ${processingTime}ms`)
+
+        // Update import history (code path: no AI cost)
+        try {
+          await supabase.auth.refreshSession()
+          await (supabase as any)
+            .from('import_history')
+            .update({
+              ai_model_used: `code-only:${extraction.pattern}`,
+              processing_cost_usd: 0,
+              processing_time_ms: processingTime,
+              programs_imported: 1,
+              workouts_imported: codeWorkoutsCount,
+              exercises_imported: codeExercisesCount,
+              detected_periodization: importResult.periodization,
+              detected_duration_weeks: importResult.durationWeeks,
+              detected_sport: importResult.sport,
+              detected_plan_type: importResult.detectedPlanType ?? null,
+              plan_type_confidence: importResult.planTypeConfidence ?? null,
+              status: 'success',
+            })
+            .eq('id', historyRecord.id)
+        } catch (dbErr) {
+          console.warn('[SmartImport] DB update failed after code extraction (non-fatal):', dbErr)
+        }
+
+        // Cache result for resume (non-blocking)
+        ;(supabase as any)
+          .from('import_history')
+          .update({ ai_result: importResult })
+          .eq('id', historyRecord.id)
+          .then(({ error: cacheErr }: any) => {
+            if (cacheErr) console.warn('[SmartImport] Failed to cache code-only result:', cacheErr)
+          })
+
+        const codeHistory: ImportHistoryRecord = {
+          ...historyRecord,
+          ai_model_used: `code-only:${extraction.pattern}`,
+          processing_cost_usd: 0,
+          processing_time_ms: processingTime,
+          programs_imported: 1,
+          workouts_imported: codeWorkoutsCount,
+          exercises_imported: codeExercisesCount,
+          detected_periodization: importResult.periodization,
+          detected_duration_weeks: importResult.durationWeeks,
+          detected_sport: importResult.sport,
+          detected_plan_type: importResult.detectedPlanType ?? null,
+          plan_type_confidence: importResult.planTypeConfidence ?? null,
+          status: 'success',
+        }
+
+        return {
+          importResult,
+          historyRecord: codeHistory,
+          expandedAbbreviations: [],
+        }
+      }
+
+      // Code extraction didn't meet confidence threshold — fall through to AI
+      if (extraction.confidence > 0) {
+        console.warn(`[SmartImport] Code extraction: pattern=${extraction.pattern}, confidence=${extraction.confidence.toFixed(2)}, reason=${extraction.reason}. Falling back to AI.`)
+      }
+      forceModelSonnet = extraction.confidence > 0 && extraction.confidence < 0.55
+
+      // ── Season plan grid pre-grouping (AI fallback path) ──
       // If a sheet has day-prefixed columns (TUESDAY_Rep, SATURDAY_Note, etc.),
       // pre-group exercises by session IN CODE so the AI can't cross-contaminate.
       // This transforms the flat grid into per-session exercise lists.
@@ -676,17 +779,18 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
       fileContent = await fileToBase64(file)
     }
 
-    // 4. Fetch coach abbreviation glossary (for pre-expansion + prompt injection)
-    let coachAbbreviations: Record<string, string> = {}
-    try {
-      const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
-      coachAbbreviations = await getAbbreviationMap(coachId)
-      const abbrCount = Object.keys(coachAbbreviations).length
-      if (abbrCount > 0) {
-        console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
+    // 4. Fetch coach abbreviation glossary (for non-spreadsheet files; spreadsheets load earlier)
+    if (!isSpreadsheet) {
+      try {
+        const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
+        coachAbbreviations = await getAbbreviationMap(coachId)
+        const abbrCount = Object.keys(coachAbbreviations).length
+        if (abbrCount > 0) {
+          console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
+        }
+      } catch (e) {
+        console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
       }
-    } catch (e) {
-      console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
     }
 
     // 5. Process with AI via Edge Function
@@ -719,6 +823,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
         ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
         ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
         ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+        ...(forceModelSonnet ? { forceModel: 'sonnet' } : {}),
       }),
       signal: abortController.signal,
     })

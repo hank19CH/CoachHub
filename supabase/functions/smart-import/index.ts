@@ -695,7 +695,7 @@ Deno.serve(async (req) => {
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     // ── Parse request ──
-    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus } = await req.json()
+    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus, forceModel } = await req.json()
     if (!rawContent || !fileType || !fileName) {
       return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
@@ -703,7 +703,7 @@ Deno.serve(async (req) => {
       return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
     }
 
-    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}`)
+    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}${forceModel ? ` forceModel=${forceModel}` : ''}`)
 
     // ── Coach Abbreviation Pre-Expansion ──
     // Replace known coach shorthand in text BEFORE sending to AI
@@ -772,8 +772,11 @@ Deno.serve(async (req) => {
 
     if (preParsed) {
       // Spreadsheet JSON from SheetJS -> Haiku (fast, cheap)
-      modelUsed = HAIKU
-      result = await callClaude(HAIKU, 32000, [
+      // forceModel override: use Sonnet when code-only extraction fell back
+      const model = forceModel === 'sonnet' ? SONNET : HAIKU
+      modelUsed = model
+      console.log(`[smart-import] Model: ${model}${forceModel ? ` (forced: ${forceModel})` : ''}`)
+      result = await callClaude(model, 32000, [
         {
           role: 'user',
           content: `Parse this training program spreadsheet: "${fileName}"
