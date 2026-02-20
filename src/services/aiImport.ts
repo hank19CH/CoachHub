@@ -484,31 +484,182 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
         }
       }
 
+      // ── Season plan grid pre-grouping ──
+      // If a sheet has day-prefixed columns (TUESDAY_Rep, SATURDAY_Note, etc.),
+      // pre-group exercises by session IN CODE so the AI can't cross-contaminate.
+      // This transforms the flat grid into per-session exercise lists.
       const sheetTexts: string[] = []
       for (let i = 0; i < parsedSheets.length; i++) {
         if (i === overviewIdx) continue
         const ps = parsedSheets[i]
-        const hdrs = ps.headers.join(', ')
-        if (parsedSheets.length > 1) {
-          sheetTexts.push(`=== Sheet: ${ps.name} ===\nColumns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
+
+        // Detect day-prefixed column groups (e.g. TUESDAY_Set, TUESDAY_Rep, ...)
+        const dayPrefixes = new Map<string, string[]>() // dayName → [field suffixes]
+        const dayNames = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']
+        for (const h of ps.headers) {
+          for (const dn of dayNames) {
+            if (h.startsWith(dn + '_')) {
+              const suffix = h.substring(dn.length + 1)
+              if (!dayPrefixes.has(dn)) dayPrefixes.set(dn, [])
+              dayPrefixes.get(dn)!.push(suffix)
+            }
+          }
+        }
+
+        // Only pre-group if we have 2+ day groups with Set/Rep/Distance columns
+        const hasDayGroups = dayPrefixes.size >= 2 &&
+          [...dayPrefixes.values()].filter(suffixes =>
+            suffixes.some(s => /^(rep|distance|set)$/i.test(s))
+          ).length >= 2
+
+        if (hasDayGroups) {
+          console.log(`[SmartImport] Season plan grid detected: ${dayPrefixes.size} day groups: ${[...dayPrefixes.keys()].join(', ')}`)
+
+          // Find session name rows — rows where a day column (without _suffix) has a text value
+          // like "Speed 1", "Speed 2", "Tempo/MB". These come from the raw header row values
+          // that got renamed (e.g., TUESDAY → TUESDAY_Set when sub-header was "Set").
+          // The session name is in the ROW before the sub-header row OR the row where the
+          // day column value is NOT a sub-header label (Set/Rep/Distance/Note/Volume).
+          // We look for a row with text values in day columns that aren't sub-header labels.
+          const subLabelsLower = new Set(['set', 'rep', 'reps', 'distance', 'dist', 'note', 'notes', 'volume', 'vol', 'time', 'intensity', 'rest'])
+
+          // Find session names from the original data: look for rows where *_Set columns
+          // contain session type names (not "Set" or numbers)
+          const sessionNameMap = new Map<string, string>() // dayName → session name
+          for (const row of ps.jsonRows) {
+            for (const [dn] of dayPrefixes) {
+              const setCol = `${dn}_Set`
+              const val = row[setCol]
+              if (val != null && typeof val === 'string' && val.trim().length > 0) {
+                const lower = val.trim().toLowerCase()
+                if (!subLabelsLower.has(lower) && isNaN(Number(val))) {
+                  // This is a session name, not a sub-header or numeric data
+                  if (!sessionNameMap.has(dn)) {
+                    sessionNameMap.set(dn, val.trim())
+                  }
+                }
+              }
+            }
+          }
+
+          console.log(`[SmartImport] Session names:`, Object.fromEntries(sessionNameMap))
+
+          // Find metadata columns (non-day-prefixed: phase, week number, date, etc.)
+          const metaCols = ps.headers.filter(h => !dayNames.some(dn => h.startsWith(dn + '_')) && !h.startsWith('_col'))
+
+          // Identify week boundaries. A week block starts at a "session name row" —
+          // a row where day_Set columns have text names like "Speed 1".
+          // Pattern: [session name row] → [sub-header row] → [exercise rows...] → [total row] → [empty rows] → [next session name row]
+          // OR: The first exercise rows start after the sub-header row at index 0/1.
+          // We detect week boundaries by looking for rows where *_Set has a session name.
+          interface WeekBoundary { startRow: number; weekMeta: Record<string, any> }
+          const weekBoundaries: WeekBoundary[] = []
+
+          for (let ri = 0; ri < ps.jsonRows.length; ri++) {
+            const row = ps.jsonRows[ri]
+            // Check if any day_Set column has a session name (text, not number, not sub-header)
+            let isSessionNameRow = false
+            for (const [dn] of dayPrefixes) {
+              const setCol = `${dn}_Set`
+              const val = row[setCol]
+              if (val != null && typeof val === 'string') {
+                const lower = val.trim().toLowerCase()
+                if (!subLabelsLower.has(lower) && val.trim().length > 0 && isNaN(Number(val))) {
+                  isSessionNameRow = true
+                  break
+                }
+              }
+            }
+            if (isSessionNameRow) {
+              // Extract metadata from the NEXT row (sub-header/metadata row)
+              const metaRow = ps.jsonRows[ri + 1]
+              const meta: Record<string, any> = {}
+              if (metaRow) {
+                for (const mc of metaCols) {
+                  if (metaRow[mc] != null) meta[mc] = metaRow[mc]
+                }
+              }
+              weekBoundaries.push({ startRow: ri + 2, weekMeta: meta }) // exercises start 2 rows after session name
+            }
+          }
+
+          // If no session name rows found, treat the whole sheet as one week starting after row 0
+          if (weekBoundaries.length === 0) {
+            weekBoundaries.push({ startRow: 1, weekMeta: {} })
+          }
+
+          console.log(`[SmartImport] Found ${weekBoundaries.length} week boundaries`)
+
+          // Build pre-grouped output
+          const lines: string[] = []
+          lines.push('PRE-GROUPED SEASON PLAN DATA')
+          lines.push('Each week\'s sessions are pre-separated. Extract exercises from each session group independently.')
+          lines.push('Fields: Set (if present), Rep, Distance (meters), Note (exercise abbreviation/drill type).')
+          lines.push('If Note is present, it is the raw_name. If Note is absent, it is a plain sprint/run.')
+          lines.push('')
+
+          for (let wi = 0; wi < weekBoundaries.length; wi++) {
+            const wb = weekBoundaries[wi]
+            const endRow = wi + 1 < weekBoundaries.length ? weekBoundaries[wi + 1].startRow - 2 : ps.jsonRows.length
+
+            // Extract metadata
+            const phase = wb.weekMeta['_col1'] || wb.weekMeta[metaCols[0]] || ''
+            const weekNum = wi + 1
+
+            lines.push(`=== WEEK ${weekNum}${phase ? ` (${phase})` : ''} ===`)
+
+            // For each day group, extract exercise rows
+            for (const [dn, suffixes] of dayPrefixes) {
+              const sessionName = sessionNameMap.get(dn) || dn
+              const exercises: Record<string, any>[] = []
+
+              for (let ri = wb.startRow; ri < endRow; ri++) {
+                const row = ps.jsonRows[ri]
+                if (!row) continue
+
+                // Check if this row has ANY data in this day's columns
+                const exData: Record<string, any> = {}
+                let hasData = false
+                for (const suffix of suffixes) {
+                  const col = `${dn}_${suffix}`
+                  const val = row[col]
+                  if (val != null && val !== '') {
+                    exData[suffix] = val
+                    hasData = true
+                  }
+                }
+
+                if (hasData) {
+                  exercises.push(exData)
+                }
+              }
+
+              if (exercises.length > 0) {
+                lines.push(`  SESSION: "${sessionName}" (${dn}) — ${exercises.length} exercises`)
+                for (let ei = 0; ei < exercises.length; ei++) {
+                  lines.push(`    ${ei + 1}. ${JSON.stringify(exercises[ei])}`)
+                }
+              }
+            }
+            lines.push('')
+          }
+
+          sheetTexts.push(lines.join('\n'))
+          console.log(`[SmartImport] Pre-grouped ${weekBoundaries.length} weeks across ${dayPrefixes.size} sessions`)
         } else {
-          sheetTexts.push(`Columns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
+          // Non-grid sheet — send as raw JSON (original behavior)
+          const hdrs = ps.headers.join(', ')
+          if (parsedSheets.length > 1) {
+            sheetTexts.push(`=== Sheet: ${ps.name} ===\nColumns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
+          } else {
+            sheetTexts.push(`Columns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
+          }
         }
       }
 
       fileContent = scheduleHeader + sheetTexts.join('\n\n')
       sendAsText = true
-      console.log(`[SmartImport] JSON format: ${parsedSheets.length} sheet(s), overview=${overviewIdx >= 0 ? parsedSheets[overviewIdx].name : 'none'}, ${fileContent.length} chars (after compaction)`)
-      // DEBUG: dump headers and first 3 rows to understand column structure
-      for (const ps of parsedSheets) {
-        console.log(`[SmartImport DEBUG] Sheet "${ps.name}" headers:`, ps.headers)
-        console.log(`[SmartImport DEBUG] Sheet "${ps.name}" row 0:`, ps.jsonRows[0])
-        console.log(`[SmartImport DEBUG] Sheet "${ps.name}" row 1:`, ps.jsonRows[1])
-        console.log(`[SmartImport DEBUG] Sheet "${ps.name}" row 2:`, ps.jsonRows[2])
-        // Also find a row that has exercise data (look for PP or HS)
-        const exRow = ps.jsonRows.find(r => Object.values(r).some(v => v === 'PP' || v === 'HS' || v === '20EFE'))
-        if (exRow) console.log(`[SmartImport DEBUG] Sheet "${ps.name}" exercise row:`, exRow)
-      }
+      console.log(`[SmartImport] Final content: ${parsedSheets.length} sheet(s), ${fileContent.length} chars`)
 
       // Truncate if extremely long to keep costs reasonable.
       // 150k is ~37k tokens — Haiku 4.5 handles up to 200k context.

@@ -800,49 +800,38 @@ If Rep is null, output reps as null. Do NOT put the Distance value into reps.
 If Note is null, output raw_name as null and name as the activity type (e.g. "Sprint" for <=400m, "Run" for >400m). Do NOT put the distance in the name — it belongs in distance_meters.
 EVERY column maps to EXACTLY ONE output field. No exceptions. No "smart" inference.
 
-SEASON PLAN GRID LAYOUT — HOW TO DECODE IT:
-Coaches often put an entire season on ONE sheet in a grid layout. The columns are organized in GROUPS, one group per day/session:
+PRE-GROUPED SEASON PLAN DATA:
+If the data begins with "PRE-GROUPED SEASON PLAN DATA", exercises are ALREADY separated by week and session.
+Each session lists its exercises with fields: Set, Rep, Distance, Note.
+Map these fields EXACTLY:
+- "Set" → output "sets". If absent, OMIT (do NOT guess or default to 1).
+- "Rep" → output "reps". DO NOT put this into "sets".
+- "Distance" → output "distance_meters". DO NOT put this into "reps".
+- "Note" → output "raw_name". This is the drill/start type abbreviation. If absent, it's a plain sprint.
+- The session name (e.g. "Speed 1") → output as the workout "name".
+- The day in parentheses (e.g. "TUESDAY") → use for dayOfWeek mapping.
 
-- LEFT COLUMNS: Week identifiers (dates, week numbers, phase names like "GPP", "SPP", "Competition", countdown numbers). CRITICAL: Scan the ENTIRE first column (column A) from top to bottom BEFORE extracting. Phase/block names appear as labels in column A that group the weeks below them. You MUST extract ALL phases/blocks — do NOT stop early. Common patterns: "GPP" (General Preparation), "SPP" (Specific Preparation), "Competition"/"Comp", "Xmas"/"Holiday", "Pre-Season", "Taper", "All-schools". If the file has 5 phases, you must output 5 blocks.
-- DAY COLUMNS: Named columns like "MONDAY", "TUESDAY" etc. hold SESSION TYPE NAMES (e.g. "Speed 1", "Tempo/MB", "Rest"). These are workout LABELS, NOT exercises.
-- PRESCRIPTION COLUMNS: After each day column, several _col columns hold the exercise prescriptions for that day's session.
+CRITICAL RULES for pre-grouped data:
+1. Output EXACTLY the same number of exercises listed for each session. If it says "3 exercises", output 3.
+2. NEVER move exercises between sessions. Each session's exercises are independent.
+3. Each numbered exercise line maps to exactly ONE exercise object.
+4. Expand abbreviations in "Note" to human-readable names. PP=Push-up Position Start, HS=High Start, 3P=Three-Point Start, B=Block Start, 20EFE=20m Easy-Fast-Easy, 20FEF=20m Fast-Easy-Fast, LA20/LA30/LA40/LA50=Limited Acceleration (20m/30m/40m/50m approach), FLY=Flying Sprint, BU=Build-Up, FD=Full Drive.
 
-DESCRIPTIVE COLUMN NAMES:
-Columns are pre-labeled with their day and field type, e.g. "TUESDAY_Set", "TUESDAY_Rep", "TUESDAY_Distance", "TUESDAY_Note", "TUESDAY_Volume". This tells you EXACTLY what each value means.
-
-HOW TO MAP COLUMNS TO OUTPUT FIELDS — FOLLOW EXACTLY:
-- "*_Set" column → output "sets" field. If null/missing, OMIT sets (do NOT guess or default to 1).
-- "*_Rep" column → output "reps" field. This is the repetition count. DO NOT put this into "sets".
-- "*_Distance" column → output "distance_meters" field. DO NOT put this into "reps".
-- "*_Note" column → output "raw_name" field. This is the drill/start type. If null, it's a plain sprint.
-- "*_Volume" column → IGNORE entirely. Do not output.
-
-CONCRETE EXAMPLES — you MUST follow this exact mapping:
-
-  Example 1 — Set is null, Note has a drill code:
-  {"TUESDAY_Set": null, "TUESDAY_Rep": 4, "TUESDAY_Distance": 10, "TUESDAY_Note": "PP"}
+EXAMPLES from pre-grouped data:
+  {"Rep":4,"Distance":10,"Note":"PP"}
   → { "raw_name": "PP", "name": "Push-up Position Start", "reps": "4", "distance_meters": 10 }
-  WRONG: { "sets": "4", "reps": "10" } ← NEVER shift Rep→Sets or Distance→Reps
 
-  Example 2 — All fields present, no Note (plain sprint):
-  {"THURSDAY_Set": 4, "THURSDAY_Rep": 4, "THURSDAY_Distance": 40, "THURSDAY_Note": null}
+  {"Set":4,"Rep":4,"Distance":40}
   → { "raw_name": null, "name": "Sprint", "sets": "4", "reps": "4", "distance_meters": 40 }
-  WRONG: { "name": "40m Sprint" } ← do NOT put distance in the name, it goes in distance_meters
 
-  Example 3 — Set is null, Note has a modifier:
-  {"SATURDAY_Set": null, "SATURDAY_Rep": 2, "SATURDAY_Distance": 60, "SATURDAY_Note": "20EFE"}
-  → { "raw_name": "20EFE", "name": "20m Easy-Fast-Easy", "reps": "2", "distance_meters": 60 }
-  WRONG: { "sets": "2", "reps": "60", "name": "20EFE" } ← data shifted left, completely wrong
+  {"Rep":1,"Distance":50,"Note":"LA20"}
+  → { "raw_name": "LA20", "name": "20m Limited Acceleration Sprint", "reps": "1", "distance_meters": 50 }
 
-  Example 4 — Only Rep and Distance, no Set, no Note:
-  {"TUESDAY_Set": null, "TUESDAY_Rep": 3, "TUESDAY_Distance": 60, "TUESDAY_Note": null}
-  → { "raw_name": null, "name": "Sprint", "reps": "3", "distance_meters": 60 }
-  WRONG: { "sets": "3", "reps": "60" } ← shifted again, 60 reps is nonsensical for running
-  WRONG: { "name": "60m Sprint" } ← distance goes in distance_meters, not the name
-
-Each day's columns form a group (TUESDAY_*, THURSDAY_*, SATURDAY_*, etc.). Each group maps to the session type for that day (found in a session-name row, e.g. TUESDAY="Speed 1"). Extract exercises from each group into the matching workout.
-
-Session type names ("Speed 1", "Tempo/MB", "Rest", "Relay") are workout NAMES — populate them with exercises from their column group. If a session has NO exercise data, return an empty exercises array. Do NOT invent exercises or turn the session name into an exercise.
+SEASON PLAN GRID LAYOUT (for non-pre-grouped data):
+If the data is NOT pre-grouped, columns may be organized in day groups (TUESDAY_*, THURSDAY_*, SATURDAY_*).
+- LEFT COLUMNS: Week identifiers (dates, week numbers, phase names). CRITICAL: Scan the ENTIRE first column for phase/block names. You MUST extract ALL phases/blocks.
+- "*_Set" → "sets", "*_Rep" → "reps", "*_Distance" → "distance_meters", "*_Note" → "raw_name", "*_Volume" → IGNORE.
+- Each day group maps to the session type for that day. NEVER shift values between columns.
 
 MULTI-SHEET SEASON PLANS: If the data begins with "DOCUMENT STRUCTURE: Multi-sheet season plan", the WEEKLY SCHEDULE maps weeks to session types, and each detail sheet contains exercises for one session type. Extract exercises ONLY from detail sheets. Never treat session type names as exercises.
 
