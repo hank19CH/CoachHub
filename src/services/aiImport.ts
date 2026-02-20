@@ -292,6 +292,51 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
             }
           }
 
+          // ── Gap-fill pass: infer unlabeled columns between renamed siblings ──
+          // Some coaches leave sub-header cells blank for certain columns (e.g. Note column).
+          // If a _col sits between two renamed columns of the same day group and has data in
+          // exercise rows, infer its label from its position in the repeating group pattern.
+          // Common pattern: Set, Rep, Distance, [Note], Volume — if we see *_Distance before
+          // and *_Volume after, the gap column is Note.
+          const renamedCols = new Map<number, string>() // header index → renamed key
+          for (let hi = 0; hi < usedHeaders.length; hi++) {
+            if (renameMap[usedHeaders[hi]]) renamedCols.set(hi, renameMap[usedHeaders[hi]])
+          }
+
+          for (let hi = 0; hi < usedHeaders.length; hi++) {
+            const h = usedHeaders[hi]
+            // Skip already-renamed or non-synthetic columns
+            if (renameMap[h] || !h.startsWith('_col')) continue
+
+            // Check if this column has ANY data in the exercise rows (skip sub-header row)
+            const hasData = jsonRows.some((row, ri) =>
+              ri !== subHeaderRowIdx && row[h] != null && row[h] !== ''
+            )
+            if (!hasData) continue
+
+            // Find surrounding renamed columns to determine day group and position
+            let prevRenamed: string | null = null
+            for (let pi = hi - 1; pi >= 0; pi--) {
+              if (renamedCols.has(pi)) { prevRenamed = renamedCols.get(pi)!; break }
+            }
+            let nextRenamed: string | null = null
+            for (let ni = hi + 1; ni < usedHeaders.length; ni++) {
+              if (renamedCols.has(ni)) { nextRenamed = renamedCols.get(ni)!; break }
+            }
+
+            // Infer: if prev is *_Distance and next is *_Volume (same day), this is *_Note
+            if (prevRenamed && nextRenamed) {
+              const prevMatch = prevRenamed.match(/^(.+)_Distance$/i)
+              const nextMatch = nextRenamed.match(/^(.+)_Volume$/i)
+              if (prevMatch && nextMatch && prevMatch[1] === nextMatch[1]) {
+                const dayName = prevMatch[1]
+                renameMap[h] = `${dayName}_Note`
+                renamedCols.set(hi, `${dayName}_Note`)
+                console.log(`[SmartImport] Inferred gap column: ${h} → ${dayName}_Note (between ${prevRenamed} and ${nextRenamed})`)
+              }
+            }
+          }
+
           if (Object.keys(renameMap).length > 0) {
             console.log(`[SmartImport] Renaming ${Object.keys(renameMap).length} columns:`, renameMap)
 
