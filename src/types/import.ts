@@ -23,17 +23,95 @@ export const PLAN_TYPE_DESCRIPTIONS: Record<PlanType, string> = {
   season_plan:      'Multiple blocks chained together. A full season or annual plan.',
 }
 
+// --- Pre-Import Context (Coach hints before AI processing) ---
+
+/** Sport categories mapping 1:1 to edge function SPORT_RULES keys */
+export type ImportSportCategory =
+  | 'auto'
+  | 'sprint_track'
+  | 'distance_running'
+  | 'swimming'
+  | 'cycling'
+  | 'strength'
+  | 'crossfit'
+  | 'rowing'
+  | 'combat'
+  | 'team_sport'
+  | 'gymnastics'
+
+export const IMPORT_SPORT_OPTIONS: Array<{ value: ImportSportCategory; label: string }> = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'sprint_track', label: 'Sprints / Track & Field' },
+  { value: 'distance_running', label: 'Distance Running / XC' },
+  { value: 'swimming', label: 'Swimming' },
+  { value: 'cycling', label: 'Cycling / Triathlon' },
+  { value: 'strength', label: 'Strength / Powerlifting' },
+  { value: 'crossfit', label: 'CrossFit / Functional Fitness' },
+  { value: 'rowing', label: 'Rowing / Erging' },
+  { value: 'combat', label: 'Combat Sports' },
+  { value: 'team_sport', label: 'Team Sport (Soccer, Rugby, etc.)' },
+  { value: 'gymnastics', label: 'Gymnastics / Calisthenics' },
+]
+
+/** Training focus/modality options */
+export type ImportTrainingFocus =
+  | 'auto'
+  | 'speed'
+  | 'strength'
+  | 'power'
+  | 'hypertrophy'
+  | 'conditioning'
+  | 'endurance'
+  | 'mixed'
+
+export const IMPORT_FOCUS_OPTIONS: Array<{ value: ImportTrainingFocus; label: string }> = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'speed', label: 'Speed / Velocity' },
+  { value: 'strength', label: 'Strength / Maximal' },
+  { value: 'power', label: 'Power / Explosive' },
+  { value: 'hypertrophy', label: 'Hypertrophy / Muscle Growth' },
+  { value: 'conditioning', label: 'Conditioning / MetCon' },
+  { value: 'endurance', label: 'Endurance / Aerobic' },
+  { value: 'mixed', label: 'Mixed / General' },
+]
+
+/** Coach-friendly plan type labels for the pre-import dropdown */
+export const IMPORT_PLAN_TYPE_OPTIONS: Array<{ value: PlanType | 'auto'; label: string }> = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'single_session', label: 'Single Workout' },
+  { value: 'evolving_session', label: 'Single Multi-Week Session' },
+  { value: 'block_plan', label: 'Block Plan (Multi-Week)' },
+  { value: 'season_plan', label: 'Season / Annual Plan' },
+]
+
+/** Payload shape for pre-import context hints */
+export interface PreImportContext {
+  coachSport?: ImportSportCategory
+  coachPlanType?: PlanType
+  coachTrainingFocus?: ImportTrainingFocus
+}
+
+// --- Session & Exercise Types ---
+
 /** Exercise prescription within a self-contained plan session */
 export interface SessionExercise {
   order: number
   name: string
-  sets: number
+  sets: number | string
   reps?: string           // e.g. "6", "6 e/s", "30s", "10 Fly"
+  distance_meters?: number
+  duration_seconds?: number
   rest_seconds?: number
   load_percent?: number   // % of 1RM
+  intensity_percent?: number
+  target_time_seconds?: number
   weight?: string
+  rpe?: number
+  tempo?: string
+  category?: string
   notes?: string
   superset_group?: string
+  is_section_header?: boolean
 }
 
 /** Exercise prescription for an evolving session, varies week by week */
@@ -45,7 +123,7 @@ export interface EvolvingExercise {
   notes?: string
   weeks: Array<{
     week_number: number
-    sets: number
+    sets: number | string
     reps?: string
     load_percent?: number
     weight?: string
@@ -85,7 +163,8 @@ export interface ImportWorkout {
 
 export interface ImportExercise {
   name: string
-  sets?: number
+  raw_name?: string // original text exactly as written by the coach (before AI interpretation)
+  sets?: number | string // Can be "3" or "3-4" — ranges preserved
   reps?: string // Can be "8-10" or "5" or "max" or "2+1"
   weight?: string // Can be "80%" or "135 lbs"
   duration_seconds?: number
@@ -97,6 +176,7 @@ export interface ImportExercise {
   rpe?: number // rate of perceived exertion 1-10
   category?: string // movement category (sprint, drill, interval, compound_lift, etc.)
   notes?: string
+  is_section_header?: boolean // true = visual section divider, not an exercise
 }
 
 export interface CoachAbbreviation {

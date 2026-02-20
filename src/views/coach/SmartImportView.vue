@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import type { ImportBlock, ImportWeek, PlanType } from '@/types/import'
-import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS } from '@/types/import'
+import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext } from '@/types/import'
+import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS, IMPORT_SPORT_OPTIONS, IMPORT_FOCUS_OPTIONS, IMPORT_PLAN_TYPE_OPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
-import { importProgram, saveImportedProgram, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
+import { importProgram, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord } from '@/types/import'
 import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
 import { useAuthStore } from '@/stores/auth'
@@ -36,6 +36,146 @@ const importHistory = ref<ImportHistoryRecord[]>([])
 const expandedWorkouts = ref<Set<string>>(new Set())
 const originalExerciseNames = ref<Map<string, string>>(new Map()) // key: "blockIdx-weekIdx-workoutIdx-exerciseIdx" → original name
 const expandedAbbreviations = ref<string[]>([]) // abbreviations that were auto-expanded by Edge Function
+
+// Bulk exercise name review
+interface UniqueExerciseEntry {
+  rawName: string         // exercise name/abbreviation as coach wrote it (e.g. "PP", "HS", "BB RDL")
+  aiName: string          // AI's human-readable interpretation (e.g. "Push Press", "High Start")
+  coachOverride: string   // coach's manual correction (empty = accept AI)
+  useRawName: boolean     // "keep original" — use coach's abbreviation in plan instead of AI name
+  count: number           // how many times this exercise appears across the plan
+  isFlagged: boolean      // heuristic thinks rawName is abbreviated/shorthand
+}
+
+const showAllExerciseNames = ref(false)
+// Reactive map: rawName → { coachOverride, useRawName }
+const bulkOverrides = ref<Map<string, { coachOverride: string; useRawName: boolean }>>(new Map())
+
+function isLikelyAbbreviation(name: string): boolean {
+  const trimmed = name.trim()
+  if (!trimmed) return false
+  // All uppercase and short (e.g. "PP", "BS", "RDL", "BB RDL")
+  if (trimmed === trimmed.toUpperCase() && trimmed.replace(/\s+/g, '').length <= 8 && /[A-Z]/.test(trimmed)) return true
+  // Single word 3 chars or less (e.g. "SL", "DB")
+  if (!/\s/.test(trimmed) && trimmed.length <= 3 && /^[A-Za-z]+$/.test(trimmed)) return true
+  // Contains "/" separator common in shorthand (e.g. "DB B/O Row")
+  if (/\//.test(trimmed) && trimmed.length <= 20) return true
+  // Matches "A1", "B2" style circuit markers
+  if (/^[A-Z]\d+$/i.test(trimmed)) return true
+  // No vowels and has at least 2 consonants (e.g. "RFSS", "SLR")
+  const letters = trimmed.replace(/[^a-zA-Z]/g, '')
+  if (letters.length >= 2 && !/[aeiouAEIOU]/.test(letters)) return true
+  return false
+}
+
+/** Resolve what the display name should be for a given entry */
+function resolvedName(entry: UniqueExerciseEntry): string {
+  const override = bulkOverrides.value.get(entry.rawName)
+  if (override?.useRawName) return entry.rawName
+  if (override?.coachOverride?.trim()) return override.coachOverride.trim()
+  return entry.aiName
+}
+
+const uniqueExerciseEntries = computed<UniqueExerciseEntry[]>(() => {
+  if (!importResult.value) return []
+  const blocks = previewBlocks.value
+
+  // Group by raw_name (or name if raw_name not available from older imports)
+  const entryMap = new Map<string, { rawName: string; aiName: string; count: number }>()
+  for (let bi = 0; bi < blocks.length; bi++) {
+    for (let wi = 0; wi < (blocks[bi].weeks ?? []).length; wi++) {
+      const week = blocks[bi].weeks[wi]
+      for (let woi = 0; woi < (week.workouts ?? []).length; woi++) {
+        const workout = week.workouts[woi]
+        for (let ei = 0; ei < (workout.exercises ?? []).length; ei++) {
+          const ex = workout.exercises[ei]
+          const rawName = ex.raw_name || ex.name
+          const aiName = ex.name
+          const existing = entryMap.get(rawName)
+          if (existing) {
+            existing.count++
+          } else {
+            entryMap.set(rawName, { rawName, aiName, count: 1 })
+          }
+        }
+      }
+    }
+  }
+
+  const entries: UniqueExerciseEntry[] = []
+  for (const [, { rawName, aiName, count }] of entryMap) {
+    const override = bulkOverrides.value.get(rawName)
+    entries.push({
+      rawName,
+      aiName,
+      coachOverride: override?.coachOverride ?? '',
+      useRawName: override?.useRawName ?? false,
+      count,
+      isFlagged: isLikelyAbbreviation(rawName),
+    })
+  }
+
+  // Sort: flagged first, then by count descending
+  entries.sort((a, b) => {
+    if (a.isFlagged !== b.isFlagged) return a.isFlagged ? -1 : 1
+    return b.count - a.count
+  })
+
+  return entries
+})
+
+const flaggedEntries = computed(() => uniqueExerciseEntries.value.filter(e => e.isFlagged))
+const unflaggedEntries = computed(() => uniqueExerciseEntries.value.filter(e => !e.isFlagged))
+const bulkCorrectionCount = computed(() => {
+  let count = 0
+  for (const entry of uniqueExerciseEntries.value) {
+    const override = bulkOverrides.value.get(entry.rawName)
+    if (override?.coachOverride?.trim() || override?.useRawName) count++
+  }
+  return count
+})
+
+/** Set the coach override text for a raw_name and apply to all matching exercises */
+function setCoachOverride(rawName: string, text: string) {
+  const existing = bulkOverrides.value.get(rawName) ?? { coachOverride: '', useRawName: false }
+  existing.coachOverride = text
+  bulkOverrides.value = new Map(bulkOverrides.value.set(rawName, existing))
+  applyBulkToExercises(rawName)
+}
+
+/** Toggle "keep original" for a raw_name and apply to all matching exercises */
+function toggleUseRawName(rawName: string) {
+  const existing = bulkOverrides.value.get(rawName) ?? { coachOverride: '', useRawName: false }
+  existing.useRawName = !existing.useRawName
+  bulkOverrides.value = new Map(bulkOverrides.value.set(rawName, existing))
+  applyBulkToExercises(rawName)
+}
+
+/** Apply the resolved display name to all exercises matching this raw_name */
+function applyBulkToExercises(rawName: string) {
+  if (!importResult.value) return
+  const blocks = previewBlocks.value
+  // Find the entry to get resolved name
+  const entry = uniqueExerciseEntries.value.find(e => e.rawName === rawName)
+  if (!entry) return
+  const displayName = resolvedName(entry)
+
+  for (let bi = 0; bi < blocks.length; bi++) {
+    for (let wi = 0; wi < (blocks[bi].weeks ?? []).length; wi++) {
+      const week = blocks[bi].weeks[wi]
+      for (let woi = 0; woi < (week.workouts ?? []).length; woi++) {
+        const workout = week.workouts[woi]
+        for (let ei = 0; ei < (workout.exercises ?? []).length; ei++) {
+          const ex = workout.exercises[ei]
+          const exRawName = ex.raw_name || ex.name
+          if (exRawName === rawName) {
+            ex.name = displayName
+          }
+        }
+      }
+    }
+  }
+}
 
 // Plan type selector
 const selectedPlanType = ref<PlanType>('block_plan')
@@ -115,12 +255,18 @@ watch(() => importResult.value, (result) => {
     planTypeOverridden.value = false
     selectedPlanType.value = 'block_plan'
     libraryFlags.value = new Set()
+    bulkOverrides.value = new Map()
+    showAllExerciseNames.value = false
     return
   }
 
-  // Auto-select plan type from AI detection
-  if (result.detectedPlanType && !planTypeOverridden.value) {
-    selectedPlanType.value = result.detectedPlanType
+  // Auto-select plan type: coach pre-selection takes priority over AI detection
+  if (!planTypeOverridden.value) {
+    if (preImportPlanType.value !== 'auto') {
+      selectedPlanType.value = preImportPlanType.value
+    } else if (result.detectedPlanType) {
+      selectedPlanType.value = result.detectedPlanType
+    }
   }
 
   const map = new Map<string, string>()
@@ -144,23 +290,29 @@ watch(() => importResult.value, (result) => {
 }, { immediate: true })
 
 // Collect corrections and save as abbreviations (non-blocking, after plan save)
+// Glossary learns rawName → interpretation regardless of "keep original" display choice.
+// If coach typed an override, that's the interpretation. Otherwise AI's name is confirmed.
 const saveCorrectionsAsAbbreviations = async () => {
   const coachId = authStore.user?.id
-  if (!coachId || editCount.value === 0) return
+  if (!coachId) return
 
   const corrections: Array<{ original: string; corrected: string }> = []
-  for (const [key, original] of originalExerciseNames.value) {
-    const [bi, wi, woi, ei] = key.split('-').map(Number)
-    const block = previewBlocks.value[bi]
-    const week = block?.weeks?.[wi]
-    const workout = week?.workouts?.[woi]
-    const exercise = workout?.exercises?.[ei]
-    if (exercise && exercise.name !== original) {
-      corrections.push({ original, corrected: exercise.name })
-    }
+
+  for (const entry of uniqueExerciseEntries.value) {
+    // Only learn when raw and AI differ (abbreviation exists)
+    if (entry.rawName === entry.aiName && !entry.coachOverride?.trim()) continue
+
+    // Determine the "correct" full name for the glossary
+    const interpretation = entry.coachOverride?.trim() || entry.aiName
+    if (interpretation === entry.rawName) continue // nothing to learn
+
+    corrections.push({ original: entry.rawName, corrected: interpretation })
   }
 
-  if (corrections.length === 0) return
+  if (corrections.length === 0) {
+    console.log('[SmartImport] No abbreviation patterns to save')
+    return
+  }
 
   const detected = detectAbbreviationsFromCorrections(corrections)
   if (detected.length === 0) {
@@ -263,6 +415,11 @@ const handleDrop = (event: DragEvent) => {
 
 const isDragging = ref(false)
 
+// Pre-import context dropdowns (all default to 'auto' = current behavior)
+const preImportSport = ref<ImportSportCategory | 'auto'>('auto')
+const preImportPlanType = ref<PlanType | 'auto'>('auto')
+const preImportFocus = ref<ImportTrainingFocus | 'auto'>('auto')
+
 const handleImport = async () => {
   if (!file.value || isProcessing.value) return
 
@@ -276,7 +433,11 @@ const handleImport = async () => {
     await new Promise(resolve => setTimeout(resolve, 500))
 
     processingStage.value = 'parsing'
-    const result = await importProgram(file.value, importAbortController.signal)
+    const context: PreImportContext = {}
+    if (preImportSport.value !== 'auto') context.coachSport = preImportSport.value
+    if (preImportPlanType.value !== 'auto') context.coachPlanType = preImportPlanType.value
+    if (preImportFocus.value !== 'auto') context.coachTrainingFocus = preImportFocus.value
+    const result = await importProgram(file.value, importAbortController.signal, context)
 
     processingStage.value = 'validating'
     await new Promise(resolve => setTimeout(resolve, 300))
@@ -312,18 +473,26 @@ const handleConfirmImport = async () => {
     // Override the plan type in the import result with the user's selection
     importResult.value.detectedPlanType = selectedPlanType.value
 
-    const planId = await saveImportedProgram(
-      importResult.value,
-      historyRecord.value?.id,
-      libraryFlags.value.size > 0 ? libraryFlags.value : undefined,
-    )
-
     // Non-blocking: save exercise name corrections as abbreviations
-    if (editCount.value > 0) {
-      saveCorrectionsAsAbbreviations().catch(() => {})
-    }
+    // Learns from bulk review card (rawName → interpretation) + any inline edits
+    saveCorrectionsAsAbbreviations().catch(() => {})
 
-    router.push(`/coach/planner/${planId}`)
+    if (selectedPlanType.value === 'single_session') {
+      // Single session → save directly as a workout (no plan structure)
+      const { id: workoutId } = await saveImportedWorkout(
+        importResult.value,
+        historyRecord.value?.id,
+      )
+      router.push(`/coach/workouts/${workoutId}/edit`)
+    } else {
+      // All other plan types → save as plan with blocks/weeks/sessions
+      const planId = await saveImportedProgram(
+        importResult.value,
+        historyRecord.value?.id,
+        libraryFlags.value.size > 0 ? libraryFlags.value : undefined,
+      )
+      router.push(`/coach/planner/${planId}`)
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to save program'
     console.error('Save error:', err)
@@ -367,6 +536,11 @@ const handleCancel = () => {
   selectedPlanType.value = 'block_plan'
   planTypeOverridden.value = false
   libraryFlags.value = new Set()
+  bulkOverrides.value = new Map()
+  showAllExerciseNames.value = false
+  preImportSport.value = 'auto'
+  preImportPlanType.value = 'auto'
+  preImportFocus.value = 'auto'
 }
 
 const formatFileSize = (bytes: number) => {
@@ -482,6 +656,46 @@ const statusIcon = (status: string) => {
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          </div>
+
+          <!-- Pre-Import Context Dropdowns -->
+          <div v-if="file && !isProcessing && !importResult" class="space-y-3">
+            <p class="text-xs text-gray-500">Optional: tell us about this file to improve AI accuracy</p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">Sport</label>
+                <select
+                  v-model="preImportSport"
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-summit-400 focus:border-summit-400"
+                >
+                  <option v-for="opt in IMPORT_SPORT_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">Plan Type</label>
+                <select
+                  v-model="preImportPlanType"
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-summit-400 focus:border-summit-400"
+                >
+                  <option v-for="opt in IMPORT_PLAN_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">Training Focus</label>
+                <select
+                  v-model="preImportFocus"
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-summit-400 focus:border-summit-400"
+                >
+                  <option v-for="opt in IMPORT_FOCUS_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -643,6 +857,149 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
+          <!-- Bulk Exercise Name Review -->
+          <div v-if="uniqueExerciseEntries.length > 0" class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <!-- Header -->
+            <div class="px-4 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2 flex-wrap">
+                <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <h3 class="font-semibold text-gray-900 text-sm">Review Exercise Names</h3>
+                <span class="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                  {{ uniqueExerciseEntries.length }} unique
+                </span>
+                <span v-if="bulkCorrectionCount > 0" class="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                  {{ bulkCorrectionCount }} reviewed
+                </span>
+              </div>
+              <p class="text-[11px] text-gray-500 mt-1.5 leading-tight">
+                Coach Name = your abbreviation/name. AI Interpretation = what AI thinks it means. Type a correction if AI got it wrong. Tick "Keep" to use your shorthand in the plan.
+              </p>
+            </div>
+
+            <!-- Column headers (visible on sm+) -->
+            <div class="hidden sm:grid sm:grid-cols-[minmax(80px,1fr)_minmax(100px,1.5fr)_minmax(100px,1.5fr)_36px] gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+              <span>Coach Name</span>
+              <span>AI Interpretation</span>
+              <span>Your Correction</span>
+              <span class="text-center" title="Keep coach's name in plan">Keep</span>
+            </div>
+
+            <!-- Flagged exercises (likely abbreviations) — always visible -->
+            <div v-if="flaggedEntries.length > 0" class="border-b border-gray-100">
+              <div class="px-4 py-2 bg-amber-50/50">
+                <p class="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  Likely abbreviations ({{ flaggedEntries.length }})
+                </p>
+              </div>
+              <div class="divide-y divide-gray-50">
+                <div
+                  v-for="entry in flaggedEntries"
+                  :key="'flag-' + entry.rawName"
+                  class="px-4 py-2 sm:grid sm:grid-cols-[minmax(80px,1fr)_minmax(100px,1.5fr)_minmax(100px,1.5fr)_36px] sm:gap-2 sm:items-center space-y-1.5 sm:space-y-0 border-l-3 border-amber-400"
+                >
+                  <!-- As Written -->
+                  <div class="flex items-center gap-1.5">
+                    <code class="text-xs font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded truncate">{{ entry.rawName }}</code>
+                    <span class="text-[10px] text-gray-400 shrink-0">&times;{{ entry.count }}</span>
+                  </div>
+                  <!-- AI Interpretation -->
+                  <div class="text-xs text-gray-600 truncate" :class="entry.rawName !== entry.aiName ? 'text-summit-700 font-medium' : 'text-gray-400 italic'">
+                    {{ entry.rawName !== entry.aiName ? entry.aiName : '(same)' }}
+                  </div>
+                  <!-- Coach Override -->
+                  <input
+                    :value="entry.coachOverride"
+                    @input="setCoachOverride(entry.rawName, ($event.target as HTMLInputElement).value)"
+                    :placeholder="entry.aiName"
+                    class="w-full text-xs px-2 py-1.5 border rounded-md focus:outline-none focus:ring-1 focus:ring-summit-400 transition-colors"
+                    :class="entry.coachOverride?.trim()
+                      ? 'bg-amber-50 border-amber-300 text-amber-900'
+                      : 'border-gray-200 bg-white text-gray-500'"
+                  />
+                  <!-- Keep Original toggle -->
+                  <div class="flex items-center justify-center">
+                    <button
+                      @click="toggleUseRawName(entry.rawName)"
+                      class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors shrink-0"
+                      :class="entry.useRawName
+                        ? 'bg-summit-600 border-summit-600 text-white'
+                        : 'border-gray-300 hover:border-summit-400'"
+                      :title="entry.useRawName ? 'Using coach name in plan' : 'Click to keep coach name'"
+                    >
+                      <svg v-if="entry.useRawName" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- All other exercises (collapsed by default) -->
+            <div class="px-4 py-2.5">
+              <button
+                @click="showAllExerciseNames = !showAllExerciseNames"
+                class="flex items-center gap-2 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors w-full"
+              >
+                <svg
+                  class="w-4 h-4 transition-transform shrink-0"
+                  :class="showAllExerciseNames ? 'rotate-180' : ''"
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+                <span>All exercise names ({{ unflaggedEntries.length }})</span>
+              </button>
+              <div v-if="showAllExerciseNames" class="mt-2 divide-y divide-gray-50">
+                <div
+                  v-for="entry in unflaggedEntries"
+                  :key="'all-' + entry.rawName"
+                  class="py-2 sm:grid sm:grid-cols-[minmax(80px,1fr)_minmax(100px,1.5fr)_minmax(100px,1.5fr)_36px] sm:gap-2 sm:items-center space-y-1.5 sm:space-y-0"
+                >
+                  <!-- As Written -->
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-xs text-gray-700 truncate">{{ entry.rawName }}</span>
+                    <span class="text-[10px] text-gray-400 shrink-0">&times;{{ entry.count }}</span>
+                  </div>
+                  <!-- AI Interpretation -->
+                  <div class="text-xs truncate" :class="entry.rawName !== entry.aiName ? 'text-summit-700 font-medium' : 'text-gray-400 italic'">
+                    {{ entry.rawName !== entry.aiName ? entry.aiName : '(same)' }}
+                  </div>
+                  <!-- Coach Override -->
+                  <input
+                    :value="entry.coachOverride"
+                    @input="setCoachOverride(entry.rawName, ($event.target as HTMLInputElement).value)"
+                    :placeholder="entry.aiName"
+                    class="w-full text-xs px-2 py-1.5 border rounded-md focus:outline-none focus:ring-1 focus:ring-summit-400 transition-colors"
+                    :class="entry.coachOverride?.trim()
+                      ? 'bg-amber-50 border-amber-300 text-amber-900'
+                      : 'border-gray-200 bg-white text-gray-500'"
+                  />
+                  <!-- Keep Original toggle -->
+                  <div class="flex items-center justify-center">
+                    <button
+                      @click="toggleUseRawName(entry.rawName)"
+                      class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors shrink-0"
+                      :class="entry.useRawName
+                        ? 'bg-summit-600 border-summit-600 text-white'
+                        : 'border-gray-300 hover:border-summit-400'"
+                      :title="entry.useRawName ? 'Using coach name in plan' : 'Click to keep coach name'"
+                    >
+                      <svg v-if="entry.useRawName" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Expanded Abbreviations Banner -->
           <div v-if="expandedAbbreviations.length > 0" class="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <div class="flex items-start gap-3">
@@ -695,19 +1052,13 @@ const statusIcon = (status: string) => {
                     class="border border-gray-200 rounded-lg p-3 space-y-2">
                     <div class="flex items-center justify-between">
                       <p class="text-sm font-semibold text-gray-900">{{ workout.name }}</p>
-                      <!-- Library toggle -->
-                      <button
-                        @click="toggleLibraryFlag(`${bi}-${wi}-${woi}`)"
-                        class="flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-lg transition-colors"
-                        :class="libraryFlags.has(`${bi}-${wi}-${woi}`)
-                          ? 'bg-summit-100 text-summit-700 hover:bg-summit-200'
-                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
-                      >
+                      <!-- Single sessions always go to library — show badge instead of toggle -->
+                      <span class="flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-lg bg-summit-100 text-summit-700">
                         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
                         </svg>
-                        Library
-                      </button>
+                        Workout Library
+                      </span>
                     </div>
                     <div class="space-y-1">
                       <div
@@ -890,8 +1241,8 @@ const statusIcon = (status: string) => {
             </template>
           </div>
 
-          <!-- Library Summary -->
-          <div v-if="libraryFlagCount > 0" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
+          <!-- Library Summary (not shown for single_session — always goes to library) -->
+          <div v-if="libraryFlagCount > 0 && selectedPlanType !== 'single_session'" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
             <div class="flex items-center gap-2">
               <svg class="w-4 h-4 text-summit-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
@@ -925,9 +1276,15 @@ const statusIcon = (status: string) => {
                 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
             >
               {{ isSaving ? 'Saving...' :
-                 editCount > 0 ? `Save to Planner (${editCount} corrections)` :
-                 libraryFlagCount > 0 ? `Save to Planner (+${libraryFlagCount} to Library)` :
-                 'Save to Planner' }}
+                 selectedPlanType === 'single_session'
+                   ? (editCount + bulkCorrectionCount) > 0
+                     ? `Save to Workout Library (${editCount + bulkCorrectionCount} corrections)`
+                     : 'Save to Workout Library'
+                   : (editCount + bulkCorrectionCount) > 0
+                     ? `Save to Planner (${editCount + bulkCorrectionCount} corrections)`
+                     : libraryFlagCount > 0
+                       ? `Save to Planner (+${libraryFlagCount} to Library)`
+                       : 'Save to Planner' }}
             </button>
             <button
               @click="handleCancel"

@@ -1,4 +1,4 @@
-// smart-import Edge Function (v14 - plan type classification + sport-context-aware parsing)
+// smart-import Edge Function (v27 - Anti-column-shifting guardrails, literal cell reading)
 // Step 1: Classify document type (single_session / evolving_session / block_plan / season_plan)
 // Step 2: Sport detection → sport-specific parsing rules
 // Pre-parsed spreadsheets (SheetJS on frontend) -> Haiku 4.5 for JSON structuring
@@ -260,26 +260,41 @@ function detectSport(content: string): SportSignal | null {
 const SPORT_RULES: Record<string, string> = {
   sprint_track: `
 SPORT DETECTED: Sprint / Track & Field.
-CRITICAL PARSING RULES FOR THIS SPORT:
-- Every distance-based prescription IS an exercise. "4x3x60m" is an exercise, not a label.
-- Decompose multi-part notation: "AxBxCm" → name: "Cm Sprint" (or "Cm Dash"), sets: A, reps: "B", distance_meters: C.
-  Examples:
-    "4x3x60m" → { name: "60m Sprint", sets: 4, reps: "3", distance_meters: 60 }
-    "3x200m @ 95%" → { name: "200m Sprint", sets: 3, reps: "1", distance_meters: 200, intensity_percent: 95 }
-    "6x150m w/ 8min rest" → { name: "150m Sprint", sets: 6, reps: "1", distance_meters: 150, rest_seconds: 480 }
-    "2x3x30m sled pull" → { name: "30m Sled Pull", sets: 2, reps: "3", distance_meters: 30 }
-- When only distance + reps given with no "x sets": assume sets=1.
-  "3x60m" → { name: "60m Sprint", sets: 1, reps: "3", distance_meters: 60 }
-  Unless context clearly shows sets (e.g. grouped with rest between sets).
-- Start types become exercise name prefixes: "B 3x60m" → "Block Start 60m Sprint"; "F 3x30m" → "Flying 30m Sprint".
-- Drills ARE exercises: "Wickets", "A-Skip", "B-Skip", "Power Pole", "High Start", "3 Point Start", "Falling Starts" → extract as exercises with sets/reps.
-- Effort/intensity guides: "95%", "90%", "sub-max" → intensity_percent field. If no explicit intensity on a sprint prescription, assume the coach wants 95%+ effort (do NOT fill in intensity_percent, leave it null to indicate unspecified).
-- Rest notation: "3'/8'" means 3min rep rest / 8min set rest → rest_seconds: 180 (rep rest). Include set rest in notes.
-  "R=5'" or "r5min" → rest_seconds: 300.
-- Speed Endurance (SE) sessions often have longer distances (150m-600m) with incomplete rest.
+
+SIMPLE NAMING RULE FOR SPRINT/TRACK EXERCISES:
+The exercise "name" should be the ACTIVITY TYPE, NOT the full prescription. Distance goes in distance_meters, sets in sets, reps in reps. Do NOT bake distance into the exercise name.
+
+- If the Note column has a drill/start code (e.g. "PP", "HS", "B", "F", "3P", "SFS"), the exercise name is the EXPANDED drill name: "Push-up Position Start", "High Start", "Block Start", "Flying Start", "3-Point Start", "Sprint-Float-Sprint". The raw_name is the code ("PP", "HS", etc.).
+- If the Note column is null/empty AND distance <= 400m, the exercise name is "Sprint". raw_name is null.
+- If the Note column is null/empty AND distance > 400m, the exercise name is "Run". raw_name is null.
+- If the Note has a descriptive modifier (e.g. "sled pull", "wickets"), the exercise name is that modifier expanded: "Sled Pull", "Wickets".
+- Distance ALWAYS goes in the distance_meters field, NOT in the exercise name. Never write "60m Sprint" — write name: "Sprint", distance_meters: 60.
+
+DECOMPOSITION RULES:
+- "AxBxCm" → sets: A, reps: "B", distance_meters: C. Example: "4x3x60m" → sets: 4, reps: "3", distance_meters: 60
+- "AxCm" with no middle multiplier → reps: "A", distance_meters: C. (sets null unless context says otherwise)
+- "3x200m @ 95%" → reps: "3", distance_meters: 200, intensity_percent: 95
+
+CONCRETE EXAMPLES:
+  {"Set": null, "Rep": 4, "Distance": 10, "Note": "PP"}
+  → { "raw_name": "PP", "name": "Push-up Position Start", "reps": "4", "distance_meters": 10 }
+
+  {"Set": 4, "Rep": 4, "Distance": 40, "Note": null}
+  → { "raw_name": null, "name": "Sprint", "sets": "4", "reps": "4", "distance_meters": 40 }
+
+  {"Set": null, "Rep": 2, "Distance": 60, "Note": "20EFE"}
+  → { "raw_name": "20EFE", "name": "20m Easy-Fast-Easy", "reps": "2", "distance_meters": 60 }
+
+  {"Set": null, "Rep": 3, "Distance": 60, "Note": null}
+  → { "raw_name": null, "name": "Sprint", "reps": "3", "distance_meters": 60 }
+
+OTHER RULES:
+- Every distance-based prescription IS an exercise. Track coaches write prescriptions, not exercise names.
+- Drills ARE exercises: "Wickets", "A-Skip", "B-Skip" → extract as exercises with sets/reps.
+- Rest notation: "3'/8'" → rest_seconds: 180 (rep rest). Set rest in notes.
+- Session types: "speed" for max velocity, "speed_endurance" for SE, "power" for sled/hills, "technique" for drill-only, "conditioning" for tempo/circuits.
 - Tempo runs in sprint context = low-intensity runs (60-75%), NOT lactate threshold.
-- Session types: use "speed" for max velocity, "speed_endurance" for SE, "power" for sled/hills, "technique" for drill-only sessions, "conditioning" for tempo/circuits.
-- If there is no explicit "exercise" keyword but there IS a distance prescription, ALWAYS extract it as an exercise. Track coaches write prescriptions, not exercise names.`,
+- CRITICAL: Sprint data is intentionally sparse. When a field is null/empty, leave it null. Do NOT shift values between columns. A sprinter doing "2 reps of 60m" is valid. "60 reps" is NOT valid.`,
 
   distance_running: `
 SPORT DETECTED: Distance Running / Cross Country.
@@ -349,7 +364,7 @@ CRITICAL PARSING RULES FOR THIS SPORT:
 - Wave loading: "5,3,1,5,3,1" → reps: "5,3,1,5,3,1" with appropriate sets count.
 - Weight can be absolute ("225lbs", "100kg") → weight field. Or percentage ("80%") → intensity_percent.
 - RPE scale: 6-10 typically. RIR (Reps In Reserve) = 10 - RPE.
-- Common abbreviations: SN=Snatch, C&J=Clean&Jerk, PSn=Power Snatch, PC=Power Clean, FS=Front Squat, BS=Back Squat, OHS=Overhead Squat, DL=Deadlift, PP=Push Press, SLDL=Stiff-Leg Deadlift, RDL=Romanian Deadlift. EXPAND these into full names.`,
+- Common abbreviations: SN=Snatch, C&J=Clean&Jerk, PSn=Power Snatch, PC=Power Clean, FS=Front Squat, BS=Back Squat, OHS=Overhead Squat, DL=Deadlift, PP=Push Press, SLDL=Stiff-Leg Deadlift, RDL=Romanian Deadlift. Put the abbreviation in raw_name, the expanded name in name.`,
 
   crossfit: `
 SPORT DETECTED: CrossFit / Functional Fitness.
@@ -363,7 +378,7 @@ CRITICAL PARSING RULES FOR THIS SPORT:
 - EMOM: "EMOM 10: 2 C&J" → { name: "Clean & Jerk", sets: 10, reps: "2", notes: "EMOM" }
 - Tabata: "Tabata Air Squats" → { name: "Air Squats", sets: 8, reps: "max", duration_seconds: 20, rest_seconds: 10, notes: "Tabata: 20s on/10s off" }
 - Chipper: long list → each movement is its own exercise, sets: 1, reps as prescribed.
-- EXPAND abbreviations: T2B→Toes to Bar, C2B→Chest to Bar Pull-up, WB→Wall Balls, HSPU→Handstand Push-up, MU→Muscle-up, DU→Double Unders, KBS→Kettlebell Swings, DL→Deadlift, PC→Power Clean, PP→Push Press, BJ→Box Jump, S2OH→Shoulder to Overhead, SDHP→Sumo Deadlift High Pull, TGU→Turkish Get-up, GHD→GHD Sit-up.
+- EXPAND abbreviations in "name", preserve original in "raw_name": T2B→Toes to Bar, C2B→Chest to Bar Pull-up, WB→Wall Balls, HSPU→Handstand Push-up, MU→Muscle-up, DU→Double Unders, KBS→Kettlebell Swings, DL→Deadlift, PC→Power Clean, PP→Push Press, BJ→Box Jump, S2OH→Shoulder to Overhead, SDHP→Sumo Deadlift High Pull, TGU→Turkish Get-up, GHD→GHD Sit-up.
 - Rx weights: "(20/14)" means 20lb for men/14lb for women → notes field.
 - "For Time" workouts: set time_cap in workout notes if mentioned.`,
 
@@ -413,7 +428,7 @@ CRITICAL PARSING RULES FOR THIS SPORT:
 - Max reps: "5x max HSPU" → { name: "Handstand Push-up", sets: 5, reps: "max" }
 - Skill progressions: note the progression level: "Tuck Planche Hold 4x10s" → { name: "Tuck Planche Hold", sets: 4, duration_seconds: 10 }
 - Ring work: "3x8 Ring Muscle-ups" → { name: "Ring Muscle-up", sets: 3, reps: "8" }
-- EXPAND abbreviations: HSPU→Handstand Push-up, MU→Muscle-up, FL→Front Lever, BL→Back Lever, HS→Handstand, P2HS→Press to Handstand.
+- EXPAND abbreviations in "name", preserve original in "raw_name": HSPU→Handstand Push-up, MU→Muscle-up, FL→Front Lever, BL→Back Lever, HS→Handstand, P2HS→Press to Handstand.
 - Combination of holds + reps common: "3x(5 strict MU + 15s ring support hold)" → two exercises or compound notes.
 - BW (bodyweight) exercises: don't put weight unless external load is specified (e.g., "weighted pull-up +20kg").`,
 }
@@ -424,12 +439,18 @@ NO SPECIFIC SPORT DETECTED. Use these general rules:
 - Look for context clues to identify the sport: distances suggest running/swimming/sprints, percentages suggest strength, rounds suggest combat, zones suggest cycling.
 - When you see "AxBxCm" patterns (e.g., "4x3x60m"), decompose: sets=A, reps=B, distance_meters=C, name="Cm [activity]".
 - When you see "AxB @ C%" patterns, decompose: sets=A, reps=B, intensity_percent=C.
-- EXPAND all common abbreviations into full exercise names.
+- EXPAND all common abbreviations into full exercise names in the "name" field.
+- Put the coach's original exercise name/abbreviation (NOT the full prescription) in "raw_name".
 - Every prescription that describes physical activity IS an exercise — extract it.`
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 const SYSTEM = `You are a training program parser. Output ONLY valid JSON. No markdown, no code fences, no commentary.
 CRITICAL: You must extract EVERY exercise from EVERY workout/session. Never return an empty exercises array when training prescriptions exist in the data. A "prescription" is ANY instruction that tells an athlete what physical activity to perform — this includes distances, intervals, drills, rounds, holds, and traditional exercises.
+
+MOST IMPORTANT RULE — LITERAL COLUMN READING:
+When data comes from a spreadsheet, each column maps to EXACTLY ONE output field. Read each cell LITERALLY.
+If a cell is null/empty, that field is null in the output. DO NOT shift values from adjacent columns.
+Training data is intentionally sparse. Empty cells are VALID — they mean the coach chose not to specify that field, NOT that data shifted over. Do NOT try to be helpful by filling in gaps. Just read what is there.
 
 STEP 1 — CLASSIFY THE DOCUMENT TYPE before extracting data.
 Examine the structure and determine which of the four types it is:
@@ -484,11 +505,13 @@ function buildSchema(sportContext: string): string {
       "name": "string",
       "workouts": [{
         "name": "string",
+        "description": "string (optional — coaching instructions, tips, or general notes for this workout session)",
         "dayOfWeek": 1-7,
         "sessionType": "speed"|"strength"|"power"|"hypertrophy"|"conditioning"|"endurance"|"recovery"|"technique"|"competition"|"mixed"|null,
         "exercises": [{
-          "name": "string (REQUIRED - use a clear, descriptive name)",
-          "sets": number,
+          "raw_name": "string (REQUIRED - the exercise NAME as written by the coach, NOT the full prescription line)",
+          "name": "string (REQUIRED - your human-readable interpretation with abbreviations expanded)",
+          "sets": "string (number or range like '3' or '3-4')",
           "reps": "string",
           "distance_meters": number,
           "duration_seconds": number,
@@ -499,7 +522,8 @@ function buildSchema(sportContext: string): string {
           "rpe": number,
           "weight": "string",
           "category": "string",
-          "notes": "string"
+          "notes": "string",
+          "is_section_header": "boolean (default false — set true ONLY for section/group headings like 'Warm-Up', 'Core', 'Main Set', 'Cool-Down' that are NOT actual exercises)"
         }]
       }]
     }]
@@ -519,13 +543,15 @@ function buildSchema(sportContext: string): string {
   "evolution_weeks": number,
   "exercises": [{
     "order": number,
-    "name": "string (REQUIRED)",
+    "raw_name": "string (REQUIRED - exercise NAME as written by coach, not the full prescription)",
+    "name": "string (REQUIRED - human-readable interpretation)",
     "rest_seconds": number,
     "superset_group": "string or null",
     "notes": "string",
+    "is_section_header": "boolean (default false — set true ONLY for section/group headings like 'Warm-Up', 'Core', 'Main Set', 'Cool-Down' that are NOT actual exercises)",
     "weeks": [{
       "week_number": number,
-      "sets": number,
+      "sets": "string (number or range like '3' or '3-4')",
       "reps": "string",
       "load_percent": number,
       "weight": "string"
@@ -534,16 +560,24 @@ function buildSchema(sportContext: string): string {
 }
 
 RULES:
-1. Extract ALL exercises for every workout. Each exercise MUST have a descriptive "name". If sets/reps are not clear, use reasonable defaults (sets: 1, reps: "1").
+1. DUAL NAME FIELDS: Every exercise MUST have both "raw_name" and "name".
+   - "raw_name": The EXERCISE NAME as written by the coach — just the name/abbreviation, NOT the full prescription with sets, reps, distances, percentages, or rest periods. Strip out all numeric prescription data.
+     Examples of correct raw_name values: "PP", "BB RDL", "HS", "FR", "DB B/O Row", "Back Squat", "Sled Pull", "A-Skip", "WU", "C&J".
+     Examples of WRONG raw_name values: "3x60m Sprint" (too much — should be just the name part), "5x5 @ 80% Back Squat" (prescription data included), "8x100 FR @ 1:30" (full prescription).
+   - "name": Your best interpretation as a clear, human-readable exercise name. Expand abbreviations, add distance context where helpful. Examples: "Push Press", "Barbell Romanian Deadlift", "60m Sprint", "100m Freestyle", "Dumbbell Bent-Over Row".
+   - When the coach already wrote a clear, full exercise name (e.g., "Back Squat"), both raw_name and name should be the same: "Back Squat".
+   - When the coach wrote an abbreviation (e.g., "PP"), raw_name is "PP" and name is "Push Press".
+   - The prescription details (sets, reps, distance, intensity, rest) go into their respective structured fields, NOT into raw_name.
 2. DECOMPOSE compact notation into structured fields. "4x3x60m" is NOT a name — it must be parsed into name + sets + reps + distance_meters. See sport-specific rules below.
-3. Group weeks into training blocks/phases if detectable (GPP, SPP, Competition, Accumulation, Intensification, Peaking, Hypertrophy, Strength, Power, Taper). If no phases are detectable, use one block.
+3. COMPLETE BLOCK EXTRACTION: Group weeks into training blocks/phases if detectable. You MUST scan the ENTIRE document and extract ALL blocks/phases — do NOT stop after 2-3 blocks. Common phase names: GPP, SPP, Competition/Comp, All-Schools, Xmas/Holiday, Pre-Season, Accumulation, Intensification, Peaking, Hypertrophy, Strength, Power, Taper. If the data has 5 phases, you must output 5 blocks. If no phases are detectable, use one block.
 4. blockType examples: "hypertrophy", "strength", "power", "peaking", "gpp", "spp", "competition", "recovery".
 5. weekNumber must be sequential within each block starting at 1.
 6. dayOfWeek: 1=Monday, 7=Sunday. If specific days aren't clear, assign workouts sequentially starting from Monday.
 7. sessionType: classify each workout's primary focus based on the sport context.
 8. Exercise fields — include ONLY when data exists (omit null/empty fields):
-   - name: REQUIRED. Clear, human-readable name. EXPAND abbreviations. Never use raw notation as the name.
-   - sets: number of sets (default 1)
+   - raw_name: REQUIRED. The exercise name/abbreviation as the coach wrote it (NOT the full prescription line).
+   - name: REQUIRED. Clear, human-readable ACTIVITY TYPE. Expand abbreviations. Do NOT embed distances, sets, reps, or other prescription data in the name — those have their own fields. For sprint/running exercises with no modifier: "Sprint" (<=400m) or "Run" (>400m).
+   - sets: string for set count or range ("3", "3-4", "4-5"). Preserve ranges when the coach wrote them.
    - reps: string for rep count or range ("5", "8-10", "max", "3", "2+1")
    - distance_meters: numeric distance in meters (60, 200, 1000, 5000)
    - duration_seconds: time-based work in seconds (180 for 3min)
@@ -558,6 +592,9 @@ RULES:
 9. Detect the sport and periodization from context. Set the "sport" field.
 10. Be CONSISTENT: given the same input data, always produce the same output structure and the same number of workouts and exercises.
 11. Only extract blocks/weeks that contain actual training content (sessions with exercises). Do NOT create blocks for placeholder/empty sections.
+12. SECTION HEADERS: If the document organizes exercises under section headings (e.g., "Warm-Up", "Core Work", "Cardio", "Resistance", "Main Set", "Cool-Down", "Mobility"), create an exercise entry for each section heading with is_section_header: true and name set to the heading text. All other fields should be omitted. Place section headers in the correct order among exercises to maintain the document's structure.
+13. WORKOUT DESCRIPTION: If the document contains general instructions, coaching tips, notes, or guidelines that apply to the entire workout/session (not to a specific exercise), capture them in the workout's description field. Example: "Complete all exercises with proper form. Rest as needed between sections." goes into description.
+14. SPREADSHEET COLUMN MAPPING: When data comes from a spreadsheet with labeled columns, each column maps to exactly ONE output field. NEVER shift values between columns. If a column has null, the corresponding output field is null/omitted. Training programs are intentionally sparse. A null "Set" column means the coach did not specify sets — do NOT borrow from the "Rep" column. A null "Note" column means no modifier — it is a plain exercise.
 
 ${sportContext}
 
@@ -657,7 +694,7 @@ Deno.serve(async (req) => {
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     // ── Parse request ──
-    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations } = await req.json()
+    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus } = await req.json()
     if (!rawContent || !fileType || !fileName) {
       return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
@@ -697,29 +734,121 @@ Deno.serve(async (req) => {
       const entries = Object.entries(coachAbbreviations as Record<string, string>)
         .map(([a, e]) => `${a} = ${e}`)
         .join(', ')
-      glossaryPrompt = `\n\nCOACH PERSONAL ABBREVIATIONS (OVERRIDE sport defaults — always use these expansions):\n${entries}\n`
+      glossaryPrompt = `\n\nCOACH PERSONAL ABBREVIATIONS (OVERRIDE sport defaults — always use these expansions in the "name" field, preserve abbreviation in "raw_name"):\n${entries}\n`
     }
 
-    // ── Sport Detection (local, fast) ──
-    // For pre-parsed text we can detect sport directly from content.
-    // For PDF/images, we rely on filename hints + let the AI detect.
-    const sportSignal = preParsed ? detectSport(fileContent) : detectSport(fileName)
+    // ── Sport Detection (local, fast — coach override wins) ──
+    let sportSignal: SportSignal | null = null
+    if (coachSport && coachSport !== 'auto' && SPORT_RULES[coachSport]) {
+      // Coach told us the sport — skip regex detection, use directly
+      const sportLabel = SPORT_SIGNATURES.find(s => s.category === coachSport)?.sport ?? coachSport
+      sportSignal = { sport: sportLabel, category: coachSport, confidence: 100 }
+      console.log(`[sport-detect] Coach override: ${coachSport} → ${sportLabel}`)
+    } else {
+      // Auto-detect from content
+      sportSignal = preParsed ? detectSport(fileContent) : detectSport(fileName)
+    }
     const sportRules = sportSignal
       ? (SPORT_RULES[sportSignal.category] || GENERAL_SPORT_RULES)
       : GENERAL_SPORT_RULES
     const schema = buildSchema(sportRules)
+
+    // ── Coach Context Hints (injected into prompt) ──
+    let coachContextHints = ''
+    if (coachPlanType && coachPlanType !== 'auto') {
+      coachContextHints += `\nCOACH INDICATED PLAN TYPE: "${coachPlanType}". Give this classification confidence >= 0.85 unless the document structure clearly contradicts it.\n`
+    }
+    if (coachTrainingFocus && coachTrainingFocus !== 'auto') {
+      coachContextHints += `\nCOACH INDICATED TRAINING FOCUS: "${coachTrainingFocus}". Use this to guide sessionType classification for workouts.\n`
+    }
+    if (coachContextHints) {
+      console.log(`[smart-import] Coach context: sport=${coachSport ?? 'auto'} planType=${coachPlanType ?? 'auto'} focus=${coachTrainingFocus ?? 'auto'}`)
+    }
 
     // ── Route to correct model ──
     let result: { text: string; usage: any; stopReason: string }
     let modelUsed: string
 
     if (preParsed) {
-      // Spreadsheet text from SheetJS -> Haiku (fast, cheap)
+      // Spreadsheet JSON from SheetJS -> Haiku (fast, cheap)
       modelUsed = HAIKU
       result = await callClaude(HAIKU, 32000, [
         {
           role: 'user',
-          content: `Parse this spreadsheet data from "${fileName}":\n\n${fileContent}\n\n${schema}${glossaryPrompt}`,
+          content: `Parse this training program spreadsheet: "${fileName}"
+
+HOW TO READ THIS DATA:
+The spreadsheet has been pre-parsed into JSON. Each row is a JSON object where keys are column headers and values are cell contents. A "Columns:" line lists all column headers in order.
+
+CRITICAL RULES FOR READING THE JSON:
+1. null = empty cell. It is INTENTIONALLY empty. DO NOT shift, borrow, or infer data from adjacent columns to fill it.
+   {"Sets": null, "Reps": 4, "Distance": 10, "Note": "PP"} means: sets=null, reps=4, distance=10, note=PP.
+   WRONG: moving Reps→Sets, Distance→Reps, Note→Distance. That destroys the data.
+2. Each column has ONE fixed meaning. Read LITERALLY what is there. If a cell is null, output null for that field. Training data is intentionally sparse — coaches leave fields blank on purpose (e.g. no sets needed, or no modifier note for a plain sprint). Empty is valid, not an error.
+3. Keys like "_col3", "_col5" are columns the coach left unlabeled. These often contain IMPORTANT exercise data (reps, distances, intensities, rest periods). You MUST figure out what each _col means by examining the data patterns.
+4. The same column can serve different purposes in different rows. A column that holds a session type name in one row might hold an exercise prescription number in the next.
+
+ANTI-SHIFTING RULE (THIS IS THE MOST IMPORTANT RULE):
+NEVER move a value from one column into a different output field. The column-to-field mapping is FIXED:
+- Set column → "sets" field ONLY
+- Rep column → "reps" field ONLY
+- Distance column → "distance_meters" field ONLY
+- Note column → "raw_name" field ONLY
+If Set is null, output sets as null. Do NOT put the Rep value into sets.
+If Rep is null, output reps as null. Do NOT put the Distance value into reps.
+If Note is null, output raw_name as null and name as the activity type (e.g. "Sprint" for <=400m, "Run" for >400m). Do NOT put the distance in the name — it belongs in distance_meters.
+EVERY column maps to EXACTLY ONE output field. No exceptions. No "smart" inference.
+
+SEASON PLAN GRID LAYOUT — HOW TO DECODE IT:
+Coaches often put an entire season on ONE sheet in a grid layout. The columns are organized in GROUPS, one group per day/session:
+
+- LEFT COLUMNS: Week identifiers (dates, week numbers, phase names like "GPP", "SPP", "Competition", countdown numbers). CRITICAL: Scan the ENTIRE first column (column A) from top to bottom BEFORE extracting. Phase/block names appear as labels in column A that group the weeks below them. You MUST extract ALL phases/blocks — do NOT stop early. Common patterns: "GPP" (General Preparation), "SPP" (Specific Preparation), "Competition"/"Comp", "Xmas"/"Holiday", "Pre-Season", "Taper", "All-schools". If the file has 5 phases, you must output 5 blocks.
+- DAY COLUMNS: Named columns like "MONDAY", "TUESDAY" etc. hold SESSION TYPE NAMES (e.g. "Speed 1", "Tempo/MB", "Rest"). These are workout LABELS, NOT exercises.
+- PRESCRIPTION COLUMNS: After each day column, several _col columns hold the exercise prescriptions for that day's session.
+
+DESCRIPTIVE COLUMN NAMES:
+Columns are pre-labeled with their day and field type, e.g. "TUESDAY_Set", "TUESDAY_Rep", "TUESDAY_Distance", "TUESDAY_Note", "TUESDAY_Volume". This tells you EXACTLY what each value means.
+
+HOW TO MAP COLUMNS TO OUTPUT FIELDS — FOLLOW EXACTLY:
+- "*_Set" column → output "sets" field. If null/missing, OMIT sets (do NOT guess or default to 1).
+- "*_Rep" column → output "reps" field. This is the repetition count. DO NOT put this into "sets".
+- "*_Distance" column → output "distance_meters" field. DO NOT put this into "reps".
+- "*_Note" column → output "raw_name" field. This is the drill/start type. If null, it's a plain sprint.
+- "*_Volume" column → IGNORE entirely. Do not output.
+
+CONCRETE EXAMPLES — you MUST follow this exact mapping:
+
+  Example 1 — Set is null, Note has a drill code:
+  {"TUESDAY_Set": null, "TUESDAY_Rep": 4, "TUESDAY_Distance": 10, "TUESDAY_Note": "PP"}
+  → { "raw_name": "PP", "name": "Push-up Position Start", "reps": "4", "distance_meters": 10 }
+  WRONG: { "sets": "4", "reps": "10" } ← NEVER shift Rep→Sets or Distance→Reps
+
+  Example 2 — All fields present, no Note (plain sprint):
+  {"THURSDAY_Set": 4, "THURSDAY_Rep": 4, "THURSDAY_Distance": 40, "THURSDAY_Note": null}
+  → { "raw_name": null, "name": "Sprint", "sets": "4", "reps": "4", "distance_meters": 40 }
+  WRONG: { "name": "40m Sprint" } ← do NOT put distance in the name, it goes in distance_meters
+
+  Example 3 — Set is null, Note has a modifier:
+  {"SATURDAY_Set": null, "SATURDAY_Rep": 2, "SATURDAY_Distance": 60, "SATURDAY_Note": "20EFE"}
+  → { "raw_name": "20EFE", "name": "20m Easy-Fast-Easy", "reps": "2", "distance_meters": 60 }
+  WRONG: { "sets": "2", "reps": "60", "name": "20EFE" } ← data shifted left, completely wrong
+
+  Example 4 — Only Rep and Distance, no Set, no Note:
+  {"TUESDAY_Set": null, "TUESDAY_Rep": 3, "TUESDAY_Distance": 60, "TUESDAY_Note": null}
+  → { "raw_name": null, "name": "Sprint", "reps": "3", "distance_meters": 60 }
+  WRONG: { "sets": "3", "reps": "60" } ← shifted again, 60 reps is nonsensical for running
+  WRONG: { "name": "60m Sprint" } ← distance goes in distance_meters, not the name
+
+Each day's columns form a group (TUESDAY_*, THURSDAY_*, SATURDAY_*, etc.). Each group maps to the session type for that day (found in a session-name row, e.g. TUESDAY="Speed 1"). Extract exercises from each group into the matching workout.
+
+Session type names ("Speed 1", "Tempo/MB", "Rest", "Relay") are workout NAMES — populate them with exercises from their column group. If a session has NO exercise data, return an empty exercises array. Do NOT invent exercises or turn the session name into an exercise.
+
+MULTI-SHEET SEASON PLANS: If the data begins with "DOCUMENT STRUCTURE: Multi-sheet season plan", the WEEKLY SCHEDULE maps weeks to session types, and each detail sheet contains exercises for one session type. Extract exercises ONLY from detail sheets. Never treat session type names as exercises.
+
+DATA:
+${fileContent}
+
+${schema}${glossaryPrompt}${coachContextHints}`,
         },
       ])
     } else {
@@ -746,7 +875,7 @@ Deno.serve(async (req) => {
 
       contentBlocks.push({
         type: 'text',
-        text: `Extract the training program from "${fileName}".\n\n${schema}${glossaryPrompt}`,
+        text: `Extract the training program from "${fileName}".\n\n${schema}${glossaryPrompt}${coachContextHints}`,
       })
 
       result = await callClaude(SONNET, 32000, [
@@ -809,7 +938,7 @@ Deno.serve(async (req) => {
         coach_id: user.id,
         tier: 'import',
         action: 'smart_import',
-        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}] type=${detectedPlanType}`,
+        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}] type=${detectedPlanType}${coachSport ? ' coach_sport=' + coachSport : ''}${coachPlanType ? ' coach_plan=' + coachPlanType : ''}${coachTrainingFocus ? ' coach_focus=' + coachTrainingFocus : ''}`,
         response: JSON.stringify(importResult).substring(0, 5000),
         model: modelUsed,
         tokens_used: tokens,
