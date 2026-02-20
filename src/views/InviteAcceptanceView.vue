@@ -97,7 +97,7 @@ function handleLogin() {
       <!-- Coach Avatar -->
       <div class="text-center mb-6">
         <img
-          :src="coachProfile.avatar_url || 'https://via.placeholder.com/120'"
+          :src="coachProfile.avatar_url || '/default-avatar.svg'"
           :alt="coachProfile.display_name"
           class="w-24 h-24 rounded-full mx-auto mb-4 object-cover border-4 border-summit-100"
         />

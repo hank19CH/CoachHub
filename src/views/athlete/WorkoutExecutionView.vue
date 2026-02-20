@@ -33,8 +33,29 @@ const completionId = ref<string | null>(null)
 const isSubmitting = ref(false)
 
 // Computed
-const exercises = computed<Exercise[]>(() => {
+const allExercises = computed<Exercise[]>(() => {
   return assignment.value?.exercises || []
+})
+
+// Trackable exercises = everything except section headers
+const exercises = computed<Exercise[]>(() => {
+  return allExercises.value.filter(ex => !(ex as any).is_section_header)
+})
+
+// Section header text that appears before the current exercise (for display)
+const currentSectionHeader = computed<string | null>(() => {
+  if (!assignment.value?.exercises) return null
+  const all = assignment.value.exercises
+  const current = exercises.value[currentExerciseIndex.value]
+  if (!current) return null
+  const currentIdx = all.findIndex(e => e.id === current.id)
+  // Walk backwards from current exercise in the full list to find the nearest section header
+  for (let i = currentIdx - 1; i >= 0; i--) {
+    if ((all[i] as any).is_section_header) return all[i].name
+    // If we hit another real exercise before finding a header, no header for this one
+    break
+  }
+  return null
 })
 
 const currentExercise = computed<Exercise | null>(() => {
@@ -103,8 +124,11 @@ onMounted(async () => {
       assignment.value = found
     }
 
-    // Initialize results array
-    exerciseResults.value = new Array(assignment.value.exercises?.length || 0).fill(null)
+    // Initialize results array (only for trackable exercises, not section headers)
+    const trackableCount = (assignment.value.exercises || []).filter(
+      (ex: any) => !ex.is_section_header
+    ).length
+    exerciseResults.value = new Array(trackableCount).fill(null)
     startTime.value = new Date()
   } catch (err: any) {
     error.value = err.message || 'Failed to load workout'
@@ -334,6 +358,15 @@ function handleModalClose() {
 
     <!-- Workout content -->
     <div v-else class="max-w-4xl mx-auto px-4 py-6 pb-32">
+      <!-- Section header divider (shows above exercise when entering a new section) -->
+      <div v-if="currentSectionHeader" class="mb-4">
+        <div class="flex items-center gap-3">
+          <div class="flex-1 h-px bg-gray-300"></div>
+          <span class="text-xs font-bold uppercase tracking-wider text-gray-500">{{ currentSectionHeader }}</span>
+          <div class="flex-1 h-px bg-gray-300"></div>
+        </div>
+      </div>
+
       <!-- Current exercise logger -->
       <ExerciseLogger
         v-if="currentExercise"

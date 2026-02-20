@@ -44,7 +44,7 @@
 - **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
 - **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
-- **Smart Import v14:** Plan type classification (4 types) + per-session library toggles + evolving session normalization. Sport-context-aware parsing.
+- **Smart Import v28:** Pre-import context dropdowns (Sport, Plan Type, Training Focus). Payload compaction (strip Volume columns + drop nulls = 30-50% size reduction). Truncation 80K→150K. Complete block extraction rule. Exercise naming = activity type only ("Sprint" not "60m Sprint"). SessionExercise JSONB maps all structured fields (distance_meters, rpe, tempo, category). Anti-column-shifting guardrails + unified JSON + section headers + raw_name dual fields + bulk exercise name review.
 
 ## Common Gotchas
 - **PRICING**: Never use old placeholder pricing ($25/$50/$100). Confirmed pricing is Coach $19/$29, Team $59/$79 (beta/standard). See Sprint 13 section.
@@ -61,6 +61,14 @@
 - `saveImportedProgram()` takes optional `libraryFlags?: Set<string>` param (key: `"blockIdx-weekIdx-workoutIdx"`)
 - WorkoutBuilder session mode: `route.query.sessionMode=true` + `sessionId` → loads/saves from session_data JSONB
 - Evolving session AI response returns `exercises[].weeks[]` format — normalized to `blocks[]` by `normalizeEvolvingSession()` in aiImport.ts
+- **`exercises.sets` is NOW TEXT** (was integer) — supports ranges like "3-4". Use `parseInt(String(ex.sets))` for arithmetic.
+- **`exercises.is_section_header`** boolean column — visual section dividers (Warm-Up, Main Set, etc.), NOT actual exercises
+- Default avatar is `/default-avatar.svg` (NOT .png or placeholder URLs)
+- WorkoutBuilder `numOrNull()` helper coerces empty strings to null for numeric DB columns
+- **Exercise naming rule**: Name = activity type ("Sprint", "Run"), NOT prescription ("60m Sprint"). Distance→`distance_meters` field.
+- **Pre-import context**: Coach can select Sport/PlanType/Focus before upload; overrides AI detection. Passed as `coachSport/coachPlanType/coachTrainingFocus` to edge function.
+- **JSON payload compaction** (v28): Volume columns stripped, null values dropped from rows. Truncation limit 150K (was 80K).
+- **Complete Block Extraction**: AI prompt rule #3 says "scan ENTIRE document, extract ALL blocks". Prevents late phases from being missed.
 
 ## Test Accounts
 - **Coach:** hencoach (user_id: `fa45c5af-741a-4356-aa3a-85dd64b142e4`)
@@ -641,7 +649,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ## Supabase Edge Functions (All 4)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` (v14/deployed v18) - Plan type classification (4 types), file type routing: Haiku 4.5 for spreadsheets, Sonnet 4.5 for PDF/images; evolving session schema; accepts pre-parsed SheetJS data
+3. `smart-import` (v28) - Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), file type routing: Haiku 4.5 for spreadsheets, Sonnet 4.5 for PDF/images; evolving session schema; accepts pre-parsed SheetJS data
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
 
 All functions: `verify_jwt = false` at gateway level (see Technical Debt), internal JWT verification via `supabase.auth.getUser(token)`
@@ -757,17 +765,39 @@ AI-powered document type classification for Smart Import, self-contained plan se
 - Ensures evolving sessions work with existing preview UI and save logic
 - Edge Function deployed as v18 with plan type classification
 
+### Sprint 12.8 — Section Headers, Sets-as-Text, Default Avatars
+- **WorkoutBuilderView**: Section header support (add/display/skip in numbering/load calculations), preview modal with full exercise grid, `numOrNull()` helper, sets form field changed to text (supports ranges like "3-4")
+- **WorkoutExecutionView**: Section headers filtered from trackable exercises, `currentSectionHeader` computed shows section label above current exercise
+- **ExerciseLogger**: `parseInt(String(ex.sets))` for sets initialization (text → number)
+- **SessionApprovalModal**: Same `parseInt()` fix for volume multiplier calculation
+- **featureExtraction.ts / planAnalytics.ts**: All `ex.sets` references wrapped with `parseInt(String())` for sets-as-text
+- **database.ts**: `exercises.sets` type changed from `number | null` to `string | null`, `is_section_header: boolean` added
+- **Default avatars**: All `default-avatar.png` and `via.placeholder.com` references replaced with `/default-avatar.svg`
+- **CoachHubView**: Removed "Invite Athlete" card (redundant with Athletes view)
+- **DATABASE_SCHEMA.md**: `exercises.sets` documented as `text`, `is_section_header` added
+- **supabase/config.toml**: Added `smart-import` and `analyze-philosophy` function configs
+
+### Sprint 12.9 — Smart Import v28 (Anti-shifting, Field Mapping, Block Extraction)
+- **Pre-import context dropdowns**: 3 optional dropdowns (Sport, Plan Type, Training Focus) on SmartImportView
+- **Exercise naming fix**: AI now uses "Sprint" (≤400m) / "Run" (>400m) instead of embedding distance in name
+- **SessionExercise JSONB field mapping**: Added `distance_meters`, `duration_seconds`, `rpe`, `tempo`, `category`, `intensity_percent`, `target_time_seconds` to SessionExercise type; save path maps each field individually instead of collapsing into notes string
+- **Payload compaction**: Strip `*_Volume` columns + drop null values from JSON rows (30-50% size reduction)
+- **Truncation limit**: 80K → 150K characters to prevent late training blocks from being cut off
+- **Complete Block Extraction rule**: AI prompt reinforced to scan entire column A for all phases before extracting
+- **Anti-column-shifting** (v27): ANTI-SHIFTING RULE + 4 WRONG examples in Haiku prompt
+
 ### Key Files Modified
-- `supabase/functions/smart-import/index.ts` — Plan type classification prompts + evolving schema
-- `src/services/aiImport.ts` — Library flags, evolving normalization, plan type handling
+- `supabase/functions/smart-import/index.ts` — Plan type classification, sport rules, anti-shifting, complete block extraction, pre-import context
+- `src/services/aiImport.ts` — Library flags, evolving normalization, plan type handling, JSONB field mapping, payload compaction
 - `src/services/planSessions.ts` — getSessionById, updateSessionData, promoteSessionToLibrary
-- `src/views/coach/SmartImportView.vue` — Plan type selector, adaptive preview, library flags
-- `src/views/coach/WorkoutBuilderView.vue` — Session mode support
+- `src/views/coach/SmartImportView.vue` — Plan type selector, adaptive preview, library flags, pre-import dropdowns
+- `src/views/coach/WorkoutBuilderView.vue` — Session mode, section headers, preview modal, numOrNull, sets-as-text
 - `src/views/coach/WorkoutsView.vue` — `is_library = true` filter
+- `src/views/athlete/WorkoutExecutionView.vue` — Section header support in execution flow
 - `src/components/planner/WeekEditor.vue` — Complete rewrite for self-contained sessions
 - `src/views/coach/PlannerView.vue` — Session mode routing
-- `src/types/database.ts` — Sprint 12 type additions
-- `src/types/import.ts` — PlanType, EvolvingExercise, SessionExercise types
+- `src/types/database.ts` — Sprint 12 type additions + sets-as-text + is_section_header
+- `src/types/import.ts` — PlanType, EvolvingExercise, SessionExercise with full structured fields
 
 ---
 

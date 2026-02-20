@@ -110,7 +110,7 @@ const recentPBs = computed(() => {
       <!-- Athlete Header -->
       <div class="flex items-center gap-4 pb-6 border-b border-gray-200">
         <img
-          :src="athlete?.avatar_url || '/default-avatar.png'"
+          :src="athlete?.avatar_url || '/default-avatar.svg'"
           :alt="athlete?.display_name"
           class="avatar-xl ring-2 ring-white shadow-sm"
         />

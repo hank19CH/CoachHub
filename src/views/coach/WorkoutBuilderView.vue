@@ -71,7 +71,8 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 const estimatedLoad = computed(() => {
   let totalLoad = 0
   for (const ex of exercises.value) {
-    const sets = ex.sets || 0
+    if ((ex as any).is_section_header) continue
+    const sets = parseInt(String(ex.sets || '0')) || 0
     const reps = parseInt(String(ex.reps || '0')) || 0
     const weight = ex.weight_kg || 0
     const intensity = ex.intensity_percent ? ex.intensity_percent / 100 : 1
@@ -86,7 +87,7 @@ const estimatedLoad = computed(() => {
 const exerciseForm = ref({
   name: '',
   description: '',
-  sets: null as number | null,
+  sets: '' as string,
   reps: '',
   weight_kg: null as number | null,
   duration_seconds: null as number | null,
@@ -102,6 +103,13 @@ const exerciseForm = ref({
   tempo: '',
   superset_group: '',
 })
+
+/** Coerce empty strings to null for numeric DB columns */
+function numOrNull(v: unknown): number | null {
+  if (v === '' || v === null || v === undefined) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
 
 const editingExerciseId = ref<string | null>(null)
 const errorMessage = ref('')
@@ -235,6 +243,7 @@ async function loadSessionData() {
       notes: se.notes ?? null,
       video_url: null,
       target_time_seconds: null,
+      is_section_header: se.is_section_header || false,
       created_at: '',
       updated_at: '',
     } as Exercise))
@@ -256,13 +265,14 @@ function exercisesToSessionData(): SessionExercise[] {
   return exercises.value.map((ex, i) => ({
     order: ex.order_index ?? i,
     name: ex.name,
-    sets: ex.sets ?? 0,
+    sets: ex.sets ?? '',
     reps: ex.reps ?? undefined,
     rest_seconds: ex.rest_seconds ?? undefined,
     load_percent: ex.intensity_percent ?? undefined,
     weight: ex.weight_kg ? `${ex.weight_kg}kg` : undefined,
     notes: ex.notes ?? undefined,
     superset_group: (ex as any).superset_group ?? undefined,
+    is_section_header: (ex as any).is_section_header || undefined,
   }))
 }
 
@@ -475,7 +485,7 @@ function editExercise(exercise: Exercise) {
   exerciseForm.value = {
     name: exercise.name,
     description: exercise.description || '',
-    sets: exercise.sets,
+    sets: exercise.sets || '',
     reps: exercise.reps || '',
     weight_kg: exercise.weight_kg,
     duration_seconds: exercise.duration_seconds,
@@ -498,7 +508,7 @@ function resetExerciseForm() {
   exerciseForm.value = {
     name: '',
     description: '',
-    sets: null,
+    sets: '',
     reps: '',
     weight_kg: null,
     duration_seconds: null,
@@ -578,15 +588,15 @@ async function saveExercise() {
           .update({
             name: exerciseForm.value.name,
             description: exerciseForm.value.description || null,
-            sets: exerciseForm.value.sets,
+            sets: exerciseForm.value.sets?.toString().trim() || null,
             reps: exerciseForm.value.reps || null,
-            weight_kg: exerciseForm.value.weight_kg,
-            duration_seconds: exerciseForm.value.duration_seconds,
-            distance_meters: exerciseForm.value.distance_meters,
-            rpe: exerciseForm.value.rpe,
-            intensity_percent: exerciseForm.value.intensity_percent,
-            target_time_seconds: exerciseForm.value.target_time_seconds,
-            rest_seconds: exerciseForm.value.rest_seconds,
+            weight_kg: numOrNull(exerciseForm.value.weight_kg),
+            duration_seconds: numOrNull(exerciseForm.value.duration_seconds),
+            distance_meters: numOrNull(exerciseForm.value.distance_meters),
+            rpe: numOrNull(exerciseForm.value.rpe),
+            intensity_percent: numOrNull(exerciseForm.value.intensity_percent),
+            target_time_seconds: numOrNull(exerciseForm.value.target_time_seconds),
+            rest_seconds: numOrNull(exerciseForm.value.rest_seconds),
             notes: exerciseForm.value.notes || null,
             video_url: exerciseForm.value.video_url || null,
             intensity_prescription: exerciseForm.value.intensity_prescription || null,
@@ -605,15 +615,15 @@ async function saveExercise() {
             name: exerciseForm.value.name,
             description: exerciseForm.value.description || null,
             order_index: exercises.value.length,
-            sets: exerciseForm.value.sets,
+            sets: exerciseForm.value.sets?.toString().trim() || null,
             reps: exerciseForm.value.reps || null,
-            weight_kg: exerciseForm.value.weight_kg,
-            duration_seconds: exerciseForm.value.duration_seconds,
-            distance_meters: exerciseForm.value.distance_meters,
-            rpe: exerciseForm.value.rpe,
-            intensity_percent: exerciseForm.value.intensity_percent,
-            target_time_seconds: exerciseForm.value.target_time_seconds,
-            rest_seconds: exerciseForm.value.rest_seconds,
+            weight_kg: numOrNull(exerciseForm.value.weight_kg),
+            duration_seconds: numOrNull(exerciseForm.value.duration_seconds),
+            distance_meters: numOrNull(exerciseForm.value.distance_meters),
+            rpe: numOrNull(exerciseForm.value.rpe),
+            intensity_percent: numOrNull(exerciseForm.value.intensity_percent),
+            target_time_seconds: numOrNull(exerciseForm.value.target_time_seconds),
+            rest_seconds: numOrNull(exerciseForm.value.rest_seconds),
             notes: exerciseForm.value.notes || null,
             video_url: exerciseForm.value.video_url || null,
             intensity_prescription: exerciseForm.value.intensity_prescription || null,
@@ -673,6 +683,7 @@ async function handleDeleteExercise() {
 }
 
 function formatExerciseDetails(exercise: Exercise): string {
+  if ((exercise as any).is_section_header) return ''
   const parts: string[] = []
 
   if (exercise.sets) parts.push(`${exercise.sets} sets`)
@@ -720,6 +731,69 @@ function formatTime(seconds: number | null): string {
   const secs = seconds % 60
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
+
+// Section headers — visual dividers between exercise groups
+async function addSectionHeader() {
+  const name = prompt('Section name (e.g. Warm-Up, Main Set, Cool-Down):')
+  if (!name?.trim()) return
+
+  if (isSessionMode.value) {
+    exercises.value.push({
+      id: `section-${Date.now()}`,
+      workout_id: '',
+      name: name.trim(),
+      description: null,
+      order_index: exercises.value.length,
+      sets: null,
+      reps: null,
+      weight_kg: null,
+      duration_seconds: null,
+      distance_meters: null,
+      rpe: null,
+      intensity_percent: null,
+      target_time_seconds: null,
+      rest_seconds: null,
+      notes: null,
+      video_url: null,
+      is_section_header: true,
+      created_at: '',
+      updated_at: '',
+    } as any)
+    await saveSessionData()
+    showToast(`Section "${name.trim()}" added`)
+  } else {
+    try {
+      await (supabase as any).from('exercises').insert({
+        workout_id: workoutId.value,
+        name: name.trim(),
+        order_index: exercises.value.length,
+        is_section_header: true,
+      })
+      await loadExercises()
+      showToast(`Section "${name.trim()}" added`)
+    } catch (e) {
+      console.error('Error adding section header:', e)
+      showToast('Failed to add section', 'error')
+    }
+  }
+}
+
+/** Get exercise number skipping section headers */
+function getExerciseNumber(index: number): number {
+  let num = 0
+  for (let i = 0; i <= index; i++) {
+    if (!(exercises.value[i] as any).is_section_header) num++
+  }
+  return num
+}
+
+// Preview modal
+const showPreview = ref(false)
+
+// Exercise count excluding section headers
+const exerciseCount = computed(() =>
+  exercises.value.filter(ex => !(ex as any).is_section_header).length
+)
 </script>
 
 <template>
@@ -742,8 +816,20 @@ function formatTime(seconds: number | null): string {
           <h1 v-else class="font-display text-lg font-bold text-gray-900 truncate">
             {{ workout?.name || 'Workout' }}
           </h1>
-          <p class="text-sm text-gray-500">{{ exercises.length }} exercise{{ exercises.length !== 1 ? 's' : '' }}</p>
+          <p class="text-sm text-gray-500">{{ exerciseCount }} exercise{{ exerciseCount !== 1 ? 's' : '' }}</p>
         </div>
+        <!-- Preview button -->
+        <button
+          v-if="exercises.length > 0"
+          @click="showPreview = true"
+          class="p-2 hover:bg-gray-100 rounded-lg"
+          title="Preview as athlete"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        </button>
         <!-- Save to Library button (session mode only) -->
         <button
           v-if="isSessionMode"
@@ -877,15 +963,34 @@ function formatTime(seconds: number | null): string {
 
       <!-- Exercises list -->
       <div v-else class="space-y-3">
-        <div
-          v-for="(exercise, index) in exercises"
-          :key="exercise.id"
-          class="card p-4"
-        >
+        <template v-for="(exercise, index) in exercises" :key="exercise.id">
+          <!-- Section Header -->
+          <div
+            v-if="(exercise as any).is_section_header"
+            class="flex items-center gap-3 py-1 px-1"
+          >
+            <div class="flex-1 border-b-2 border-gray-300"></div>
+            <span class="text-xs font-bold uppercase tracking-wider text-gray-500 whitespace-nowrap">
+              {{ exercise.name }}
+            </span>
+            <div class="flex-1 border-b-2 border-gray-300"></div>
+            <button
+              @click="confirmDeleteExercise(exercise.id)"
+              class="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600 transition-colors"
+              title="Remove section"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Regular Exercise Card -->
+          <div v-else class="card p-4">
           <div class="flex items-start gap-3">
             <!-- Order number -->
             <div class="w-8 h-8 rounded-full bg-summit-100 text-summit-700 font-bold flex items-center justify-center flex-shrink-0 text-sm">
-              {{ index + 1 }}
+              {{ getExerciseNumber(index) }}
             </div>
 
             <!-- Exercise info -->
@@ -949,7 +1054,8 @@ function formatTime(seconds: number | null): string {
               </button>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
 
         <!-- Favorites panel -->
         <div v-if="showFavoritesPanel && favorites.length > 0" class="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
@@ -1006,6 +1112,16 @@ function formatTime(seconds: number | null): string {
               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
             </svg>
             Favs
+          </button>
+          <button
+            @click="addSectionHeader"
+            class="p-4 border-2 border-dashed border-gray-300 rounded-xl hover:border-gray-500 hover:bg-gray-50 transition-colors text-gray-500 hover:text-gray-700 font-medium"
+            title="Add section divider"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+            Section
           </button>
         </div>
       </div>
@@ -1117,10 +1233,10 @@ function formatTime(seconds: number | null): string {
             <div>
               <label class="label">Sets</label>
               <input
-                v-model.number="exerciseForm.sets"
-                type="number"
-                min="1"
-                placeholder="3"
+                v-model="exerciseForm.sets"
+                type="text"
+                inputmode="numeric"
+                placeholder="3 or 3-4"
                 class="input"
               />
             </div>
@@ -1318,5 +1434,121 @@ function formatTime(seconds: number | null): string {
         </div>
       </div>
     </div>
+
+    <!-- Athlete Preview Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showPreview"
+        class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50"
+        @click.self="showPreview = false"
+      >
+        <div class="bg-gray-50 w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col animate-slide-up">
+          <!-- Preview Header -->
+          <div class="bg-white rounded-t-2xl border-b border-gray-200 p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <span class="bg-valencia-100 text-valencia-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                  Athlete Preview
+                </span>
+              </div>
+              <button
+                @click="showPreview = false"
+                class="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <h2 class="font-display text-xl font-bold text-gray-900">
+              {{ isSessionMode ? (sessionName || 'Session') : (workout?.name || 'Workout') }}
+            </h2>
+            <!-- Fake progress bar -->
+            <div class="mt-3 flex items-center gap-2 text-sm text-gray-500">
+              <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div class="h-full bg-valencia-500 rounded-full" style="width: 0%"></div>
+              </div>
+              <span>0 / {{ exerciseCount }}</span>
+            </div>
+          </div>
+
+          <!-- Description if present -->
+          <div v-if="workout?.description" class="bg-white mx-3 mt-3 p-3 rounded-xl border border-gray-200">
+            <p class="text-sm text-gray-700 whitespace-pre-line">{{ workout.description }}</p>
+          </div>
+
+          <!-- Exercise list -->
+          <div class="flex-1 overflow-y-auto p-3 space-y-2">
+            <template v-for="(exercise, idx) in exercises" :key="(exercise as any).id || idx">
+              <!-- Section header divider -->
+              <div v-if="(exercise as any).is_section_header" class="pt-3 pb-1">
+                <div class="flex items-center gap-3">
+                  <div class="flex-1 h-px bg-gray-300"></div>
+                  <span class="text-xs font-bold uppercase tracking-wider text-gray-500">{{ exercise.name }}</span>
+                  <div class="flex-1 h-px bg-gray-300"></div>
+                </div>
+              </div>
+              <!-- Exercise card -->
+              <div v-else class="bg-white rounded-xl border border-gray-200 p-3">
+                <div class="flex items-start gap-3">
+                  <div class="w-7 h-7 rounded-full bg-valencia-100 text-valencia-700 flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
+                    {{ getExerciseNumber(idx) }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-semibold text-gray-900 text-sm">{{ exercise.name }}</p>
+                    <!-- Prescription grid -->
+                    <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                      <span v-if="exercise.sets" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Sets</span> {{ exercise.sets }}
+                      </span>
+                      <span v-if="exercise.reps" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Reps</span> {{ exercise.reps }}
+                      </span>
+                      <span v-if="exercise.weight_kg" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Weight</span> {{ exercise.weight_kg }}kg
+                      </span>
+                      <span v-if="exercise.intensity_percent" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Intensity</span> {{ exercise.intensity_percent }}%
+                      </span>
+                      <span v-if="exercise.duration_seconds" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Time</span> {{ exercise.duration_seconds }}s
+                      </span>
+                      <span v-if="exercise.distance_meters" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Dist</span> {{ exercise.distance_meters }}m
+                      </span>
+                      <span v-if="exercise.tempo" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Tempo</span> {{ exercise.tempo }}
+                      </span>
+                      <span v-if="exercise.rpe" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">RPE</span> {{ exercise.rpe }}
+                      </span>
+                      <span v-if="exercise.rest_seconds" class="flex items-center gap-1">
+                        <span class="font-medium text-gray-500">Rest</span> {{ exercise.rest_seconds }}s
+                      </span>
+                    </div>
+                    <!-- Notes -->
+                    <p v-if="exercise.notes" class="mt-1.5 text-xs text-gray-500 italic">{{ exercise.notes }}</p>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <!-- Empty state -->
+            <div v-if="exercises.length === 0" class="text-center py-8 text-gray-400 text-sm">
+              No exercises yet
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="p-3 bg-white border-t border-gray-200 rounded-b-2xl sm:rounded-b-2xl">
+            <button
+              @click="showPreview = false"
+              class="w-full py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+            >
+              Close Preview
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

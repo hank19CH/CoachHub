@@ -7,3 +7,9 @@ verify_jwt = false
 
 [functions.generate-session]
 verify_jwt = false
+
+[functions.smart-import]
+verify_jwt = false
+
+[functions.analyze-philosophy]
+verify_jwt = false

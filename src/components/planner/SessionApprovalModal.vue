@@ -76,7 +76,7 @@ const canApply = computed(() =>
 const adjustedExercises = computed(() => {
   return exercises.value.map(ex => ({
     ...ex,
-    sets: Math.round((ex.sets || 3) * volumeMultiplier.value),
+    sets: Math.round((parseInt(String(ex.sets)) || 3) * volumeMultiplier.value),
     load_percentage: ex.load_percentage
       ? Math.round(ex.load_percentage * intensityMultiplier.value)
       : undefined,

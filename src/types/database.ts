@@ -474,7 +474,7 @@ export interface Database {
           name: string
           description: string | null
           order_index: number
-          sets: number | null
+          sets: string | null
           reps: string | null
           weight_kg: number | null
           duration_seconds: number | null
@@ -491,6 +491,7 @@ export interface Database {
           intensity_value: number | null
           tempo: string | null
           superset_group: number | null
+          is_section_header: boolean
         }
         Insert: {
           id?: string
@@ -498,7 +499,7 @@ export interface Database {
           name: string
           description?: string | null
           order_index: number
-          sets?: number | null
+          sets?: string | null
           reps?: string | null
           weight_kg?: number | null
           duration_seconds?: number | null
@@ -515,12 +516,13 @@ export interface Database {
           intensity_value?: number | null
           tempo?: string | null
           superset_group?: number | null
+          is_section_header?: boolean
         }
         Update: {
           name?: string
           description?: string | null
           order_index?: number
-          sets?: number | null
+          sets?: string | null
           reps?: string | null
           weight_kg?: number | null
           duration_seconds?: number | null
@@ -537,6 +539,7 @@ export interface Database {
           intensity_value?: number | null
           tempo?: string | null
           superset_group?: number | null
+          is_section_header?: boolean
         }
       }
       workout_assignments: {

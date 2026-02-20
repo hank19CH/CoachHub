@@ -271,7 +271,7 @@ Individual exercises within a workout.
 | name | `text` | NO | — | |
 | description | `text` | YES | — | |
 | order_index | `integer` | NO | — | |
-| sets | `integer` | YES | — | |
+| sets | `text` | YES | — | Can be range "3-4" |
 | reps | `text` | YES | — | Can be range "8-12" |
 | weight_kg | `numeric` | YES | — | |
 | duration_seconds | `integer` | YES | — | |
@@ -288,6 +288,7 @@ Individual exercises within a workout.
 | movement_pattern | `text` | YES | — | |
 | video_url | `text` | YES | — | |
 | notes | `text` | YES | — | |
+| is_section_header | `boolean` | NO | `false` | Visual section divider (Warm-Up, Main Set, etc.) — not an actual exercise |
 
 **Indexes:** `idx_exercises_workout(workout_id, order_index)`
 

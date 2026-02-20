@@ -26,7 +26,7 @@ const isLogged = ref(false)
 
 // Reset when exercise changes
 watch(() => props.exercise.id, () => {
-  setsCompleted.value = props.exercise.sets || null
+  setsCompleted.value = parseInt(String(props.exercise.sets)) || null
   repsCompleted.value = props.exercise.reps || ''
   weightUsed.value = props.exercise.weight_kg || null
   durationSeconds.value = props.exercise.duration_seconds || null
@@ -39,7 +39,7 @@ watch(() => props.exercise.id, () => {
 
 // Initialize with prescribed values
 onMounted(() => {
-  setsCompleted.value = props.exercise.sets || null
+  setsCompleted.value = parseInt(String(props.exercise.sets)) || null
   repsCompleted.value = props.exercise.reps || ''
   weightUsed.value = props.exercise.weight_kg || null
   durationSeconds.value = props.exercise.duration_seconds || null

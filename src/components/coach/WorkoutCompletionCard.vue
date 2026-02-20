@@ -47,7 +47,7 @@ function handleFeedbackAdded() {
     <div class="flex items-start justify-between">
       <div class="flex items-center gap-3">
         <img
-          :src="completion.athlete?.avatar_url || '/default-avatar.png'"
+          :src="completion.athlete?.avatar_url || '/default-avatar.svg'"
           :alt="athleteName"
           class="avatar-md ring-2 ring-white shadow-sm"
         />

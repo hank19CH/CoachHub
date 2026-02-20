@@ -72,7 +72,7 @@ export const planAnalyticsService = {
           for (const w of workouts) {
             const exercises = (w as any).exercises || []
             for (const ex of exercises) {
-              const sets = ex.sets || 0
+              const sets = parseInt(String(ex.sets || '0')) || 0
               const reps = parseInt(String(ex.reps || '0')) || 0
               const weight = ex.weight_kg || 0
               if (sets && reps && weight) {

@@ -50,7 +50,7 @@
           <div class="flex items-start gap-3">
             <!-- Avatar -->
             <img
-              :src="athleteRelation.athlete.avatar_url || 'https://via.placeholder.com/48'"
+              :src="athleteRelation.athlete.avatar_url || '/default-avatar.svg'"
               :alt="athleteRelation.athlete.display_name"
               class="w-12 h-12 rounded-full object-cover"
             />

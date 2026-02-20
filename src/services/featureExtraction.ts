@@ -230,7 +230,7 @@ function classifySessionType(workout: WorkoutForExtraction): string {
   // Priority 3: Classify by exercise patterns
   const hasHeavyCompounds = workout.exercises.some(e => {
     const n = e.name.toLowerCase()
-    return matchesAny(n, STRENGTH_KEYWORDS) && (e.sets || 0) >= 3
+    return matchesAny(n, STRENGTH_KEYWORDS) && (parseInt(String(e.sets)) || 0) >= 3
   })
   const avgReps = computeAvgReps(workout.exercises)
 
@@ -271,7 +271,7 @@ function computeVolumeIntensityCorrelation(programs: ProgramForExtraction[]): nu
 
         for (const workout of week.workouts) {
           for (const ex of workout.exercises) {
-            const sets = ex.sets || 1
+            const sets = parseInt(String(ex.sets)) || 1
             const reps = parseReps(ex.reps)
             const weight = ex.weight_kg || 0
             weekVolume += sets * reps * weight
@@ -646,7 +646,7 @@ function computeWeekVolume(workouts: WorkoutForExtraction[]): number {
   let volume = 0
   for (const workout of workouts) {
     for (const ex of workout.exercises) {
-      const sets = ex.sets || 1
+      const sets = parseInt(String(ex.sets)) || 1
       const reps = parseReps(ex.reps)
       const weight = ex.weight_kg || 1
 
