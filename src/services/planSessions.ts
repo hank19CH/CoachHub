@@ -174,11 +174,18 @@ export const planSessionsService = {
         order_index: ex.order ?? i,
         sets: ex.sets ?? null,
         reps: ex.reps ?? null,
+        distance_meters: ex.distance_meters ?? null,
+        duration_seconds: ex.duration_seconds ?? null,
         rest_seconds: ex.rest_seconds ?? null,
-        intensity_percent: ex.load_percent ?? null,
+        intensity_percent: ex.load_percent ?? ex.intensity_percent ?? null,
+        target_time_seconds: ex.target_time_seconds ?? null,
+        rpe: ex.rpe ?? null,
+        tempo: ex.tempo ?? null,
+        category: ex.category ?? null,
         weight_kg: ex.weight ? parseWeightToKg(ex.weight) : null,
         notes: ex.notes ?? null,
         superset_group: ex.superset_group ?? null,
+        is_section_header: ex.is_section_header || false,
       }))
 
       const { error: exErr } = await (supabase
