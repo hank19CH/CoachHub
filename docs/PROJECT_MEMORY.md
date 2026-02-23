@@ -30,6 +30,7 @@
 - `src/components/planner/MethodologyConfirmationCard.vue` - Coach confirms/rejects detected methodology
 - `src/components/billing/UpgradePromptModal.vue` - 4-variant upgrade modal (soft_nudge/bonus_delight/hard_gate/followup)
 - `src/components/billing/SeatUsageBadge.vue` - Inline seat count badge (color-coded by usage %)
+- `src/components/planner/ImportClassificationPreview.vue` - Two-step import: mesocycle confidence, canonical workout roster, week comparison table, variation badges, ambiguity resolution
 
 ## Architecture Notes
 - Services in `src/services/` handle Supabase queries
@@ -45,7 +46,10 @@
 - **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
 - **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
-- **Smart Import v31:** Sonnet-only (Haiku removed). 5 extraction guardrails (unit ambiguity, set/rep notation, intensity inference, exercise substitution ban, multi-week block). AI ambiguity detection → coach resolution UI. Auth keepalive (20s interval) during AI wait prevents token expiry. Max tokens raised 32K→50K. Pre-import context dropdowns, payload compaction, anti-column-shifting guardrails, section headers, raw_name dual fields, bulk exercise name review all retained from v28.
+- **Smart Import v32** (Sprint 13.5a): Two-step classify→extract flow. Classify step detects mesocycle structure (no DB writes), coach reviews ImportClassificationPreview, then confirms for full extract. Falls through to direct extract if classify fails or standalone sessions detected. Edge function v32 adds `CLASSIFY_SYSTEM` prompt + `buildClassifySchema()`. Frontend `classifyImport()` in aiImport.ts. SmartImportView has 3 states: `upload` → `classify_preview` → `extract_preview`. **Edge function NEEDS DEPLOY** — production still v39.
+- **Mesocycle Progression Engine** (Sprint 13.5a): Pure TypeScript `src/services/progressionEngine.ts`. Extrapolates week N prescriptions from canonical Week 1 workout + block config. Patterns: linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom. Prilepin's chart maps intensity zones to optimal rep ranges. `detectProgressionPattern()` and `detectDeloadWeek()` analyze exercise slots. `formatPrescription()` renders "4x6 @ 70%" strings.
+- **block_sessions table** (Sprint 13.5a): Links canonical Week 1 workouts to training_blocks. Columns: training_block_id, workout_id, session_day, order_index. RLS via training_blocks → plans.coach_id.
+- **training_blocks progression columns** (Sprint 13.5a): load_metric, progression_pattern, intensity_start/end, volume_start/end, deload_week, deload_volume_factor, progression_params (JSONB).
 
 ## Common Gotchas
 - **PRICING**: Never use old placeholder pricing ($25/$50/$100). Confirmed pricing is Coach $19/$29, Team $59/$79 (beta/standard). See Sprint 13 section.
@@ -59,6 +63,11 @@
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
 - **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block.
 - **Ambiguity types** (v31): `ImportAmbiguity` in `src/types/import.ts` — `type`, `location`, `originalValue`, `question`, `options[]`, `priority` (1-10), `resolved`, `resolvedValue`. Returned separately from importResult by edge function.
+- **Two-step import flow** (v32): `handleImport()` calls `classifyImport()` first. If mesocycle detected (confidence ≥ 0.4) → shows `ImportClassificationPreview`. Coach confirms → `handleClassifyConfirm()` → `runDirectExtract()`. If classify fails → falls through to `runDirectExtract()` seamlessly. SmartImportView tracks `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`.
+- **ImportClassification type**: `detected_type` is `'mesocycle_program' | 'standalone_sessions'`. `canonical_workouts[]` holds session roster with `ExerciseSlot[]`. `week_samples[]` holds Week 1 vs 2 comparison. `block_config` holds block name/sport.
+- **ExerciseSlot.variation_name**: Mid-block exercise swaps tracked per-week. `has_variation: true` when any week overrides the canonical name. `variation_summary` is human-readable ("Back Squat → Half Squat (wk 3+)").
+- **ProgressionPattern types differ**: `database.ts` has full set (linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom). `import.ts` ImportClassification uses simplified set (linear, wave, descending_sets, step, custom). Map 'wave' → 'wave_3_1' when saving to DB.
+- **block_sessions vs block_weeks**: `block_sessions` links canonical workouts to blocks (new, Sprint 13.5a). `block_weeks` stores per-week volume/intensity modifiers (existing, Sprint 9). Both have `training_block_id` FK.
 - **plan_sessions.workout_id is NOW NULLABLE** (Sprint 12). Self-contained sessions have no workout_id.
 - **workouts.is_library** column: `true` = show in WorkoutsView, `false` = plan instance only
 - `saveImportedProgram()` takes optional `libraryFlags?: Set<string>` param (key: `"blockIdx-weekIdx-workoutIdx"`)
@@ -617,8 +626,8 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ### Notifications
 - `notifications`
 
-### Training Planner (Sprint 9)
-- `plans`, `training_blocks`, `block_weeks`, `plan_sessions`
+### Training Planner (Sprint 9 + 13.5a)
+- `plans`, `training_blocks`, `block_weeks`, `block_sessions`, `plan_sessions`
 - `plan_templates`, `plan_changelog`
 - `athlete_readiness_logs`, `session_feedback`
 - `ai_plan_logs`
@@ -643,6 +652,10 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 - `coach_profiles` additions: subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, billing_interval, subscription_started_at, subscription_ends_at, trial_ends_at, athlete_limit, bonus_seats_granted, bonus_seats_granted_at, bonus_seats_count, peak_athlete_count, is_beta_user
 - DB functions: `can_add_athlete()`, `get_athlete_count()`, `get_beta_slots_remaining()`, `auto_flag_beta_user()` trigger
 
+### Mesocycle Progression (Sprint 13.5a)
+- `block_sessions` (training_block_id, workout_id, session_day, order_index)
+- `training_blocks` additions: load_metric, progression_pattern, intensity_start, intensity_end, volume_start, volume_end, deload_week, deload_volume_factor, progression_params
+
 ### Storage Buckets
 - `post-media` - Social post media uploads
 - `program-imports` - Smart import file uploads
@@ -653,7 +666,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ## Supabase Edge Functions (All 7)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` (v31) - **Sonnet-only** (Haiku removed). 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. **NEEDS DEPLOY** — production is still on v39 (old Haiku routing).
+3. `smart-import` (v32) - Two-step classify→extract flow. Classify detects mesocycle structure (no DB writes); extract does full extraction. 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. **NEEDS DEPLOY** — production still v39 (deploy catches up v31+v32).
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
 5. `create-checkout-session` - Stripe Checkout session creation (JWT-verified, creates Stripe customer if needed, beta/standard price routing)
 6. `stripe-webhook` - Stripe webhook handler (NO JWT, uses webhook signature + service role key, handles subscription lifecycle)
@@ -709,7 +722,7 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 ---
 
 ## Key Project Docs
-- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (46 tables, 10 enums, 120+ indexes, RLS policies, Sprint 13 billing columns, future proposals)
+- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (47 tables, 10 enums, 120+ indexes, RLS policies, Sprint 13 billing columns, future proposals)
 - `docs/PROJECT_MEMORY.md` - This file
 
 ---
@@ -885,6 +898,65 @@ AI-powered document type classification for Smart Import, self-contained plan se
 
 ---
 
+## Sprint 13.5a: Mesocycle Progression Foundation (Completed — NEEDS DEPLOY)
+
+### Overview
+Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-down (Block → Exercise Roster → Progression Curve → Sessions auto-generate). Two-step classify→extract import flow gives coaches a confirmation preview of detected mesocycle structure before full extraction. Pure TypeScript progression engine calculates week N prescriptions from canonical Week 1 workout + block parameters, with zero AI cost.
+
+### Database Changes (Migration: `20250222_sprint135a_mesocycle_progression.sql`)
+- **9 new columns on `training_blocks`**: `load_metric` (text), `progression_pattern` (text), `intensity_start` (numeric), `intensity_end` (numeric), `volume_start` (numeric), `volume_end` (numeric), `deload_week` (integer), `deload_volume_factor` (numeric DEFAULT 0.6), `progression_params` (jsonb DEFAULT '{}')
+- **`block_sessions` table**: `training_block_id` FK, `workout_id` FK, `session_day` (integer 1-7), `order_index` (integer)
+  - RLS: SELECT/INSERT/UPDATE/DELETE via `training_blocks → plans.coach_id = auth.uid()`
+  - Indexes: `idx_block_sessions_block`, `idx_block_sessions_workout`, `idx_block_sessions_unique_day` (UNIQUE on block_id + session_day + order_index)
+
+### Progression Engine (`src/services/progressionEngine.ts`)
+- Pure TypeScript, no AI dependency, $0/call
+- **8 progression patterns**: linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom
+- **Prilepin's chart**: 4 intensity zones mapped to optimal rep/set ranges
+- Key exports: `getWeekLoadFactor()`, `extrapolateExercise()`, `extrapolateSession()`, `detectProgressionPattern()`, `detectDeloadWeek()`, `formatPrescription()`
+- Types: `BlockProgressionConfig`, `CanonicalExercise`, `WeekPrescription`
+
+### Smart Import v32 — Two-Step Classify→Extract Flow
+- **Edge function**: Added `CLASSIFY_SYSTEM` prompt (~40 lines), `buildClassifySchema()`, classify route handling
+  - `step: 'classify'` → lightweight AI call detecting mesocycle structure, no DB writes
+  - `step: 'extract'` → existing full extraction path (unchanged)
+  - Classify returns: `detected_type`, `confidence`, `duration_weeks`, `load_metric`, `progression_pattern`, `canonical_workouts[]`, `week_samples[]`, `ambiguities[]`, `block_config`
+  - Logs to `ai_plan_logs` with action `'smart_import_classify'`
+- **Frontend service**: `classifyImport()` in `src/services/aiImport.ts` — same patterns as `importProgram()` (auth keepalive, abort controller, SheetJS pre-parsing)
+
+### Import Classification Preview (`src/components/planner/ImportClassificationPreview.vue`)
+- Confidence indicator (color-coded: emerald/summit/amber/red)
+- Block config summary cards (name, duration, load metric, exercise count)
+- Intensity progression bar with deload indicator
+- Canonical workout roster with exercise lists + Week 1 prescriptions
+- Variation badges for mid-block exercise swaps
+- Week 1 vs Week 2 comparison table
+- Ambiguity resolution UI (priority badges, option buttons, custom input, undo)
+- Action buttons: Confirm & Extract, Skip Mesocycle, Cancel
+
+### SmartImportView Integration
+- `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`
+- `handleImport()` → `classifyImport()` first → if mesocycle detected (confidence ≥ 0.4) → show preview
+- `handleClassifyConfirm()` → `runDirectExtract()` (full extraction)
+- `handleClassifyFallback()` → `runDirectExtract()` (skip mesocycle)
+- If classify fails → falls through to direct extract seamlessly (non-blocking)
+- Progress bar updated: uploading (15%) → classifying (40%) → extracting (65%) → validating (85%) → complete (100%)
+
+### Type Additions
+- `src/types/database.ts`: `LoadMetric`, `ProgressionPattern` type aliases, `block_sessions` table type, training_blocks progression columns
+- `src/types/import.ts`: `ExerciseWeekEntry`, `ExerciseSlot`, `ImportClassification` interfaces
+
+### Deploy Status
+- **Frontend**: ✅ Committed & pushed. Vercel auto-deploys from main.
+- **Edge function**: ⚠️ `supabase functions deploy smart-import --no-verify-jwt` — production still v39. Deploy catches up both v31 and v32.
+- **DB migration**: ⚠️ `20250222_sprint135a_mesocycle_progression.sql` needs to run against production.
+
+### Planned Follow-ups
+- **Sprint 13.5b**: Progression Designer UI — BlockEditor progression tab, visual curve editor
+- **Sprint 13.5c**: AI Suggestions Layer — AI recommends progression params from exercise data
+
+---
+
 ## Smart Import v31: Extraction Guardrails + Ambiguity Detection (Code Complete — NEEDS DEPLOY)
 
 ### What Changed
@@ -907,9 +979,9 @@ AI-powered document type classification for Smart Import, self-contained plan se
 - `src/services/aiImport.ts` — Removed `forceModelSonnet`/`forceModel`, default model → sonnet, auth keepalive interval, ambiguity pass-through
 - `src/views/coach/SmartImportView.vue` — Ambiguity resolution card, state/computed/functions, amber save button warning
 
-### Deploy Needed
-- **Edge function**: `supabase functions deploy smart-import --no-verify-jwt` — production is still v39 (old Haiku routing)
-- **Frontend**: Standard Vercel deploy (or `npx vite build` + deploy)
+### Deploy Status
+- **Frontend**: ✅ Committed & pushed to GitHub (commit `917d298`). Vercel auto-deploys from main.
+- **Edge function**: ⚠️ `supabase functions deploy smart-import --no-verify-jwt` — production is still v39 (old Haiku routing). Must deploy manually.
 
 ---
 
