@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext } from '@/types/import'
+import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext, ImportClassification } from '@/types/import'
 import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS, IMPORT_SPORT_OPTIONS, IMPORT_FOCUS_OPTIONS, IMPORT_PLAN_TYPE_OPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
-import { importProgram, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
+import { importProgram, classifyImport, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord, ImportAmbiguity } from '@/types/import'
 import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CONFIG } from '@/config/ai'
 import Toast from '@/components/ui/Toast.vue'
+import ImportClassificationPreview from '@/components/planner/ImportClassificationPreview.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -26,11 +27,15 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
 const file = ref<File | null>(null)
 const isProcessing = ref(false)
 const isSaving = ref(false)
-const processingStage = ref<'uploading' | 'parsing' | 'validating' | 'complete'>('uploading')
+const processingStage = ref<'uploading' | 'classifying' | 'parsing' | 'validating' | 'complete'>('uploading')
 const importResult = ref<ImportResult | null>(null)
 const historyRecord = ref<ImportHistoryRecord | null>(null)
 const error = ref<string | null>(null)
 const importHistory = ref<ImportHistoryRecord[]>([])
+
+// Two-step flow: classify → preview → extract
+const importStep = ref<'upload' | 'classify_preview' | 'extract_preview'>('upload')
+const classificationResult = ref<ImportClassification | null>(null)
 
 // Exercise review & abbreviation learning
 const expandedWorkouts = ref<Set<string>>(new Set())
@@ -440,6 +445,20 @@ const preImportSport = ref<ImportSportCategory | 'auto'>('auto')
 const preImportPlanType = ref<PlanType | 'auto'>('auto')
 const preImportFocus = ref<ImportTrainingFocus | 'auto'>('auto')
 
+/** Build the pre-import context from dropdown selections */
+const buildPreImportContext = (): PreImportContext => {
+  const context: PreImportContext = {}
+  if (preImportSport.value !== 'auto') context.coachSport = preImportSport.value
+  if (preImportPlanType.value !== 'auto') context.coachPlanType = preImportPlanType.value
+  if (preImportFocus.value !== 'auto') context.coachTrainingFocus = preImportFocus.value
+  return context
+}
+
+/**
+ * Step 1: Classify the file to detect mesocycle structure.
+ * If mesocycle detected → show classification preview.
+ * If standalone sessions or classify fails → fall through to direct extract.
+ */
 const handleImport = async () => {
   if (!file.value || isProcessing.value) return
 
@@ -450,30 +469,30 @@ const handleImport = async () => {
 
   try {
     processingStage.value = 'uploading'
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, 400))
 
-    processingStage.value = 'parsing'
-    const context: PreImportContext = {}
-    if (preImportSport.value !== 'auto') context.coachSport = preImportSport.value
-    if (preImportPlanType.value !== 'auto') context.coachPlanType = preImportPlanType.value
-    if (preImportFocus.value !== 'auto') context.coachTrainingFocus = preImportFocus.value
-    const result = await importProgram(file.value, importAbortController.signal, context)
+    processingStage.value = 'classifying'
+    const context = buildPreImportContext()
 
-    processingStage.value = 'validating'
-    await new Promise(resolve => setTimeout(resolve, 300))
+    try {
+      const classification = await classifyImport(file.value, importAbortController.signal, context)
 
-    processingStage.value = 'complete'
-    importResult.value = result.importResult
-    historyRecord.value = result.historyRecord
-    if (result.expandedAbbreviations?.length) {
-      expandedAbbreviations.value = result.expandedAbbreviations
+      if (classification.detected_type === 'mesocycle_program' && classification.confidence >= 0.4) {
+        // Show classification preview for coach confirmation
+        classificationResult.value = classification
+        importStep.value = 'classify_preview'
+        isProcessing.value = false
+        importAbortController = null
+        showToast('Mesocycle structure detected — review below', 'info')
+        return
+      }
+    } catch (classifyErr) {
+      // Classify failed — fall through to direct extract (non-blocking)
+      console.warn('[SmartImport] Classify step failed, falling through to extract:', classifyErr)
     }
 
-    const workouts = result.historyRecord?.workouts_imported ?? 0
-    const exercises = result.historyRecord?.exercises_imported ?? 0
-    showToast(`Imported ${workouts} workouts & ${exercises} exercises — review below`)
-
-    await loadHistory()
+    // Direct extract (no mesocycle or classify failed)
+    await runDirectExtract(context)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Import failed'
     showToast(error.value, 'error')
@@ -482,6 +501,97 @@ const handleImport = async () => {
     isProcessing.value = false
     importAbortController = null
   }
+}
+
+/**
+ * Step 2a: Coach confirmed mesocycle classification → run full extract.
+ */
+const handleClassifyConfirm = async () => {
+  if (!file.value || isProcessing.value) return
+
+  isProcessing.value = true
+  error.value = null
+  importAbortController = new AbortController()
+
+  try {
+    const context = buildPreImportContext()
+    await runDirectExtract(context)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Import failed'
+    showToast(error.value, 'error')
+    console.error('Import error:', err)
+  } finally {
+    isProcessing.value = false
+    importAbortController = null
+  }
+}
+
+/**
+ * Step 2b: Coach chose "skip mesocycle" → run standard extract.
+ */
+const handleClassifyFallback = async () => {
+  if (!file.value || isProcessing.value) return
+
+  classificationResult.value = null
+  isProcessing.value = true
+  error.value = null
+  importAbortController = new AbortController()
+
+  try {
+    const context = buildPreImportContext()
+    await runDirectExtract(context)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Import failed'
+    showToast(error.value, 'error')
+    console.error('Import error:', err)
+  } finally {
+    isProcessing.value = false
+    importAbortController = null
+  }
+}
+
+/** Resolve an ambiguity on the classification result */
+const handleClassifyResolveAmbiguity = (index: number, value: string) => {
+  if (!classificationResult.value?.ambiguities?.[index]) return
+  classificationResult.value.ambiguities[index].resolved = true
+  classificationResult.value.ambiguities[index].resolvedValue = value
+}
+
+const handleClassifyUnresolveAmbiguity = (index: number) => {
+  if (!classificationResult.value?.ambiguities?.[index]) return
+  classificationResult.value.ambiguities[index].resolved = false
+  classificationResult.value.ambiguities[index].resolvedValue = undefined
+}
+
+/**
+ * Run the direct extract (old importProgram flow).
+ * Shared by both "no mesocycle" and "confirm mesocycle" paths.
+ */
+const runDirectExtract = async (context: PreImportContext) => {
+  if (!file.value) return
+
+  processingStage.value = 'parsing'
+  if (!importAbortController) importAbortController = new AbortController()
+
+  const result = await importProgram(file.value, importAbortController.signal, context)
+
+  processingStage.value = 'validating'
+  await new Promise(resolve => setTimeout(resolve, 300))
+
+  processingStage.value = 'complete'
+  importResult.value = result.importResult
+  historyRecord.value = result.historyRecord
+  importStep.value = 'extract_preview'
+  classificationResult.value = null
+  if (result.expandedAbbreviations?.length) {
+    expandedAbbreviations.value = result.expandedAbbreviations
+  }
+
+  const workouts = result.historyRecord?.workouts_imported ?? 0
+  const exercises = result.historyRecord?.exercises_imported ?? 0
+  showToast(`Imported ${workouts} workouts & ${exercises} exercises — review below`)
+
+  await loadHistory()
 }
 
 const handleConfirmImport = async () => {
@@ -532,6 +642,8 @@ const handleResumeSave = async (record: ImportHistoryRecord) => {
     }
     importResult.value = cached
     historyRecord.value = record
+    importStep.value = 'extract_preview'
+    classificationResult.value = null
     // Show the preview — user can then hit "Confirm & Save"
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load cached result'
@@ -551,6 +663,8 @@ const handleCancel = () => {
   file.value = null
   importResult.value = null
   historyRecord.value = null
+  classificationResult.value = null
+  importStep.value = 'upload'
   error.value = null
   processingStage.value = 'uploading'
   selectedPlanType.value = 'block_plan'
@@ -619,8 +733,20 @@ const statusIcon = (status: string) => {
     <div class="max-w-5xl mx-auto px-4 py-6 space-y-6">
       <!-- Import Card -->
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Classification Preview (step 2: coach reviews mesocycle detection) -->
+        <div v-if="classificationResult && importStep === 'classify_preview'" class="p-6">
+          <ImportClassificationPreview
+            :classification="classificationResult"
+            @confirm="handleClassifyConfirm"
+            @fallback="handleClassifyFallback"
+            @cancel="handleCancel"
+            @resolve-ambiguity="handleClassifyResolveAmbiguity"
+            @unresolve-ambiguity="handleClassifyUnresolveAmbiguity"
+          />
+        </div>
+
         <!-- File Upload (pre-import state) -->
-        <div v-if="!importResult" class="p-6 space-y-5">
+        <div v-else-if="!importResult" class="p-6 space-y-5">
           <!-- Drop Zone -->
           <div
             v-if="!file"
@@ -776,16 +902,18 @@ const statusIcon = (status: string) => {
                   <div
                     class="h-full bg-summit-600 transition-all duration-500 ease-out"
                     :style="{
-                      width: processingStage === 'uploading' ? '25%' :
-                             processingStage === 'parsing' ? '60%' :
+                      width: processingStage === 'uploading' ? '15%' :
+                             processingStage === 'classifying' ? '40%' :
+                             processingStage === 'parsing' ? '65%' :
                              processingStage === 'validating' ? '85%' : '100%'
                     }"
                   ></div>
                 </div>
               </div>
-              <div class="text-sm font-medium text-gray-700 min-w-[100px] text-right">
+              <div class="text-sm font-medium text-gray-700 min-w-[120px] text-right">
                 {{ processingStage === 'uploading' ? 'Uploading...' :
-                   processingStage === 'parsing' ? 'AI Parsing...' :
+                   processingStage === 'classifying' ? 'Classifying...' :
+                   processingStage === 'parsing' ? 'AI Extracting...' :
                    processingStage === 'validating' ? 'Validating...' : 'Complete!' }}
               </div>
             </div>

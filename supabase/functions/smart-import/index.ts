@@ -1,8 +1,9 @@
-// smart-import Edge Function (v31 - Sonnet-only + extraction guardrails + ambiguity detection)
-// Step 1: Classify document type (single_session / evolving_session / block_plan / season_plan)
-// Step 2: Sport detection → sport-specific parsing rules
-// Step 3: Extract with 5 guardrails (unit, set/rep, intensity, substitution, multi-week)
-// Step 4: Return structured ambiguities for coach resolution
+// smart-import Edge Function (v32 - Mesocycle progression + two-step classify/extract)
+// Supports two modes via `step` parameter:
+//   step: "classify" → Detect mesocycle structure, return classification (no DB writes)
+//   step: "extract" (default) → Full extraction (backward compatible with v31)
+// Mesocycle detection: groups exercises by Order across weeks, detects progression,
+// outputs canonical workout + block config. Variation swaps detected & preserved.
 // ALL requests use Claude Sonnet 4.5
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
@@ -531,6 +532,113 @@ For each ambiguity, provide a clear question and 2-4 options for the coach to ch
 If ambiguities count is 0, the import is "auto-import ready" and no coach review is needed.
 Do NOT create ambiguities for things you ARE confident about. Only flag genuinely uncertain items.`
 
+// ── Mesocycle Classification System Prompt ──────────────────────────────
+const CLASSIFY_SYSTEM = `You are a training program structure analyzer. Output ONLY valid JSON. No markdown, no code fences, no commentary.
+
+Your job: Examine a training document and determine if it contains a MESOCYCLE PROGRAM (same exercises progressing across multiple weeks) or STANDALONE SESSIONS (different exercises each week).
+
+MESOCYCLE DETECTION RULES:
+1. Same exercise appearing across multiple weeks = mesocycle. Do NOT create separate sessions per week.
+2. Week 1 = canonical session. Weeks 2-N = progression metadata only.
+3. Detect the progression pattern: LINEAR / WAVE / DESCENDING_SETS / STEP / CUSTOM
+4. Detect the load metric: TONNAGE / RELATIVE_INTENSITY / RPE / VOLUME_LOAD / REPS_ONLY
+5. A deload week typically shows 40-60% volume reduction — flag it.
+6. If weeks are structurally different (different exercises), treat as standalone sessions.
+
+LAYOUT DETECTION:
+- Layout A (Horizontal): weeks as columns, exercises as rows. "Back Squat | Wk1: 4x6 @ 70% | Wk2: 4x4 @ 75%"
+- Layout B (Vertical): rows grouped by Order number, Week column distinguishes weeks. Exercise name only on Week 1 row; blank name on Week 2+ inherits from same Order.
+- CRITICAL: Group all rows sharing the same Order number as ONE exercise. Blank exercise name is NOT a new exercise.
+
+VARIATION DETECTION RULES:
+1. If an exercise changes name mid-block but occupies the SAME Order position in the SAME session day → variation swap, not a new exercise.
+2. Apply variation_name to the per-week entry for affected weeks. The canonical name (Week 1) remains the exercise slot name.
+3. Load prescription continues across the variation — do NOT reset the progression curve unless the document explicitly shows a load reset.
+4. If a load reset accompanies the name change (e.g. 85% drops back to 70%), preserve it as-is — the coach made it intentional.
+5. If more than 3 distinct names appear in the same Order slot across the block, flag exercise_variation_review: true.
+
+SPECIAL CASES:
+- Descending set schemes: Store exact sequence as comma-separated string — "4,4,3,2". Never average or summarise.
+- Supplemental column: Recognised as superset/complex pairing. Set superset_group.
+- Prehab / Warmup rows with no Week sub-rows: Extract once, mark static, apply to all weeks.
+- Multiple sessions in one document: Extract as separate canonical workouts.
+- Mid-block exercise name change (same Order, different name from a specific week): Variation swap.`
+
+function buildClassifySchema(sportContext: string): string {
+  return \`Return a JSON object with this structure:
+{
+  "detected_type": "mesocycle_program" | "standalone_sessions",
+  "confidence": 0.0-1.0,
+  "duration_weeks": number,
+  "load_metric": "tonnage" | "relative_intensity" | "rpe" | "volume_load" | "reps_only",
+  "progression_pattern": "linear" | "wave" | "descending_sets" | "step" | "custom",
+  "intensity_start": number | null,
+  "intensity_end": number | null,
+  "deload_week": number | null,
+  "canonical_workouts": [{
+    "name": "string (session name, e.g. 'Day 1 - Upper Body')",
+    "session_type": "speed" | "strength" | "power" | ... | null,
+    "exercise_count": number,
+    "exercises": [{
+      "order_index": number,
+      "canonical_name": "string (Week 1 name — always the source of truth)",
+      "raw_name": "string (coach's original abbreviation, or same as canonical_name)",
+      "category": "string or null",
+      "superset_group": "string or null",
+      "rest_seconds": number | null,
+      "is_section_header": boolean,
+      "weeks": [{
+        "week": number,
+        "sets": "string ('4' or '4,4,3,2' for descending)",
+        "reps": "string ('6' or '6-8' for ranges)",
+        "intensity_percent": number | null,
+        "rpe": number | null,
+        "rest_seconds": number | null,
+        "weight": "string or null",
+        "notes": "string or null",
+        "variation_name": "string | null (null = use canonical name, 'Half Squat' = override)"
+      }],
+      "has_variation": boolean,
+      "variation_summary": "string or null (e.g. 'Back Squat -> Half Squat (wk 3+)')",
+      "exercise_variation_review": boolean
+    }]
+  }],
+  "week_samples": [{
+    "week_number": number,
+    "exercises": [{
+      "name": "string",
+      "prescription": "string (human-readable: '4x6 @ 70%')",
+      "variation_name": "string | null"
+    }]
+  }],
+  "block_config": {
+    "name": "string (suggested block name)",
+    "block_type": "string or null (hypertrophy, strength, power, peaking, gpp, spp)",
+    "sport": "string or null"
+  },
+  "ambiguities": [{
+    "type": "unit_missing" | "notation_unclear" | "intensity_qualitative" | "exercise_abbreviated" | "multi_week_structure" | "value_unclear",
+    "location": "string",
+    "originalValue": "string",
+    "question": "string",
+    "options": ["option1", "option2"],
+    "priority": 1-10
+  }]
+}
+
+RULES:
+1. Include week_samples for at least Week 1 and Week 2 (or the first 2 available weeks) so the coach can preview the progression.
+2. For mesocycle_program: EVERY exercise must have entries for ALL weeks, even if prescription is identical (reps_only programs).
+3. For standalone_sessions: still return the structure but set detected_type to "standalone_sessions" and confidence accordingly.
+4. Variation swaps: canonical_name is always the Week 1 name. variation_name overrides for later weeks.
+5. Section headers (Warm-Up, Main Set, etc.) have is_section_header: true and empty weeks array.
+6. Descending set notation: preserve as comma-separated in the sets field — "4,4,3,2". NEVER average.
+
+\${sportContext}
+
+Output ONLY the JSON.\`
+}
+
 function buildSchema(sportContext: string): string {
   return `Return a JSON object. The structure DEPENDS on the detected_plan_type:
 
@@ -758,7 +866,8 @@ Deno.serve(async (req) => {
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     // ── Parse request ──
-    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus } = await req.json()
+    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus, step } = await req.json()
+    const importStep = step || 'extract' // 'classify' or 'extract' (default for backward compat)
     if (!rawContent || !fileType || !fileName) {
       return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
@@ -766,7 +875,7 @@ Deno.serve(async (req) => {
       return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
     }
 
-    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}`)
+    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} step=${importStep} len=${rawContent.length}`)
 
     // ── Coach Abbreviation Pre-Expansion ──
     // Replace known coach shorthand in text BEFORE sending to AI
@@ -829,7 +938,100 @@ Deno.serve(async (req) => {
       console.log(`[smart-import] Coach context: sport=${coachSport ?? 'auto'} planType=${coachPlanType ?? 'auto'} focus=${coachTrainingFocus ?? 'auto'}`)
     }
 
-    // ── Route to correct model ──
+    // ── CLASSIFY STEP (v32) ──
+    // Quick classification pass: detect mesocycle structure, return classification (no DB writes)
+    if (importStep === 'classify') {
+      console.log(`[smart-import] CLASSIFY step — detecting mesocycle structure`)
+
+      const classifySchema = buildClassifySchema(sportRules)
+      let classifyResult: { text: string; usage: any; stopReason: string }
+
+      if (preParsed) {
+        classifyResult = await callClaude(SONNET, 30000, [
+          {
+            role: 'user',
+            content: `Analyze this training program for mesocycle structure: "${fileName}"
+
+HOW TO READ THIS DATA:
+The spreadsheet has been pre-parsed into JSON. Each row is a JSON object where keys are column headers and values are cell contents.
+
+CRITICAL: Look for multi-week patterns:
+- Layout A (Horizontal): Week columns across the top, exercises down the left
+- Layout B (Vertical): Order column groups rows. Week column distinguishes weeks. Blank exercise name = inherits from same Order number.
+- Group ALL rows sharing the same Order number as ONE exercise across weeks.
+
+DATA:
+${fileContent}
+
+${classifySchema}${glossaryPrompt}${coachContextHints}`,
+          },
+        ])
+      } else {
+        const contentBlocks: any[] = []
+        if (fileType === 'application/pdf') {
+          contentBlocks.push({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: fileContent },
+          })
+        } else if (fileType.startsWith('image/')) {
+          contentBlocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: fileType, data: fileContent },
+          })
+        } else {
+          contentBlocks.push({
+            type: 'text',
+            text: `File "${fileName}" (${fileType}), base64 preview:\n${fileContent.substring(0, 3000)}`,
+          })
+        }
+        contentBlocks.push({
+          type: 'text',
+          text: `Analyze this training program for mesocycle structure: "${fileName}".\n\n${classifySchema}${glossaryPrompt}${coachContextHints}`,
+        })
+        classifyResult = await callClaude(SONNET, 30000, [
+          { role: 'user', content: contentBlocks },
+        ])
+      }
+
+      // Parse classification result
+      let classification: any
+      try {
+        classification = extractJSON(classifyResult.text)
+      } catch (parseErr) {
+        console.error('[smart-import] Classify JSON parse failed:', classifyResult.text.substring(0, 500))
+        return json({ error: 'Failed to parse classification response', raw: classifyResult.text.substring(0, 500) }, 500)
+      }
+
+      // Log (non-blocking)
+      const classifyTokens = (classifyResult.usage?.input_tokens || 0) + (classifyResult.usage?.output_tokens || 0)
+      try {
+        await sb.from('ai_plan_logs').insert({
+          coach_id: user.id,
+          tier: 'import',
+          action: 'smart_import_classify',
+          prompt: `${fileName} (${fileType}) [Sonnet classify] type=${classification.detected_type}`,
+          response: JSON.stringify(classification).substring(0, 5000),
+          model: SONNET,
+          tokens_used: classifyTokens,
+        } as any)
+      } catch (e) {
+        console.warn('[smart-import] ai_plan_logs insert failed (non-fatal):', e)
+      }
+
+      return json({
+        success: true,
+        step: 'classify',
+        classification,
+        model: SONNET,
+        usage: classifyResult.usage,
+        detectedSport: sportSignal?.sport ?? classification.block_config?.sport ?? null,
+        sportCategory: sportSignal?.category ?? null,
+        sportConfidence: sportSignal?.confidence ?? 0,
+      })
+    }
+
+    // ── EXTRACT STEP (default, backward compatible with v31) ──
+    // Route to correct model ──
     let result: { text: string; usage: any; stopReason: string }
     let modelUsed: string
 

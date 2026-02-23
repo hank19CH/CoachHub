@@ -51,6 +51,177 @@ export function cancelActiveImport() {
 }
 
 /**
+ * Classify a file for mesocycle structure (Sprint 13.5a, step 1 of 2).
+ * Returns classification with detected exercises, progression pattern,
+ * and week samples — but writes nothing to the database.
+ * The coach reviews the classification before confirming extraction.
+ */
+export async function classifyImport(
+  file: File,
+  signal?: AbortSignal,
+  preImportContext?: PreImportContext,
+): Promise<ImportClassification> {
+  // Validate file
+  console.log(`[SmartImport] Starting CLASSIFY: name=${file.name}, type=${file.type}, size=${file.size}`)
+
+  if (file.size > AI_CONFIG.import.maxFileSize) {
+    throw new Error(`File too large. Max size: ${AI_CONFIG.import.maxFileSize / 1024 / 1024}MB`)
+  }
+
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase()
+  const typeOk = AI_CONFIG.import.supportedTypes.includes(file.type)
+  const extOk = AI_CONFIG.import.supportedExtensions.includes(ext)
+  if (!typeOk && !extOk) {
+    throw new Error(`Unsupported file type: ${file.type} (${ext})`)
+  }
+
+  // Refresh session
+  await supabase.auth.refreshSession()
+  const user = await supabase.auth.getUser()
+  if (!user.data.user) throw new Error('Not authenticated')
+  const coachId = user.data.user.id
+
+  // Prepare file content (same logic as importProgram)
+  const isSpreadsheet = file.type.includes('excel') || file.type.includes('spreadsheet') || file.type === 'text/csv'
+    || ['.xlsx', '.xls', '.csv'].includes(ext)
+
+  let fileContent: string
+  let sendAsText = false
+  let coachAbbreviations: Record<string, string> = {}
+
+  if (isSpreadsheet) {
+    const arrayBuffer = await file.arrayBuffer()
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+    const parsedSheets: ParsedSheet[] = []
+
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName]
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as (string | number | null)[][]
+      if (rows.length === 0) continue
+
+      let headerRowIdx = 0
+      for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        const nonNull = rows[i].filter(v => v !== null && v !== '').length
+        if (nonNull >= 2) { headerRowIdx = i; break }
+      }
+
+      const rawHeaders = rows[headerRowIdx]
+      const headers = rawHeaders.map((h, i) => {
+        const trimmed = h != null ? String(h).trim() : ''
+        return trimmed || `_col${i + 1}`
+      })
+      const dataRows = rows.slice(headerRowIdx + 1)
+
+      let lastUsedCol = headers.length - 1
+      while (lastUsedCol > 0) {
+        const colHasData = dataRows.some(row => row[lastUsedCol] !== null && row[lastUsedCol] !== '')
+        const isRealHeader = !headers[lastUsedCol].startsWith('_col')
+        if (colHasData || isRealHeader) break
+        lastUsedCol--
+      }
+      const usedHeaders = headers.slice(0, lastUsedCol + 1)
+
+      const jsonRows = dataRows
+        .filter(row => row.some(v => v !== null && v !== ''))
+        .map(row => {
+          const obj: Record<string, string | number | null> = {}
+          usedHeaders.forEach((h, i) => { obj[h] = row[i] ?? null })
+          return obj
+        })
+
+      // Drop nulls for compaction
+      for (let ri = 0; ri < jsonRows.length; ri++) {
+        const compact: Record<string, string | number | null> = {}
+        for (const [k, v] of Object.entries(jsonRows[ri])) {
+          if (v !== null && v !== '') compact[k] = v
+        }
+        jsonRows[ri] = compact
+      }
+
+      parsedSheets.push({ name: sheetName, headers: usedHeaders, jsonRows })
+    }
+
+    // Load coach abbreviations
+    try {
+      const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
+      coachAbbreviations = await getAbbreviationMap(coachId)
+    } catch { /* non-critical */ }
+
+    const sheetTexts = parsedSheets.map(ps => {
+      const hdrs = ps.headers.join(', ')
+      return parsedSheets.length > 1
+        ? `=== Sheet: ${ps.name} ===\nColumns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`
+        : `Columns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`
+    })
+
+    fileContent = sheetTexts.join('\n\n')
+    sendAsText = true
+
+    // Truncate if needed
+    if (fileContent.length > 150_000) {
+      fileContent = fileContent.substring(0, 150_000) + '\n\n[TRUNCATED]'
+    }
+  } else {
+    fileContent = await fileToBase64(file)
+  }
+
+  // Call edge function with step: 'classify'
+  const session = await supabase.auth.getSession()
+  const accessToken = session.data.session?.access_token
+  if (!accessToken) throw new Error('No active session')
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+  const abortController = new AbortController()
+  if (signal) signal.addEventListener('abort', () => abortController.abort())
+  const timeoutId = setTimeout(() => abortController.abort(), IMPORT_TIMEOUT_MS)
+
+  // Auth keepalive
+  const keepaliveId = setInterval(async () => {
+    try { await supabase.auth.refreshSession() }
+    catch { /* ignore */ }
+  }, 20_000)
+
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({
+        fileContent,
+        fileType: file.type,
+        fileName: file.name,
+        preParsed: sendAsText,
+        step: 'classify',
+        ...(Object.keys(coachAbbreviations).length > 0 ? { coachAbbreviations } : {}),
+        ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
+        ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
+        ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+      }),
+      signal: abortController.signal,
+    })
+
+    const responseText = await response.text()
+    let data: any
+    try { data = JSON.parse(responseText) }
+    catch { throw new Error(`Edge Function returned ${response.status}: ${responseText.substring(0, 200)}`) }
+
+    if (!response.ok) throw new Error(data?.error || `Edge Function returned ${response.status}`)
+    if (!data?.success) throw new Error(data?.error || 'Classification failed')
+
+    console.log(`[SmartImport] Classification result: type=${data.classification?.detected_type}, confidence=${data.classification?.confidence}`)
+    return data.classification as ImportClassification
+  } finally {
+    clearTimeout(timeoutId)
+    clearInterval(keepaliveId)
+  }
+}
+
+/**
  * Upload file and process with AI via Edge Function
  */
 export async function importProgram(file: File, signal?: AbortSignal, preImportContext?: PreImportContext): Promise<{

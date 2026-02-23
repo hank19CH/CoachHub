@@ -210,6 +210,88 @@ export interface CoachAbbreviation {
   sport_context?: string[]
 }
 
+// --- Sprint 13.5: Mesocycle Classification ---
+
+/** Per-week exercise prescription entry (lives in progression_params JSONB) */
+export interface ExerciseWeekEntry {
+  week: number
+  sets: string                  // "4" or "4,4,3,2" for descending
+  reps: string                  // "6" or "6-8" for ranges
+  intensity_percent?: number    // % 1RM
+  rpe?: number
+  rest_seconds?: number
+  weight?: string
+  notes?: string
+  variation_name?: string | null  // null = use canonical name; "Half Squat" = override for this week
+}
+
+/** An exercise slot across the mesocycle (one entry per canonical exercise) */
+export interface ExerciseSlot {
+  order_index: number
+  canonical_name: string          // Week 1 name — always the source of truth
+  raw_name?: string               // Coach's original abbreviation
+  category?: string
+  superset_group?: string
+  rest_seconds?: number
+  notes?: string
+  is_section_header?: boolean
+  weeks: ExerciseWeekEntry[]
+  has_variation: boolean          // true if any week has a variation_name
+  variation_summary?: string      // "Back Squat -> Half Squat (wk 3+)"
+  exercise_variation_review?: boolean  // true if >3 distinct names in slot
+}
+
+/** Classification result from the classify step (no DB writes) */
+export interface ImportClassification {
+  /** Detected document structure */
+  detected_type: 'mesocycle_program' | 'standalone_sessions'
+  confidence: number              // 0-1
+
+  /** Number of weeks detected */
+  duration_weeks: number
+
+  /** Detected load metric */
+  load_metric: 'tonnage' | 'relative_intensity' | 'rpe' | 'volume_load' | 'reps_only'
+
+  /** Detected progression pattern */
+  progression_pattern: 'linear' | 'wave' | 'descending_sets' | 'step' | 'custom'
+
+  /** Intensity range detected */
+  intensity_start?: number
+  intensity_end?: number
+
+  /** Deload week index (null = none detected) */
+  deload_week?: number | null
+
+  /** Canonical workouts (each = one session day) */
+  canonical_workouts: Array<{
+    name: string
+    session_type?: string
+    exercise_count: number
+    exercises: ExerciseSlot[]
+  }>
+
+  /** Week 1 vs Week 2 sample for coach preview */
+  week_samples: Array<{
+    week_number: number
+    exercises: Array<{
+      name: string
+      prescription: string   // human-readable: "4x6 @ 70%"
+      variation_name?: string | null
+    }>
+  }>
+
+  /** AI-flagged ambiguities */
+  ambiguities: ImportAmbiguity[]
+
+  /** Block config preview */
+  block_config: {
+    name: string
+    block_type?: string
+    sport?: string
+  }
+}
+
 export interface ImportHistoryRecord {
   id: string
   coach_id: string

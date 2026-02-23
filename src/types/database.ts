@@ -36,6 +36,8 @@ export type UpgradePromptAction = 'dismissed' | 'upgrade_clicked' | 'downgraded'
 export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived'
 export type VolumeTarget = 'low' | 'moderate' | 'high'
 export type IntensityTarget = 'low' | 'moderate' | 'high' | 'peak'
+export type LoadMetric = 'tonnage' | 'relative_intensity' | 'rpe' | 'volume_load' | 'reps_only'
+export type ProgressionPattern = 'linear' | 'wave_3_1' | 'wave_2_1' | 'descending_sets' | 'step' | 'conjugate' | 'prilepin' | 'custom'
 export type ExerciseCategory = 'primary' | 'accessory' | 'warmup' | 'cooldown' | 'drill' | 'plyometric'
 export type MovementPattern = 'squat' | 'hinge' | 'push' | 'pull' | 'carry' | 'locomotion' | 'rotation' | 'skill'
 export type AiActionTaken = 'accepted' | 'modified' | 'rejected' | 'pending'
@@ -953,6 +955,15 @@ export interface Database {
           volume_target: VolumeTarget | null
           intensity_target: IntensityTarget | null
           ai_generated: boolean
+          load_metric: LoadMetric
+          progression_pattern: ProgressionPattern
+          intensity_start: number | null
+          intensity_end: number | null
+          volume_start: number | null
+          volume_end: number | null
+          deload_week: number | null
+          deload_volume_factor: number
+          progression_params: Json
           created_at: string
           updated_at: string
         }
@@ -967,6 +978,15 @@ export interface Database {
           volume_target?: VolumeTarget | null
           intensity_target?: IntensityTarget | null
           ai_generated?: boolean
+          load_metric?: LoadMetric
+          progression_pattern?: ProgressionPattern
+          intensity_start?: number | null
+          intensity_end?: number | null
+          volume_start?: number | null
+          volume_end?: number | null
+          deload_week?: number | null
+          deload_volume_factor?: number
+          progression_params?: Json
           created_at?: string
           updated_at?: string
         }
@@ -979,6 +999,15 @@ export interface Database {
           volume_target?: VolumeTarget | null
           intensity_target?: IntensityTarget | null
           ai_generated?: boolean
+          load_metric?: LoadMetric
+          progression_pattern?: ProgressionPattern
+          intensity_start?: number | null
+          intensity_end?: number | null
+          volume_start?: number | null
+          volume_end?: number | null
+          deload_week?: number | null
+          deload_volume_factor?: number
+          progression_params?: Json
           updated_at?: string
         }
       }
@@ -1044,6 +1073,30 @@ export interface Database {
           session_data?: Json
           session_name?: string | null
           updated_at?: string
+        }
+      }
+      block_sessions: {
+        Row: {
+          id: string
+          training_block_id: string
+          workout_id: string
+          session_day: number
+          order_index: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          training_block_id: string
+          workout_id: string
+          session_day: number
+          order_index?: number
+          created_at?: string
+        }
+        Update: {
+          training_block_id?: string
+          workout_id?: string
+          session_day?: number
+          order_index?: number
         }
       }
       exercise_library: {
@@ -1683,3 +1736,8 @@ export type AiChatMessageInsert = Database['public']['Tables']['ai_chat_messages
 // Sprint 13 — Pricing & Seat Management
 export type UpgradePrompt = Database['public']['Tables']['upgrade_prompts']['Row']
 export type UpgradePromptInsert = Database['public']['Tables']['upgrade_prompts']['Insert']
+
+// Sprint 13.5 — Mesocycle Progression
+export type BlockSession = Database['public']['Tables']['block_sessions']['Row']
+export type BlockSessionInsert = Database['public']['Tables']['block_sessions']['Insert']
+export type BlockSessionUpdate = Database['public']['Tables']['block_sessions']['Update']
