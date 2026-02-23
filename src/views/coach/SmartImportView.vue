@@ -4,7 +4,7 @@ import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrai
 import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS, IMPORT_SPORT_OPTIONS, IMPORT_FOCUS_OPTIONS, IMPORT_PLAN_TYPE_OPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { importProgram, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
-import type { ImportResult, ImportHistoryRecord } from '@/types/import'
+import type { ImportResult, ImportHistoryRecord, ImportAmbiguity } from '@/types/import'
 import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CONFIG } from '@/config/ai'
@@ -48,8 +48,26 @@ interface UniqueExerciseEntry {
 }
 
 const showAllExerciseNames = ref(false)
+const showFormatTips = ref(false)
 // Reactive map: rawName → { coachOverride, useRawName }
 const bulkOverrides = ref<Map<string, { coachOverride: string; useRawName: boolean }>>(new Map())
+
+// v31: Ambiguity resolution
+const ambiguities = computed<ImportAmbiguity[]>(() => importResult.value?.ambiguities ?? [])
+const unresolvedAmbiguities = computed(() => ambiguities.value.filter(a => !a.resolved))
+const hasUnresolvedHighPriority = computed(() => unresolvedAmbiguities.value.some(a => a.priority >= 7))
+
+function resolveAmbiguity(index: number, value: string) {
+  if (!importResult.value?.ambiguities?.[index]) return
+  importResult.value.ambiguities[index].resolved = true
+  importResult.value.ambiguities[index].resolvedValue = value
+}
+
+function unresolveAmbiguity(index: number) {
+  if (!importResult.value?.ambiguities?.[index]) return
+  importResult.value.ambiguities[index].resolved = false
+  importResult.value.ambiguities[index].resolvedValue = undefined
+}
 
 function isLikelyAbbreviation(name: string): boolean {
   const trimmed = name.trim()
@@ -71,7 +89,9 @@ function isLikelyAbbreviation(name: string): boolean {
 /** Resolve what the display name should be for a given entry */
 function resolvedName(entry: UniqueExerciseEntry): string {
   const override = bulkOverrides.value.get(entry.rawName)
-  if (override?.useRawName) return entry.rawName
+  // Always return the full exercise name — never the raw abbreviation.
+  // "Keep" now means "preserve shorthand as coach alias", not "use it as display name".
+  // Athletes always see the full name; coach views show raw_name when present.
   if (override?.coachOverride?.trim()) return override.coachOverride.trim()
   return entry.aiName
 }
@@ -581,7 +601,7 @@ const statusIcon = (status: string) => {
   <div class="min-h-screen bg-gray-50 pb-20">
     <!-- Header -->
     <div class="bg-white border-b border-gray-200 sticky top-14 z-10">
-      <div class="max-w-3xl mx-auto px-4 py-4">
+      <div class="max-w-5xl mx-auto px-4 py-4">
         <div class="flex items-center gap-3">
           <button @click="router.back()" class="text-gray-500 hover:text-gray-700">
             <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -596,7 +616,7 @@ const statusIcon = (status: string) => {
       </div>
     </div>
 
-    <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div class="max-w-5xl mx-auto px-4 py-6 space-y-6">
       <!-- Import Card -->
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <!-- File Upload (pre-import state) -->
@@ -617,12 +637,61 @@ const statusIcon = (status: string) => {
               </svg>
             </div>
             <p class="text-lg font-medium text-gray-700 mb-1">Drop your file here or click to browse</p>
-            <p class="text-sm text-gray-500 mb-2">
-              Supports Excel, CSV, PDF, or images (max {{ AI_CONFIG.import.maxFileSize / 1024 / 1024 }}MB)
+            <p class="text-sm text-gray-500 mb-3">
+              Well-structured Excel, CSV, PDF &amp; images (max {{ AI_CONFIG.import.maxFileSize / 1024 / 1024 }}MB)
             </p>
-            <router-link to="/coach/philosophy" class="text-xs text-summit-600 hover:text-summit-700 font-medium">
-              Manage abbreviation glossary &rarr;
-            </router-link>
+
+            <!-- How Smart Import Works (collapsible) -->
+            <div class="text-left max-w-md mx-auto">
+              <button
+                @click.stop="showFormatTips = !showFormatTips"
+                class="flex items-center gap-1.5 text-xs font-medium text-summit-600 hover:text-summit-700 mx-auto transition-colors"
+              >
+                <svg class="w-3.5 h-3.5 transition-transform" :class="showFormatTips ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+                How Smart Import works
+              </button>
+              <div v-if="showFormatTips" class="mt-3 text-left text-xs text-gray-600 space-y-3 bg-gray-50 rounded-lg p-4" @click.stop>
+                <!-- What imports well -->
+                <div>
+                  <p class="font-semibold text-gray-700 mb-1.5">What imports well</p>
+                  <ul class="list-disc list-inside space-y-1 text-gray-500">
+                    <li>Well-labeled spreadsheets with clear <strong>week</strong>, <strong>day</strong>, and <strong>session</strong> headers</li>
+                    <li>Clean PDFs or images of training plans with readable text</li>
+                    <li>Block plans, season plans, and single session formats</li>
+                  </ul>
+                </div>
+
+                <!-- Abbreviation & Glossary -->
+                <div>
+                  <p class="font-semibold text-gray-700 mb-1.5">Abbreviations &amp; Glossary</p>
+                  <ul class="list-disc list-inside space-y-1 text-gray-500">
+                    <li>Write programs in shorthand &mdash; Smart Import auto-detects abbreviations</li>
+                    <li>Review AI interpretations after import and correct any mistakes</li>
+                    <li>Check <strong>"Keep"</strong> to preserve your shorthand as a coach alias &mdash; athletes always see the full exercise name</li>
+                    <li>Your corrections are saved to a <strong>personal glossary</strong> that improves every future import</li>
+                  </ul>
+                </div>
+
+                <!-- Actions -->
+                <div class="pt-1 flex items-center gap-3 flex-wrap">
+                  <a
+                    href="/templates/import-template.xlsx"
+                    download="CoachHub-Import-Template.xlsx"
+                    class="inline-flex items-center gap-1.5 text-xs font-medium text-summit-600 hover:text-summit-700 bg-summit-50 px-3 py-1.5 rounded-lg hover:bg-summit-100 transition-colors"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download template
+                  </a>
+                  <router-link to="/coach/philosophy" class="text-xs text-gray-500 hover:text-summit-600 font-medium transition-colors">
+                    Manage glossary &rarr;
+                  </router-link>
+                </div>
+              </div>
+            </div>
             <input
               ref="fileInput"
               type="file"
@@ -874,7 +943,7 @@ const statusIcon = (status: string) => {
                 </span>
               </div>
               <p class="text-[11px] text-gray-500 mt-1.5 leading-tight">
-                Coach Name = your abbreviation/name. AI Interpretation = what AI thinks it means. Type a correction if AI got it wrong. Tick "Keep" to use your shorthand in the plan.
+                Coach Name = your shorthand. AI Interpretation = the full exercise name. Type a correction if AI got it wrong. Check "Keep" to preserve your shorthand as an alias — athletes always see the full name.
               </p>
             </div>
 
@@ -883,7 +952,7 @@ const statusIcon = (status: string) => {
               <span>Coach Name</span>
               <span>AI Interpretation</span>
               <span>Your Correction</span>
-              <span class="text-center" title="Keep coach's name in plan">Keep</span>
+              <span class="text-center" title="Keep shorthand as alias (athletes see full name)">Keep</span>
             </div>
 
             <!-- Flagged exercises (likely abbreviations) — always visible -->
@@ -929,7 +998,7 @@ const statusIcon = (status: string) => {
                       :class="entry.useRawName
                         ? 'bg-summit-600 border-summit-600 text-white'
                         : 'border-gray-300 hover:border-summit-400'"
-                      :title="entry.useRawName ? 'Using coach name in plan' : 'Click to keep coach name'"
+                      :title="entry.useRawName ? 'Alias saved — coach sees shorthand, athlete sees full name' : 'Keep shorthand as alias'"
                     >
                       <svg v-if="entry.useRawName" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
@@ -988,7 +1057,7 @@ const statusIcon = (status: string) => {
                       :class="entry.useRawName
                         ? 'bg-summit-600 border-summit-600 text-white'
                         : 'border-gray-300 hover:border-summit-400'"
-                      :title="entry.useRawName ? 'Using coach name in plan' : 'Click to keep coach name'"
+                      :title="entry.useRawName ? 'Alias saved — coach sees shorthand, athlete sees full name' : 'Keep shorthand as alias'"
                     >
                       <svg v-if="entry.useRawName" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
@@ -1254,6 +1323,86 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
+          <!-- Ambiguity Resolution (v31) -->
+          <div v-if="ambiguities.length > 0" class="bg-white border border-amber-200 rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/50">
+              <div class="flex items-center gap-2 flex-wrap">
+                <svg class="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h3 class="font-semibold text-gray-900 text-sm">Review Ambiguities</h3>
+                <span class="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                  {{ unresolvedAmbiguities.length }} remaining
+                </span>
+                <span v-if="ambiguities.length - unresolvedAmbiguities.length > 0" class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  {{ ambiguities.length - unresolvedAmbiguities.length }} resolved
+                </span>
+              </div>
+              <p class="text-[11px] text-gray-500 mt-1.5 leading-tight">
+                The AI flagged some values it wasn't sure about. Pick the correct interpretation or type your own.
+                <span v-if="hasUnresolvedHighPriority" class="text-amber-700 font-medium"> High-priority items should be resolved before saving.</span>
+              </p>
+            </div>
+
+            <div class="divide-y divide-gray-100">
+              <div
+                v-for="(amb, idx) in ambiguities"
+                :key="idx"
+                class="px-4 py-3 transition-colors"
+                :class="amb.resolved ? 'bg-emerald-50/30' : amb.priority >= 7 ? 'bg-amber-50/50 border-l-3 border-amber-400' : ''"
+              >
+                <div class="flex items-start gap-2">
+                  <!-- Priority badge -->
+                  <span
+                    class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5"
+                    :class="amb.priority >= 7 ? 'bg-red-100 text-red-700' : amb.priority >= 4 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'"
+                  >
+                    P{{ amb.priority }}
+                  </span>
+
+                  <div class="flex-1 min-w-0">
+                    <!-- Question -->
+                    <p class="text-sm text-gray-800 font-medium">{{ amb.question }}</p>
+                    <!-- Location & original value -->
+                    <p class="text-[11px] text-gray-500 mt-0.5">
+                      <span class="font-mono bg-gray-100 px-1 rounded">{{ amb.originalValue }}</span>
+                      <span v-if="amb.location" class="ml-1">in {{ amb.location }}</span>
+                    </p>
+
+                    <!-- Resolved indicator -->
+                    <div v-if="amb.resolved" class="mt-2 flex items-center gap-2">
+                      <span class="text-xs text-emerald-700 font-medium bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        {{ amb.resolvedValue }}
+                      </span>
+                      <button
+                        @click="unresolveAmbiguity(idx)"
+                        class="text-[10px] text-gray-400 hover:text-gray-600 underline"
+                      >undo</button>
+                    </div>
+
+                    <!-- Options (when unresolved) -->
+                    <div v-else class="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        v-for="opt in amb.options"
+                        :key="opt"
+                        @click="resolveAmbiguity(idx, opt)"
+                        class="text-xs px-2.5 py-1 rounded-lg border border-gray-200 bg-white hover:bg-summit-50 hover:border-summit-300 transition-colors"
+                      >{{ opt }}</button>
+                      <input
+                        @keydown.enter="resolveAmbiguity(idx, ($event.target as HTMLInputElement).value); ($event.target as HTMLInputElement).value = ''"
+                        placeholder="Custom..."
+                        class="text-xs px-2 py-1 border border-gray-200 rounded-lg w-24 focus:outline-none focus:ring-1 focus:ring-summit-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Save Error -->
           <div v-if="error" class="bg-red-50 border border-red-200 rounded-xl p-4">
             <div class="flex items-start gap-3">
@@ -1267,13 +1416,24 @@ const statusIcon = (status: string) => {
             </div>
           </div>
 
+          <!-- Unresolved ambiguity warning -->
+          <div v-if="hasUnresolvedHighPriority" class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <p class="text-xs text-amber-800">
+              <span class="font-semibold">{{ unresolvedAmbiguities.filter(a => a.priority >= 7).length }} high-priority ambiguities</span> remain unresolved. You can still save, but the AI's best guess will be used for unresolved items.
+            </p>
+          </div>
+
           <!-- Actions -->
           <div class="flex gap-3 pt-4 border-t border-gray-200">
             <button
               @click="handleConfirmImport"
               :disabled="isSaving"
-              class="flex-1 bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium
-                hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              class="flex-1 text-white px-6 py-3 rounded-xl font-medium
+                disabled:opacity-50 transition-colors"
+              :class="hasUnresolvedHighPriority ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'"
             >
               {{ isSaving ? 'Saving...' :
                  selectedPlanType === 'single_session'

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import { getStreak } from '@/utils/streaks'
 import type { UserStreak } from '@/types/database'
 
@@ -83,13 +84,7 @@ function navigateTo(path: string) {
 
 <template>
   <div class="min-h-screen bg-gray-50 pb-20">
-    <!-- Header -->
-    <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div class="max-w-lg mx-auto px-4 py-4">
-        <h1 class="text-2xl font-bold text-gray-900">Athlete Hub</h1>
-        <p class="text-sm text-gray-600 mt-1">Your training tools</p>
-      </div>
-    </div>
+    <PageHeader title="Athlete Hub" />
 
     <!-- Tools Grid -->
     <div class="max-w-lg mx-auto px-4 py-6 space-y-8">

@@ -10,6 +10,8 @@ import RestTimer from '@/components/athlete/RestTimer.vue'
 import WorkoutCompleteModal from '@/components/athlete/WorkoutCompleteModal.vue'
 import WorkoutShareModal from '@/components/athlete/WorkoutShareModal.vue'
 import type { ShareExercise } from '@/components/athlete/WorkoutShareModal.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 // Router & auth
 const route = useRoute()
@@ -31,6 +33,18 @@ const showCompleteModal = ref(false)
 const showShareModal = ref(false)
 const completionId = ref<string | null>(null)
 const isSubmitting = ref(false)
+const showExitConfirm = ref(false)
+
+// Toast state
+const toastMessage = ref('')
+const toastType = ref<'success' | 'error'>('success')
+const toastVisible = ref(false)
+
+function showToast(message: string, type: 'success' | 'error' = 'success') {
+  toastMessage.value = message
+  toastType.value = type
+  toastVisible.value = true
+}
 
 // Computed
 const allExercises = computed<Exercise[]>(() => {
@@ -258,16 +272,21 @@ function handleShare() {
 // Handle post shared
 function handleShared(_postId: string) {
   showShareModal.value = false
-  router.push('/athlete/dashboard')
+  showToast('Workout shared!')
+  setTimeout(() => router.push('/athlete/dashboard'), 1200)
 }
 
 // Exit workout
 function exitWorkout() {
   if (totalLogged.value > 0) {
-    if (!confirm('Are you sure you want to exit? Your logged exercises will not be saved.')) {
-      return
-    }
+    showExitConfirm.value = true
+    return
   }
+  router.push('/athlete/dashboard')
+}
+
+function confirmExit() {
+  showExitConfirm.value = false
   router.push('/athlete/dashboard')
 }
 
@@ -450,6 +469,24 @@ function handleModalClose() {
       :exercises="shareExercises"
       @close="showShareModal = false"
       @shared="handleShared"
+    />
+
+    <!-- Exit confirm dialog -->
+    <ConfirmDialog
+      :open="showExitConfirm"
+      title="Exit Workout?"
+      message="Your logged exercises will not be saved. Are you sure you want to leave?"
+      confirm-text="Exit"
+      @confirm="confirmExit"
+      @cancel="showExitConfirm = false"
+    />
+
+    <!-- Toast -->
+    <Toast
+      :message="toastMessage"
+      :type="toastType"
+      :visible="toastVisible"
+      @close="toastVisible = false"
     />
   </div>
 </template>

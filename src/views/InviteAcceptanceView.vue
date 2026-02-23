@@ -38,9 +38,13 @@ onMounted(async () => {
       try {
         await acceptInviteCode(inviteCode.value, authStore.profile.id)
         alreadyConnected.value = true
-      } catch {
-        // acceptInviteCode handles duplicate check internally
-        alreadyConnected.value = true
+      } catch (acceptErr: any) {
+        if (acceptErr.message === 'SEAT_LIMIT_REACHED') {
+          error.value = 'This coach has reached their athlete limit. Please contact them to free up a spot or upgrade their plan.'
+        } else {
+          // acceptInviteCode handles duplicate check internally
+          alreadyConnected.value = true
+        }
       }
     }
   } catch (err: any) {

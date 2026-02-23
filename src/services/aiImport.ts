@@ -165,14 +165,14 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     }
 
     // 3. Prepare file content for the Edge Function
-    // Excel/CSV: pre-parse on the frontend with SheetJS -> send plain text (fast, cheap Haiku)
+    // Excel/CSV: pre-parse on the frontend with SheetJS -> send structured JSON to Sonnet
     // PDF/Images: send base64 for Sonnet vision/document parsing
     const isSpreadsheet = file.type.includes('excel') || file.type.includes('spreadsheet') || file.type === 'text/csv'
       || ['.xlsx', '.xls', '.csv'].includes(ext)
 
     let fileContent: string
     let sendAsText = false
-    let forceModelSonnet = false
+    // v31: All requests use Sonnet 4.5 (forceModel removed)
     let coachAbbreviations: Record<string, string> = {}
 
     if (isSpreadsheet) {
@@ -585,7 +585,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
       if (extraction.confidence > 0) {
         console.warn(`[SmartImport] Code extraction: pattern=${extraction.pattern}, confidence=${extraction.confidence.toFixed(2)}, reason=${extraction.reason}. Falling back to AI.`)
       }
-      forceModelSonnet = extraction.confidence > 0 && extraction.confidence < 0.55
+      // v31: forceModel removed — all requests use Sonnet
 
       // ── Season plan grid pre-grouping (AI fallback path) ──
       // If a sheet has day-prefixed columns (TUESDAY_Rep, SATURDAY_Note, etc.),
@@ -765,7 +765,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
       console.log(`[SmartImport] Final content: ${parsedSheets.length} sheet(s), ${fileContent.length} chars`)
 
       // Truncate if extremely long to keep costs reasonable.
-      // 150k is ~37k tokens — Haiku 4.5 handles up to 200k context.
+      // 150k is ~37k tokens — Sonnet 4.5 handles up to 200k context.
       // The compaction above (null-stripping + Volume removal) typically
       // saves 30-50% for dense season-plan grids.
       const TRUNCATION_LIMIT = 150_000
@@ -807,26 +807,44 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     const hasAbbreviations = Object.keys(coachAbbreviations).length > 0
 
-    const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'apikey': supabaseAnonKey,
-      },
-      body: JSON.stringify({
-        fileContent,
-        fileType: file.type,
-        fileName: file.name,
-        preParsed: sendAsText,
-        ...(hasAbbreviations ? { coachAbbreviations } : {}),
-        ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
-        ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
-        ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
-        ...(forceModelSonnet ? { forceModel: 'sonnet' } : {}),
-      }),
-      signal: abortController.signal,
-    })
+    // Auth keepalive: refresh the session every 20s while waiting for AI.
+    // PDF/image imports can take 25-70s — without this the token goes stale
+    // and all subsequent DB writes fail silently.
+    const AUTH_KEEPALIVE_MS = 20_000
+    const keepaliveId = setInterval(async () => {
+      try {
+        await supabase.auth.refreshSession()
+        console.log('[SmartImport] Auth keepalive refresh OK')
+      } catch (e) {
+        console.warn('[SmartImport] Auth keepalive refresh failed:', e)
+      }
+    }, AUTH_KEEPALIVE_MS)
+
+    let response: Response
+    try {
+      response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          fileContent,
+          fileType: file.type,
+          fileName: file.name,
+          preParsed: sendAsText,
+          ...(hasAbbreviations ? { coachAbbreviations } : {}),
+          ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
+          ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
+          ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+        }),
+        signal: abortController.signal,
+      })
+    } finally {
+      clearInterval(keepaliveId)
+      console.log('[SmartImport] Auth keepalive stopped')
+    }
 
     // Read response body regardless of status code
     console.log(`[SmartImport] Edge Function responded: status=${response.status}`)
@@ -848,6 +866,11 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     if (!data?.success) throw new Error(data?.error || 'AI processing returned no result')
 
     const importResult: ImportResult = data.importResult
+    // v31: Attach ambiguities from edge function response
+    if (Array.isArray(data.ambiguities) && data.ambiguities.length > 0) {
+      importResult.ambiguities = data.ambiguities
+      console.log(`[SmartImport] ${data.ambiguities.length} ambiguities flagged for coach review`)
+    }
     console.log(`[SmartImport] AI result: planType=${importResult.detectedPlanType}, blocks=${importResult.blocks?.length ?? 0}, weeks=${importResult.weeks?.length ?? 0}`)
 
     // 4b. Normalize evolving_session format → standard blocks[] format
@@ -881,21 +904,16 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     console.log(`[SmartImport] Parsed: ${workoutsCount} workouts, ${exercisesCount} exercises in ${processingTime}ms`)
 
-    // 6. Update import history — refresh session first (token may be stale after long AI wait)
+    // 6. Update import history
+    // Auth keepalive above keeps the token fresh, so no extra refresh needed here.
     // DB update is non-fatal: if AI returned good data, show it to the user regardless
-    console.log('[SmartImport] Refreshing auth session before DB update...')
-    try {
-      await supabase.auth.refreshSession()
-    } catch (refreshErr) {
-      console.warn('[SmartImport] Session refresh failed (will attempt DB write anyway):', refreshErr)
-    }
 
     // 6a. Update metadata + status (small payload, nice-to-have)
     try {
       const { error: updateError } = await (supabase as any)
         .from('import_history')
         .update({
-          ai_model_used: data.model || 'claude-haiku-4-5',
+          ai_model_used: data.model || 'claude-sonnet-4-5',
           processing_cost_usd: estimatedCost,
           processing_time_ms: processingTime,
           programs_imported: 1,
@@ -933,7 +951,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     // Build historyRecord for the view from what we already know (avoids re-fetching the massive row)
     const updatedHistory: ImportHistoryRecord = {
       ...historyRecord,
-      ai_model_used: data.model || 'claude-haiku-4-5',
+      ai_model_used: data.model || 'claude-sonnet-4-5',
       processing_cost_usd: estimatedCost,
       processing_time_ms: processingTime,
       programs_imported: 1,
@@ -1185,6 +1203,7 @@ export async function saveImportedProgram(
         const sessionExercises = (w.exercises ?? []).map((ex, ei) => ({
           order: ei,
           name: ex.name,
+          raw_name: (ex.raw_name && ex.raw_name !== ex.name) ? ex.raw_name : undefined,
           sets: ex.sets != null ? String(ex.sets) : null,
           reps: ex.reps ?? undefined,
           distance_meters: ex.distance_meters ?? undefined,

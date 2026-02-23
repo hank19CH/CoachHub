@@ -6,6 +6,7 @@ import { getAthleteWorkoutHistory, calculateCompliance } from '@/services/coachi
 import { formatDistanceToNow } from 'date-fns'
 import WorkoutCompletionCard from '@/components/coach/WorkoutCompletionCard.vue'
 import PerformanceTrendsChart from '@/components/coach/PerformanceTrendsChart.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -82,18 +83,14 @@ const recentPBs = computed(() => {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-6 pb-20">
-    <!-- Back Button -->
-    <button
-      @click="router.push('/coach/dashboard')"
-      class="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 mb-4"
-    >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-      </svg>
-      Back to Dashboard
-    </button>
+  <div>
+    <PageHeader
+      :title="athlete?.display_name || 'Athlete'"
+      show-back
+      back-to="/coach/athletes"
+    />
 
+    <div class="max-w-2xl mx-auto px-4 py-6 pb-20">
     <!-- Loading -->
     <div v-if="loading" class="text-center py-12">
       <div class="animate-spin h-8 w-8 border-4 border-summit-800 border-t-transparent rounded-full mx-auto"></div>
@@ -192,6 +189,7 @@ const recentPBs = computed(() => {
           <p class="text-sm text-gray-500">No workout history yet</p>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>

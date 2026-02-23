@@ -231,6 +231,7 @@ async function loadSessionData() {
       id: `session-${i}`,
       workout_id: '',
       name: se.name,
+      raw_name: se.raw_name ?? undefined,  // coach shorthand alias
       description: null,
       order_index: se.order ?? i,
       sets: se.sets ?? null,
@@ -266,6 +267,7 @@ function exercisesToSessionData(): SessionExercise[] {
   return exercises.value.map((ex, i) => ({
     order: ex.order_index ?? i,
     name: ex.name,
+    raw_name: (ex as any).raw_name ?? undefined,
     sets: ex.sets ?? '',
     reps: ex.reps ?? undefined,
     distance_meters: ex.distance_meters ?? undefined,
@@ -541,7 +543,33 @@ function closeExerciseModal() {
 }
 
 async function saveExercise() {
-  if (!exerciseForm.value.name) return
+  if (!exerciseForm.value.name) {
+    errorMessage.value = 'Exercise name is required'
+    return
+  }
+
+  // Validate numeric fields are not negative
+  const numericChecks: { label: string; val: unknown }[] = [
+    { label: 'Weight', val: exerciseForm.value.weight_kg },
+    { label: 'Duration', val: exerciseForm.value.duration_seconds },
+    { label: 'Distance', val: exerciseForm.value.distance_meters },
+    { label: 'Intensity', val: exerciseForm.value.intensity_percent },
+    { label: 'Target time', val: exerciseForm.value.target_time_seconds },
+    { label: 'Rest', val: exerciseForm.value.rest_seconds },
+  ]
+  for (const { label, val } of numericChecks) {
+    if (val !== null && val !== undefined && val !== '' && Number(val) < 0) {
+      errorMessage.value = `${label} cannot be negative`
+      return
+    }
+  }
+  if (exerciseForm.value.rpe !== null && exerciseForm.value.rpe !== undefined && exerciseForm.value.rpe !== '') {
+    const rpe = Number(exerciseForm.value.rpe)
+    if (rpe < 1 || rpe > 10) {
+      errorMessage.value = 'RPE must be between 1 and 10'
+      return
+    }
+  }
 
   try {
     saving.value = true
@@ -1004,9 +1032,14 @@ const exerciseCount = computed(() =>
             <!-- Exercise info -->
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 mb-1">
-                <h3 class="font-semibold text-gray-900">
-                  {{ exercise.name }}
+                <h3 class="font-semibold text-gray-900" :title="(exercise as any).raw_name ? exercise.name : undefined">
+                  {{ (exercise as any).raw_name || exercise.name }}
                 </h3>
+                <span
+                  v-if="(exercise as any).raw_name"
+                  class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-600"
+                  :title="'Full name: ' + exercise.name"
+                >alias</span>
                 <span
                   v-if="getSupersetLabel(exercise)"
                   class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700"
@@ -1268,6 +1301,7 @@ const exerciseCount = computed(() =>
                 v-model.number="exerciseForm.weight_kg"
                 type="number"
                 step="0.5"
+                min="0"
                 placeholder="100"
                 class="input"
               />
@@ -1294,6 +1328,7 @@ const exerciseCount = computed(() =>
               <input
                 v-model.number="exerciseForm.duration_seconds"
                 type="number"
+                min="0"
                 placeholder="60"
                 class="input"
               />
@@ -1305,6 +1340,7 @@ const exerciseCount = computed(() =>
               <input
                 v-model.number="exerciseForm.distance_meters"
                 type="number"
+                min="0"
                 placeholder="400"
                 class="input"
               />
@@ -1329,6 +1365,7 @@ const exerciseCount = computed(() =>
               <input
                 v-model.number="exerciseForm.target_time_seconds"
                 type="number"
+                min="0"
                 placeholder="90"
                 class="input"
               />
@@ -1503,7 +1540,10 @@ const exerciseCount = computed(() =>
                     {{ getExerciseNumber(idx) }}
                   </div>
                   <div class="flex-1 min-w-0">
-                    <p class="font-semibold text-gray-900 text-sm">{{ exercise.name }}</p>
+                    <p class="font-semibold text-gray-900 text-sm" :title="(exercise as any).raw_name ? exercise.name : undefined">
+                      {{ (exercise as any).raw_name || exercise.name }}
+                      <span v-if="(exercise as any).raw_name" class="text-[10px] font-medium text-amber-500 ml-1">alias</span>
+                    </p>
                     <!-- Prescription grid -->
                     <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
                       <span v-if="exercise.sets" class="flex items-center gap-1">

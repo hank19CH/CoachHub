@@ -17,6 +17,7 @@ import type { CoachPhilosophy } from '@/types/import'
 import type { CoachAbbreviationRow } from '@/types/database'
 import type { MatchingOutput, CoachMethodologyMatch, ExtractedMetrics } from '@/types/methodology'
 import MethodologyConfirmationCard from '@/components/planner/MethodologyConfirmationCard.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import Toast from '@/components/ui/Toast.vue'
 
 const router = useRouter()
@@ -275,22 +276,7 @@ const formatDate = (dateStr: string) => {
 
 <template>
   <div class="min-h-screen bg-gray-50 pb-20">
-    <!-- Header -->
-    <div class="bg-white border-b border-gray-200 sticky top-14 z-10">
-      <div class="max-w-3xl mx-auto px-4 py-4">
-        <div class="flex items-center gap-3">
-          <button @click="router.back()" class="text-gray-500 hover:text-gray-700">
-            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div>
-            <h1 class="text-xl font-bold text-gray-900">Coaching Philosophy</h1>
-            <p class="text-sm text-gray-500">Insights from {{ programCount }} programs</p>
-          </div>
-        </div>
-      </div>
-    </div>
+    <PageHeader title="Coaching Philosophy" show-back sticky-offset="top-14" />
 
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
       <!-- Loading -->

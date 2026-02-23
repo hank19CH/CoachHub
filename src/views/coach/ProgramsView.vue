@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase'
 import type { Program } from '@/types/database'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Toast from '@/components/ui/Toast.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -43,6 +45,7 @@ const programForm = ref({
 
 const saving = ref(false)
 const errorMessage = ref('')
+const loadError = ref<string | null>(null)
 
 // Computed
 const filteredPrograms = computed(() => {
@@ -63,10 +66,11 @@ onMounted(async () => {
 
 async function loadPrograms() {
   if (!authStore.user) return
-  
+
   try {
     loading.value = true
-    
+    loadError.value = null
+
     const { data, error } = (await supabase
       .from('programs')
       .select('*, program_weeks(id, workouts:workouts(id))')
@@ -84,6 +88,7 @@ async function loadPrograms() {
     })
   } catch (e: any) {
     console.error('Error loading programs:', e?.message || e?.code || JSON.stringify(e))
+    loadError.value = e?.message || 'Failed to load programs'
   } finally {
     loading.value = false
   }
@@ -336,10 +341,8 @@ async function duplicateProgram(program: Program) {
 
 <template>
   <div class="pb-20">
-    <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center justify-between">
-        <h1 class="font-display text-xl font-bold text-gray-900">Programs</h1>
+    <PageHeader title="Programs">
+      <template #actions>
         <button
           @click="openCreateModal"
           class="btn-primary px-4 py-2 text-sm"
@@ -349,8 +352,8 @@ async function duplicateProgram(program: Program) {
           </svg>
           New Program
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Search bar (only show if has programs) -->
     <div v-if="hasPrograms" class="p-4">
@@ -378,6 +381,13 @@ async function duplicateProgram(program: Program) {
         </div>
       </div>
     </div>
+
+    <!-- Error state -->
+    <ErrorState
+      v-else-if="loadError"
+      :message="loadError"
+      @retry="loadPrograms"
+    />
 
     <!-- Empty state -->
     <div v-else-if="!hasPrograms" class="p-6 text-center">
@@ -477,8 +487,20 @@ async function duplicateProgram(program: Program) {
       </div>
 
       <!-- No results from search -->
-      <div v-if="filteredPrograms.length === 0" class="text-center py-8 text-gray-500">
-        <p>No programs found matching "{{ searchQuery }}"</p>
+      <div v-if="filteredPrograms.length === 0" class="text-center py-12">
+        <div class="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <p class="font-medium text-gray-900 mb-1">No results found</p>
+        <p class="text-sm text-gray-500 mb-4">No programs match "{{ searchQuery }}"</p>
+        <button
+          @click="searchQuery = ''"
+          class="text-sm font-medium text-summit-600 hover:text-summit-800"
+        >
+          Clear search
+        </button>
       </div>
     </div>
 

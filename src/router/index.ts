@@ -195,6 +195,12 @@ const router = createRouter({
       component: () => import('@/views/coach/PhilosophyInsightsView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
+    {
+      path: '/coach/billing',
+      name: 'coach-billing',
+      component: () => import('@/views/coach/BillingView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
 
     // Athlete-specific routes
     {
@@ -231,6 +237,13 @@ const router = createRouter({
     { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
     { path: '/athlete/progress', redirect: '/athlete/dashboard' },
+
+    // Pricing page (public)
+    {
+      path: '/pricing',
+      name: 'pricing',
+      component: () => import('@/views/PricingView.vue'),
+    },
 
     // Public profile (/@username)
     {

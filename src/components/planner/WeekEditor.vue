@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch, ref } from 'vue'
+import { computed, watch, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePlansStore } from '@/stores/plans'
 import { useAuthStore } from '@/stores/auth'
@@ -32,6 +32,55 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
   toastMessage.value = message
   toastType.value = type
   toastVisible.value = true
+}
+
+// Inline session rename state
+const editingSessionId = ref<string | null>(null)
+const editingSessionName = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+function handleSessionDblClick(event: Event, session: { id: string; name: string }) {
+  event.stopPropagation()
+  event.preventDefault()
+  editingSessionId.value = session.id
+  editingSessionName.value = session.name
+  nextTick(() => {
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select()
+  })
+}
+
+async function handleSessionRenameConfirm(sessionId: string) {
+  const trimmed = editingSessionName.value.trim()
+  if (!trimmed) {
+    handleSessionRenameCancel()
+    return
+  }
+  try {
+    await planSessionsService.updateSessionName(sessionId, trimmed)
+    await refreshSessions()
+  } catch (e) {
+    console.error('Error renaming session:', e)
+    showToast('Failed to rename session', 'error')
+  } finally {
+    editingSessionId.value = null
+    editingSessionName.value = ''
+  }
+}
+
+function handleSessionRenameCancel() {
+  editingSessionId.value = null
+  editingSessionName.value = ''
+}
+
+function handleRenameKeydown(event: KeyboardEvent, sessionId: string) {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    handleSessionRenameConfirm(sessionId)
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    handleSessionRenameCancel()
+  }
 }
 
 // Load sessions when week changes
@@ -250,7 +299,8 @@ function getSessionTypeStyle(type: string) {
           <div
             v-for="session in day.sessions"
             :key="session.id"
-            @click="handleSessionClick($event, session)"
+            @click="editingSessionId !== session.id ? handleSessionClick($event, session) : undefined"
+            @dblclick="handleSessionDblClick($event, session)"
             :class="['mt-1 py-1.5 px-2 rounded-md text-[10px] font-semibold cursor-pointer hover:ring-2 hover:ring-summit-400 transition-all relative group', getSessionTypeStyle(session.type)]"
           >
             <div class="flex items-center gap-1">
@@ -264,7 +314,18 @@ function getSessionTypeStyle(type: string) {
               >
                 <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
               </svg>
-              <span class="truncate">{{ session.name }}</span>
+              <!-- Inline rename input -->
+              <input
+                v-if="editingSessionId === session.id"
+                ref="renameInputRef"
+                v-model="editingSessionName"
+                @blur="handleSessionRenameConfirm(session.id)"
+                @keydown="handleRenameKeydown($event, session.id)"
+                @click.stop
+                @dblclick.stop
+                class="w-full bg-white/80 text-[10px] font-semibold rounded px-1 py-0.5 outline-none ring-1 ring-summit-400 text-gray-900"
+              />
+              <span v-else class="truncate">{{ session.name }}</span>
             </div>
 
             <!-- Exercise count badge -->

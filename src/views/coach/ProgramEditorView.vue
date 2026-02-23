@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { Program, ProgramWeek, Workout } from '@/types/database'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Toast from '@/components/ui/Toast.vue'
 
@@ -270,24 +271,7 @@ function getDayShortLabel(dayValue: number): string {
 <template>
   <div class="pb-20">
     <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center gap-3">
-        <button
-          @click="router.push('/coach/programs')"
-          class="p-2 hover:bg-gray-100 rounded-lg -ml-2"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div class="flex-1 min-w-0">
-          <h1 class="font-display text-lg font-bold text-gray-900 truncate">
-            {{ program?.name || 'Program' }}
-          </h1>
-          <p class="text-sm text-gray-500">{{ weeks.length }} week{{ weeks.length !== 1 ? 's' : '' }}</p>
-        </div>
-      </div>
-    </div>
+    <PageHeader :title="program?.name || 'Program'" show-back back-to="/coach/programs" />
 
     <!-- Loading state -->
     <div v-if="loading" class="p-6">

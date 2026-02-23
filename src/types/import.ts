@@ -91,12 +91,36 @@ export interface PreImportContext {
   coachTrainingFocus?: ImportTrainingFocus
 }
 
+// --- Ambiguity Detection (v31) ---
+
+/** Types of extraction ambiguities the AI can flag */
+export type AmbiguityType =
+  | 'unit_missing'           // number without clear unit (200 = meters? seconds? reps?)
+  | 'notation_unclear'       // set/rep notation ambiguous (3x10 = 3 sets of 10? or range 3-10?)
+  | 'intensity_qualitative'  // qualitative intensity ("easy", "hard") — no numeric inference
+  | 'exercise_abbreviated'   // abbreviated exercise name AI couldn't confidently expand
+  | 'multi_week_structure'   // unclear how weeks/blocks should be organized
+  | 'value_unclear'          // general unclear value
+
+/** A single ambiguity flagged by the AI during extraction */
+export interface ImportAmbiguity {
+  type: AmbiguityType
+  location: string            // which session/exercise this refers to (e.g. "Block 1 > Week 2 > Speed 1 > exercise #3")
+  originalValue: string       // the exact text from the source that is ambiguous
+  question: string            // a clear question for the coach to answer
+  options: string[]           // possible interpretations (coach picks one or types custom)
+  priority: number            // 1-10 (10 = must resolve, 1 = cosmetic)
+  resolved?: boolean          // set by frontend when coach answers
+  resolvedValue?: string      // coach's chosen answer
+}
+
 // --- Session & Exercise Types ---
 
 /** Exercise prescription within a self-contained plan session */
 export interface SessionExercise {
   order: number
   name: string
+  raw_name?: string           // coach's original shorthand (e.g. "PP" for "Push Press")
   sets: number | string
   reps?: string           // e.g. "6", "6 e/s", "30s", "10 Fly"
   distance_meters?: number
@@ -145,6 +169,7 @@ export interface ImportResult {
   weeks?: ImportWeek[]    // backward compat: cached results from old flat format
   detectedPlanType?: PlanType
   planTypeConfidence?: number  // 0-1
+  ambiguities?: ImportAmbiguity[]  // v31: AI-flagged extraction ambiguities for coach review
 }
 
 export interface ImportWeek {

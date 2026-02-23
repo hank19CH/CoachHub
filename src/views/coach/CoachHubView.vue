@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
 
@@ -95,6 +96,18 @@ const tools: ToolSection[] = [
         color: 'bg-emerald-500'
       }
     ]
+  },
+  {
+    category: 'Account',
+    items: [
+      {
+        name: 'Billing',
+        description: 'Manage your subscription',
+        path: '/coach/billing',
+        icon: 'credit-card',
+        color: 'bg-gray-700'
+      }
+    ]
   }
 ]
 
@@ -106,12 +119,7 @@ function navigateTo(path: string) {
 <template>
   <div class="min-h-screen bg-gray-50 pb-20">
     <!-- Header -->
-    <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div class="max-w-lg mx-auto px-4 py-4">
-        <h1 class="text-2xl font-bold text-gray-900">Coach Hub</h1>
-        <p class="text-sm text-gray-600 mt-1">Your coaching tools</p>
-      </div>
-    </div>
+    <PageHeader title="Coach Hub" />
 
     <!-- Tools Grid -->
     <div class="max-w-lg mx-auto px-4 py-6 space-y-8">
@@ -171,6 +179,11 @@ function navigateTo(path: string) {
               <!-- Trending Up icon -->
               <svg v-else-if="tool.icon === 'trending-up'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+
+              <!-- Credit Card icon -->
+              <svg v-else-if="tool.icon === 'credit-card'" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
               </svg>
 
               <!-- Fallback icon -->

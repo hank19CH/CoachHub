@@ -230,14 +230,21 @@ const hasActiveFilters = computed(() => {
       </div>
 
       <!-- Empty state -->
-      <div v-else-if="exercises.length === 0" class="text-center py-8">
-        <p class="text-sm text-gray-400">No exercises found</p>
+      <div v-else-if="exercises.length === 0" class="text-center py-12">
+        <div class="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <p class="font-medium text-gray-900 mb-1">No exercises found</p>
+        <p v-if="search" class="text-sm text-gray-500 mb-3">No matches for "{{ search }}"</p>
+        <p v-else class="text-sm text-gray-500 mb-3">Try adjusting your filters</p>
         <button
           v-if="hasActiveFilters"
           @click="clearFilters"
-          class="mt-2 text-sm text-summit-600 font-semibold"
+          class="text-sm font-medium text-summit-600 hover:text-summit-800"
         >
-          Clear filters
+          Clear all filters
         </button>
       </div>
 

@@ -5,6 +5,7 @@ import { assignmentsService } from '@/services/assignments'
 import { format, addDays, startOfWeek, isSameDay, isWeekend } from 'date-fns'
 import AssignWorkoutModal from '@/components/AssignWorkoutModal.vue'
 import Toast from '@/components/ui/Toast.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const authStore = useAuthStore()
 
@@ -158,42 +159,40 @@ onMounted(() => {
 
 <template>
   <div class="pb-20">
-    <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center justify-between mb-3">
-        <h1 class="font-display text-xl font-bold text-gray-900">Calendar</h1>
+    <PageHeader title="Calendar">
+      <template #actions>
         <button @click="openAssignModal()" class="btn-primary px-4 py-2 text-sm">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
           </svg>
           Assign
         </button>
-      </div>
-
-      <!-- Week navigation -->
-      <div class="flex items-center justify-between">
-        <button @click="previousWeek" class="p-2 hover:bg-gray-100 rounded-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div class="text-center">
-          <span class="font-semibold text-gray-900">{{ weekRangeDisplay }}</span>
-          <button
-            v-if="!weekDays.some(d => d.isToday)"
-            @click="goToToday"
-            class="ml-2 text-xs text-summit-700 hover:underline"
-          >
-            Today
+      </template>
+      <template #sub-header>
+        <div class="flex items-center justify-between mt-2">
+          <button @click="previousWeek" class="p-2 hover:bg-gray-100 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div class="text-center">
+            <span class="font-semibold text-gray-900">{{ weekRangeDisplay }}</span>
+            <button
+              v-if="!weekDays.some(d => d.isToday)"
+              @click="goToToday"
+              class="ml-2 text-xs text-summit-700 hover:underline"
+            >
+              Today
+            </button>
+          </div>
+          <button @click="nextWeek" class="p-2 hover:bg-gray-100 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
           </button>
         </div>
-        <button @click="nextWeek" class="p-2 hover:bg-gray-100 rounded-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Loading -->
     <div v-if="loading" class="p-6 text-center">

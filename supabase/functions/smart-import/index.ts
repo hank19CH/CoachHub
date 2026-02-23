@@ -1,13 +1,13 @@
-// smart-import Edge Function (v27 - Anti-column-shifting guardrails, literal cell reading)
+// smart-import Edge Function (v31 - Sonnet-only + extraction guardrails + ambiguity detection)
 // Step 1: Classify document type (single_session / evolving_session / block_plan / season_plan)
 // Step 2: Sport detection → sport-specific parsing rules
-// Pre-parsed spreadsheets (SheetJS on frontend) -> Haiku 4.5 for JSON structuring
-// PDF/Images -> Sonnet 4.5 for vision/document parsing
+// Step 3: Extract with 5 guardrails (unit, set/rep, intensity, substitution, multi-week)
+// Step 4: Return structured ambiguities for coach resolution
+// ALL requests use Claude Sonnet 4.5
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
-const HAIKU = 'claude-haiku-4-5'
 const SONNET = 'claude-sonnet-4-5'
 
 // ── CORS ────────────────────────────────────────────────────────────────
@@ -483,7 +483,53 @@ Include your classification in the output JSON:
   "plan_type_confidence": 0.9,
   "classification_reasoning": "Brief explanation of why"
 
-For evolving_session, use a DIFFERENT output format (see schema below).`
+For evolving_session, use a DIFFERENT output format (see schema below).
+
+STEP 2 — EXTRACTION GUARDRAILS (MANDATORY)
+You MUST follow these 5 guardrails. Violations create dangerous training prescriptions.
+
+GUARDRAIL 1: UNIT AMBIGUITY — When a number has NO unit and context is unclear, create an ambiguity entry.
+  "Run 400" → Is this 400 meters, 400 seconds, 400 yards? → AMBIGUITY
+  "Carry 150" → 150 feet, meters, or lbs? → AMBIGUITY
+  "10 calories" → 10 cal on which machine? → Flag in notes but continue
+  Numbers WITH clear context are fine: "400m" is meters, "2:30" is time, "10 reps" is reps.
+
+GUARDRAIL 2: SET/REP NOTATION — Only extract when meaning is clear.
+  "3x10" with clear context → sets: 3, reps: "10" ✅
+  "3 sets of 10" → sets: 3, reps: "10" ✅
+  "3-10" WITHOUT context → AMBIGUITY: "Is this 3 sets of 10, or a rep range of 3-10?"
+  "Multiple sets" → AMBIGUITY: requires specific number
+
+GUARDRAIL 3: INTENSITY INFERENCE — NEVER assign numeric intensity from qualitative words.
+  "Easy run" → intensity field: null, notes: "easy pace" ✅
+  "Easy run" → intensity_percent: 60 ❌ WRONG — never do this
+  "Hard set" → rpe: 8 ❌ WRONG — unless coach literally wrote "RPE 8"
+  ONLY extract numeric intensity when EXPLICITLY stated: "@ 75% max HR", "RPE 7", "@ 80%"
+
+GUARDRAIL 4: EXERCISE SUBSTITUTION BAN — Extract names EXACTLY as written.
+  "Bench" → name: "Bench" ✅ (expand in name field if confident, but keep raw_name as "Bench")
+  "Bench" → name: "Flat Barbell Bench Press, 45-degree grip" ❌ WRONG — too much inference
+  "Press" → could be Overhead Press, Bench Press, Leg Press → If ambiguous from context, create AMBIGUITY
+  "Row" → could be Barbell Row, Cable Row, DB Row → If ambiguous from context, create AMBIGUITY
+
+GUARDRAIL 5: MULTI-WEEK BLOCK — When multi-week patterns are detected, flag the structure choice.
+  "Week 1-4" with changing prescriptions → create AMBIGUITY asking:
+  "Multi-week structure detected. Should this import as separate weekly sessions or a single progressive program?"
+  Exception: If the document clearly shows it's a block plan with distinct weeks, no ambiguity needed.
+
+STEP 3 — AMBIGUITY DETECTION
+As you extract, collect an "ambiguities" array. Each ambiguity is something you are uncertain about.
+Classify each as:
+- "unit_missing": A number without a clear unit (meters, seconds, reps, etc.)
+- "notation_unclear": Notation like "3-10" that could mean multiple things
+- "intensity_qualitative": Coach wrote qualitative intensity ("easy", "hard", "moderate") without a number
+- "exercise_abbreviated": Exercise name is very short or ambiguous (single word that could mean multiple exercises)
+- "multi_week_structure": The document has a multi-week pattern and you're unsure how to structure it
+- "value_unclear": A value that doesn't make sense in context or seems contradictory
+
+For each ambiguity, provide a clear question and 2-4 options for the coach to choose from.
+If ambiguities count is 0, the import is "auto-import ready" and no coach review is needed.
+Do NOT create ambiguities for things you ARE confident about. Only flag genuinely uncertain items.`
 
 function buildSchema(sportContext: string): string {
   return `Return a JSON object. The structure DEPENDS on the detected_plan_type:
@@ -527,6 +573,14 @@ function buildSchema(sportContext: string): string {
         }]
       }]
     }]
+  }],
+  "ambiguities": [{
+    "type": "unit_missing"|"notation_unclear"|"intensity_qualitative"|"exercise_abbreviated"|"multi_week_structure"|"value_unclear",
+    "location": "string (which session/exercise this refers to, e.g. 'Week 1 > Monday Upper Body > Exercise 3: Bench')",
+    "originalValue": "string (the exact text from the source that is ambiguous)",
+    "question": "string (a clear question for the coach to answer)",
+    "options": ["option1", "option2", "option3"],
+    "priority": 1-10
   }]
 }
 
@@ -556,6 +610,14 @@ function buildSchema(sportContext: string): string {
       "load_percent": number,
       "weight": "string"
     }]
+  }],
+  "ambiguities": [{
+    "type": "unit_missing"|"notation_unclear"|"intensity_qualitative"|"exercise_abbreviated"|"multi_week_structure"|"value_unclear",
+    "location": "string",
+    "originalValue": "string",
+    "question": "string",
+    "options": ["option1", "option2"],
+    "priority": 1-10
   }]
 }
 
@@ -596,6 +658,7 @@ RULES:
 13. WORKOUT DESCRIPTION: If the document contains general instructions, coaching tips, notes, or guidelines that apply to the entire workout/session (not to a specific exercise), capture them in the workout's description field. Example: "Complete all exercises with proper form. Rest as needed between sections." goes into description.
 14. SPREADSHEET COLUMN MAPPING: When data comes from a spreadsheet with labeled columns, each column maps to exactly ONE output field. NEVER shift values between columns. If a column has null, the corresponding output field is null/omitted. Training programs are intentionally sparse. A null "Set" column means the coach did not specify sets — do NOT borrow from the "Rep" column. A null "Note" column means no modifier — it is a plain exercise.
 15. NEVER DEDUPLICATE EXERCISES: Each data row in the spreadsheet is a separate exercise that MUST appear in the output. If the same drill (e.g. "HS" / High Start) appears in BOTH Speed 1 and Speed 3 for the same week, output it in BOTH sessions — they are independent exercises. Do NOT skip, merge, or omit exercises because they look similar to exercises in another session. Count the data rows per session and verify your output has the same count.
+16. AMBIGUITIES: You MUST include the "ambiguities" array in your response. If nothing is ambiguous, return an empty array []. If you encounter ANY unclear values, flag them. It is better to over-flag than silently guess wrong. The coach will review and resolve them.
 
 ${sportContext}
 
@@ -695,7 +758,7 @@ Deno.serve(async (req) => {
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     // ── Parse request ──
-    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus, forceModel } = await req.json()
+    const { fileContent: rawContent, fileType, fileName, preParsed, coachAbbreviations, coachSport, coachPlanType, coachTrainingFocus } = await req.json()
     if (!rawContent || !fileType || !fileName) {
       return json({ error: 'Missing fileContent, fileType, or fileName' }, 400)
     }
@@ -703,7 +766,7 @@ Deno.serve(async (req) => {
       return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
     }
 
-    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}${forceModel ? ` forceModel=${forceModel}` : ''}`)
+    console.log(`[smart-import] file=${fileName} type=${fileType} preParsed=${preParsed} len=${rawContent.length}`)
 
     // ── Coach Abbreviation Pre-Expansion ──
     // Replace known coach shorthand in text BEFORE sending to AI
@@ -771,12 +834,10 @@ Deno.serve(async (req) => {
     let modelUsed: string
 
     if (preParsed) {
-      // Spreadsheet JSON from SheetJS -> Haiku (fast, cheap)
-      // forceModel override: use Sonnet when code-only extraction fell back
-      const model = forceModel === 'sonnet' ? SONNET : HAIKU
-      modelUsed = model
-      console.log(`[smart-import] Model: ${model}${forceModel ? ` (forced: ${forceModel})` : ''}`)
-      result = await callClaude(model, 32000, [
+      // Spreadsheet JSON from SheetJS -> Sonnet 4.5 (all requests)
+      modelUsed = SONNET
+      console.log(`[smart-import] Model: ${SONNET} (spreadsheet)`)
+      result = await callClaude(SONNET, 50000, [
         {
           role: 'user',
           content: `Parse this training program spreadsheet: "${fileName}"
@@ -871,7 +932,7 @@ ${schema}${glossaryPrompt}${coachContextHints}`,
         text: `Extract the training program from "${fileName}".\n\n${schema}${glossaryPrompt}${coachContextHints}`,
       })
 
-      result = await callClaude(SONNET, 32000, [
+      result = await callClaude(SONNET, 50000, [
         { role: 'user', content: contentBlocks },
       ])
     }
@@ -920,6 +981,14 @@ ${schema}${glossaryPrompt}${coachContextHints}`,
       }
     }
 
+    // Extract ambiguities from AI response (v31)
+    const ambiguities = Array.isArray(importResult.ambiguities) ? importResult.ambiguities : []
+    if (ambiguities.length > 0) {
+      console.log(`[smart-import] ${ambiguities.length} ambiguities flagged by AI`)
+    }
+    // Remove from importResult so it doesn't pollute plan data — returned separately
+    delete importResult.ambiguities
+
     // Ensure detectedPlanType and planTypeConfidence are on the importResult
     importResult.detectedPlanType = detectedPlanType
     importResult.planTypeConfidence = planTypeConfidence
@@ -931,7 +1000,7 @@ ${schema}${glossaryPrompt}${coachContextHints}`,
         coach_id: user.id,
         tier: 'import',
         action: 'smart_import',
-        prompt: `${fileName} (${fileType}) [${preParsed ? 'Haiku' : 'Sonnet'}] type=${detectedPlanType}${coachSport ? ' coach_sport=' + coachSport : ''}${coachPlanType ? ' coach_plan=' + coachPlanType : ''}${coachTrainingFocus ? ' coach_focus=' + coachTrainingFocus : ''}`,
+        prompt: `${fileName} (${fileType}) [Sonnet] type=${detectedPlanType}${coachSport ? ' coach_sport=' + coachSport : ''}${coachPlanType ? ' coach_plan=' + coachPlanType : ''}${coachTrainingFocus ? ' coach_focus=' + coachTrainingFocus : ''}`,
         response: JSON.stringify(importResult).substring(0, 5000),
         model: modelUsed,
         tokens_used: tokens,
@@ -943,6 +1012,7 @@ ${schema}${glossaryPrompt}${coachContextHints}`,
     return json({
       success: true,
       importResult,
+      ambiguities,
       model: modelUsed,
       usage: result.usage,
       detectedSport: sportSignal?.sport ?? importResult.sport ?? null,

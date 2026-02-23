@@ -25,6 +25,13 @@ export type MediaType = 'image' | 'video' | 'workout_card'
 export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement' | 'message'
 export type AttachmentType = 'image' | 'video'
 
+// Sprint 13 — Pricing & Seat Management enums
+export type SubscriptionTier = 'free' | 'coach' | 'team'
+export type SubscriptionStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'paused'
+export type BillingInterval = 'monthly' | 'annual'
+export type UpgradePromptType = 'soft_nudge' | 'bonus_delight' | 'hard_gate' | 'followup'
+export type UpgradePromptAction = 'dismissed' | 'upgrade_clicked' | 'downgraded'
+
 // Sprint 9 — Training Planner enums
 export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived'
 export type VolumeTarget = 'low' | 'moderate' | 'high'
@@ -94,6 +101,19 @@ export interface Database {
           location: string | null
           website_url: string | null
           accepts_athletes: boolean
+          // Sprint 13 — Pricing & Seats
+          subscription_tier: SubscriptionTier
+          subscription_status: SubscriptionStatus
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          billing_interval: BillingInterval
+          is_beta_user: boolean
+          trial_ends_at: string | null
+          subscription_started_at: string | null
+          subscription_ends_at: string | null
+          athlete_limit: number
+          bonus_seats_granted: number
+          peak_athlete_count: number
         }
         Insert: {
           id: string
@@ -105,6 +125,19 @@ export interface Database {
           location?: string | null
           website_url?: string | null
           accepts_athletes?: boolean
+          // Sprint 13
+          subscription_tier?: SubscriptionTier
+          subscription_status?: SubscriptionStatus
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          billing_interval?: BillingInterval
+          is_beta_user?: boolean
+          trial_ends_at?: string | null
+          subscription_started_at?: string | null
+          subscription_ends_at?: string | null
+          athlete_limit?: number
+          bonus_seats_granted?: number
+          peak_athlete_count?: number
         }
         Update: {
           qualifications?: string | null
@@ -115,6 +148,19 @@ export interface Database {
           location?: string | null
           website_url?: string | null
           accepts_athletes?: boolean
+          // Sprint 13
+          subscription_tier?: SubscriptionTier
+          subscription_status?: SubscriptionStatus
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          billing_interval?: BillingInterval
+          is_beta_user?: boolean
+          trial_ends_at?: string | null
+          subscription_started_at?: string | null
+          subscription_ends_at?: string | null
+          athlete_limit?: number
+          bonus_seats_granted?: number
+          peak_athlete_count?: number
         }
       }
       athlete_profiles: {
@@ -1448,6 +1494,35 @@ export interface Database {
         }
       }
       // ============================================
+      // Sprint 13 — Pricing & Seat Management
+      // ============================================
+      upgrade_prompts: {
+        Row: {
+          id: string
+          coach_id: string
+          prompt_type: UpgradePromptType
+          trigger_athlete_count: number
+          current_tier: SubscriptionTier
+          action_taken: UpgradePromptAction | null
+          shown_at: string
+          acted_at: string | null
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          prompt_type: UpgradePromptType
+          trigger_athlete_count: number
+          current_tier: SubscriptionTier
+          action_taken?: UpgradePromptAction | null
+          shown_at?: string
+          acted_at?: string | null
+        }
+        Update: {
+          action_taken?: UpgradePromptAction | null
+          acted_at?: string | null
+        }
+      }
+      // ============================================
       // Coach Abbreviation Glossary
       // ============================================
       coach_abbreviations: {
@@ -1604,3 +1679,7 @@ export type AiChatSession = Database['public']['Tables']['ai_chat_sessions']['Ro
 export type AiChatSessionInsert = Database['public']['Tables']['ai_chat_sessions']['Insert']
 export type AiChatMessage = Database['public']['Tables']['ai_chat_messages']['Row']
 export type AiChatMessageInsert = Database['public']['Tables']['ai_chat_messages']['Insert']
+
+// Sprint 13 — Pricing & Seat Management
+export type UpgradePrompt = Database['public']['Tables']['upgrade_prompts']['Row']
+export type UpgradePromptInsert = Database['public']['Tables']['upgrade_prompts']['Insert']

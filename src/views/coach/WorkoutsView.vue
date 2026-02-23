@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase'
 import type { Workout } from '@/types/database'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import Toast from '@/components/ui/Toast.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -45,6 +47,7 @@ const workoutForm = ref({
 
 const saving = ref(false)
 const errorMessage = ref('')
+const loadError = ref<string | null>(null)
 
 // Duration filter ranges (in minutes)
 const durationFilters = [
@@ -124,10 +127,11 @@ onMounted(async () => {
 
 async function loadWorkouts() {
   if (!authStore.user) return
-  
+
   try {
     loading.value = true
-    
+    loadError.value = null
+
     // Only show library workouts — coach-promoted or manually created.
     // Plan session instances (is_library = false) stay hidden from this view.
     const { data, error } = await supabase
@@ -136,12 +140,13 @@ async function loadWorkouts() {
       .eq('coach_id', authStore.user.id)
       .eq('is_library', true)
       .order('created_at', { ascending: false })
-    
+
     if (error) throw error
-    
+
     workouts.value = data || []
-  } catch (e) {
+  } catch (e: any) {
     console.error('Error loading workouts:', e)
+    loadError.value = e?.message || 'Failed to load workouts'
   } finally {
     loading.value = false
   }
@@ -317,10 +322,8 @@ function formatDuration(minutes: number | null): string {
 
 <template>
   <div class="pb-20">
-    <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center justify-between">
-        <h1 class="font-display text-xl font-bold text-gray-900">Workouts</h1>
+    <PageHeader title="Workouts">
+      <template #actions>
         <button
           @click="openCreateModal"
           class="btn-primary px-4 py-2 text-sm"
@@ -330,8 +333,8 @@ function formatDuration(minutes: number | null): string {
           </svg>
           New Workout
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Search bar + filters (only show if has workouts) -->
     <div v-if="hasWorkouts" class="px-4 pt-4 pb-2 space-y-3">
@@ -410,6 +413,13 @@ function formatDuration(minutes: number | null): string {
         </div>
       </div>
     </div>
+
+    <!-- Error state -->
+    <ErrorState
+      v-else-if="loadError"
+      :message="loadError"
+      @retry="loadWorkouts"
+    />
 
     <!-- Empty state -->
     <div v-else-if="!hasWorkouts" class="p-6 text-center">
@@ -503,12 +513,20 @@ function formatDuration(minutes: number | null): string {
       </div>
 
       <!-- No results from search/filter -->
-      <div v-if="filteredWorkouts.length === 0" class="text-center py-8 text-gray-500">
-        <p v-if="searchQuery">No workouts found matching "{{ searchQuery }}"</p>
-        <p v-else>No workouts match the selected filters</p>
+      <div v-if="filteredWorkouts.length === 0" class="text-center py-12">
+        <div class="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <p class="font-medium text-gray-900 mb-1">No results found</p>
+        <p class="text-sm text-gray-500 mb-4">
+          <template v-if="searchQuery">No workouts match "{{ searchQuery }}"</template>
+          <template v-else>No workouts match the selected filters</template>
+        </p>
         <button
           @click="clearAllFilters"
-          class="mt-2 text-sm text-summit-600 hover:text-summit-800 font-medium"
+          class="text-sm font-medium text-summit-600 hover:text-summit-800"
         >
           Clear all filters
         </button>

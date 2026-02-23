@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import { supabase } from '@/lib/supabase'
 import {
   getGroupById,
@@ -129,19 +130,7 @@ function getInitials(name: string) {
 <template>
   <div class="pb-20">
     <!-- Header -->
-    <div class="sticky top-0 bg-white/90 backdrop-blur-sm z-10 border-b border-gray-100">
-      <div class="flex items-center justify-between p-4">
-        <button @click="router.back()" class="text-gray-600 hover:text-gray-900 p-1">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <h1 class="font-display text-lg font-semibold text-gray-900 truncate">
-          {{ group?.name || 'Group' }}
-        </h1>
-        <div class="w-8"></div>
-      </div>
-    </div>
+    <PageHeader :title="group?.name || 'Group'" show-back />
 
     <!-- Loading -->
     <div v-if="loading" class="p-6">

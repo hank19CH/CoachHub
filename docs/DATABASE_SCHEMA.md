@@ -20,9 +20,10 @@
 11. [Domain: Messaging](#domain-messaging)
 12. [Domain: Smart Import & Philosophy](#domain-smart-import--philosophy)
 13. [Domain: Methodology Detection](#domain-methodology-detection)
-14. [Storage Buckets](#storage-buckets)
-15. [Database Functions & Triggers](#database-functions--triggers)
-16. [Future Schema (Planned)](#future-schema-planned)
+14. [Domain: Billing & Seat Management](#domain-billing--seat-management)
+15. [Storage Buckets](#storage-buckets)
+16. [Database Functions & Triggers](#database-functions--triggers)
+17. [Future Schema (Planned)](#future-schema-planned)
 17. [Entity Relationship Diagram](#entity-relationship-diagram)
 
 ---
@@ -126,6 +127,18 @@ Extended profile data for coaches. 1:1 with profiles.
 | location | `text` | YES | — | |
 | website_url | `text` | YES | — | |
 | accepts_athletes | `boolean` | YES | `true` | |
+| subscription_tier | `text` | YES | `'free'` | CHECK: free, coach, team |
+| subscription_status | `text` | YES | `'inactive'` | CHECK: inactive, trialing, active, past_due, canceled, paused |
+| stripe_customer_id | `text` | YES | — | UNIQUE index |
+| stripe_subscription_id | `text` | YES | — | UNIQUE index |
+| billing_interval | `text` | YES | `'monthly'` | CHECK: monthly, annual |
+| is_beta_user | `boolean` | YES | `false` | |
+| trial_ends_at | `timestamptz` | YES | — | |
+| subscription_started_at | `timestamptz` | YES | — | |
+| subscription_ends_at | `timestamptz` | YES | — | |
+| athlete_limit | `integer` | YES | `3` | Free=3, Coach=20, Team=999999 |
+| bonus_seats_granted | `integer` | YES | `0` | +3 bonus at limit |
+| peak_athlete_count | `integer` | YES | `0` | High-water mark |
 
 ---
 
@@ -1047,6 +1060,33 @@ Coach feedback on methodology detections for improving accuracy.
 | alternative_methodology_id | `text` | YES | — | FK → methodology_profiles |
 | extracted_metrics_snapshot | `jsonb` | YES | — | |
 | created_at | `timestamptz` | NO | `now()` | |
+
+---
+
+## Domain: Billing & Seat Management
+
+### `upgrade_prompts`
+Tracks upgrade prompt interactions for analytics and deduplication.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| **id** | `uuid` PK | NO | `gen_random_uuid()` | |
+| coach_id | `uuid` | NO | — | FK → profiles |
+| prompt_type | `text` | NO | — | soft_nudge, bonus_delight, hard_gate, followup |
+| trigger_athlete_count | `integer` | NO | — | Count when prompt fired |
+| current_tier | `text` | NO | — | Tier at time of prompt |
+| action_taken | `text` | YES | — | upgrade, dismiss, manage |
+| shown_at | `timestamptz` | NO | `now()` | |
+| acted_at | `timestamptz` | YES | — | |
+
+**RLS:** Coaches can read/insert/update own rows.
+
+### Database Functions (Sprint 13)
+
+| Function | Returns | Purpose |
+|----------|---------|---------|
+| `can_add_athlete(p_coach_id uuid)` | `boolean` | SECURITY DEFINER — checks if coach can add another athlete (team=unlimited, else count < limit+bonus) |
+| `get_athlete_count(p_coach_id uuid)` | `integer` | Returns active athlete count for a coach |
 
 ---
 

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { exerciseLibraryService } from '@/services/exerciseLibrary'
 import ExerciseLibrary from '@/components/planner/ExerciseLibrary.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import Toast from '@/components/ui/Toast.vue'
 import type { Database, ExerciseCategory, MovementPattern } from '@/types/database'
 
@@ -87,17 +88,13 @@ function handleSelect(exercise: ExerciseLibraryItem) {
 <template>
   <div class="pb-20">
     <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="font-display text-lg font-bold text-gray-900">Exercise Library</h1>
-          <p class="text-sm text-gray-500">Browse and manage exercises</p>
-        </div>
+    <PageHeader title="Exercise Library">
+      <template #actions>
         <button @click="openCreateModal" class="btn-primary text-sm px-4 py-2">
           + Custom Exercise
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Main content -->
     <div class="flex">

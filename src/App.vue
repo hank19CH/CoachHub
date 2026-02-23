@@ -1,19 +1,39 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
+import Toast from '@/components/ui/Toast.vue'
 
 const route = useRoute()
+const router = useRouter()
 
 const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
 
+// Session expiry toast
+const sessionToastVisible = ref(false)
+
 onMounted(() => {
   authStore.initialize()
 })
+
+// Watch for session expiry and show toast + redirect
+watch(
+  () => authStore.sessionExpired,
+  (expired) => {
+    if (expired) {
+      sessionToastVisible.value = true
+      // Redirect to login after showing toast
+      setTimeout(() => {
+        router.push('/login')
+        authStore.sessionExpired = false
+      }, 2000)
+    }
+  }
+)
 
 // Initialize notifications when user is authenticated
 watch(
@@ -68,4 +88,13 @@ onUnmounted(() => {
   <AppLayout v-else>
     <RouterView :key="route.fullPath" />
   </AppLayout>
+
+  <!-- Session expiry toast (shown globally) -->
+  <Toast
+    message="Session expired. Redirecting to login..."
+    type="info"
+    :visible="sessionToastVisible"
+    :duration="3000"
+    @close="sessionToastVisible = false"
+  />
 </template>

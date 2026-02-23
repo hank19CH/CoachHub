@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import type { CoachProfile } from '@/types/database'
 
 const router = useRouter()
@@ -39,6 +40,19 @@ const showSportsModal = ref(false)
 // Specialties input
 const specialtyInput = ref('')
 const avatarInput = ref<HTMLInputElement | null>(null)
+
+// Notification preferences (local state — will persist to DB in future sprint)
+const notifPrefs = ref({
+  workoutCompleted: true,
+  newMessage: true,
+  socialActivity: true,
+  weeklyDigest: false,
+  marketingUpdates: false,
+})
+
+function toggleNotifPref(key: keyof typeof notifPrefs.value) {
+  notifPrefs.value[key] = !notifPrefs.value[key]
+}
 
 const initials = computed(() => {
   if (!displayName.value) return authStore.profile?.display_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -267,21 +281,17 @@ async function handleSignOut() {
 
 <template>
   <div class="pb-20">
-    <!-- Header -->
-    <div class="sticky top-0 z-10 bg-white border-b border-feed-border px-4 py-3">
-      <div class="flex items-center justify-between">
-        <h1 class="font-display text-xl font-bold text-gray-900">
-          {{ isEditing ? 'Edit Profile' : 'Settings' }}
-        </h1>
-        <button 
+    <PageHeader :title="isEditing ? 'Edit Profile' : 'Settings'">
+      <template #actions>
+        <button
           v-if="isEditing"
           @click="cancelEdit"
           class="text-gray-600 hover:text-gray-900"
         >
           Cancel
         </button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div class="p-4 space-y-4">
       <!-- Success message -->
@@ -562,8 +572,110 @@ async function handleSignOut() {
           </div>
         </div>
 
+        <!-- Notification Preferences -->
+        <div class="card p-4">
+          <h2 class="font-semibold text-gray-900 mb-1">Notifications</h2>
+          <p class="text-sm text-gray-500 mb-4">Choose what you want to be notified about</p>
+
+          <div class="space-y-1">
+            <!-- Workout Completed -->
+            <div class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
+              <div>
+                <p class="text-sm font-medium text-gray-900">Workout completions</p>
+                <p class="text-xs text-gray-500">When an athlete finishes a workout</p>
+              </div>
+              <button
+                @click="toggleNotifPref('workoutCompleted')"
+                class="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                :class="notifPrefs.workoutCompleted ? 'bg-summit-600' : 'bg-gray-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                  :class="notifPrefs.workoutCompleted ? 'translate-x-5' : 'translate-x-0'"
+                ></span>
+              </button>
+            </div>
+
+            <!-- New Messages -->
+            <div class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
+              <div>
+                <p class="text-sm font-medium text-gray-900">New messages</p>
+                <p class="text-xs text-gray-500">Direct messages from coaches or athletes</p>
+              </div>
+              <button
+                @click="toggleNotifPref('newMessage')"
+                class="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                :class="notifPrefs.newMessage ? 'bg-summit-600' : 'bg-gray-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                  :class="notifPrefs.newMessage ? 'translate-x-5' : 'translate-x-0'"
+                ></span>
+              </button>
+            </div>
+
+            <!-- Social Activity -->
+            <div class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
+              <div>
+                <p class="text-sm font-medium text-gray-900">Social activity</p>
+                <p class="text-xs text-gray-500">Likes, comments, and new followers</p>
+              </div>
+              <button
+                @click="toggleNotifPref('socialActivity')"
+                class="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                :class="notifPrefs.socialActivity ? 'bg-summit-600' : 'bg-gray-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                  :class="notifPrefs.socialActivity ? 'translate-x-5' : 'translate-x-0'"
+                ></span>
+              </button>
+            </div>
+
+            <!-- Weekly Digest -->
+            <div class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
+              <div>
+                <p class="text-sm font-medium text-gray-900">Weekly digest</p>
+                <p class="text-xs text-gray-500">Summary of your weekly training activity</p>
+              </div>
+              <button
+                @click="toggleNotifPref('weeklyDigest')"
+                class="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                :class="notifPrefs.weeklyDigest ? 'bg-summit-600' : 'bg-gray-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                  :class="notifPrefs.weeklyDigest ? 'translate-x-5' : 'translate-x-0'"
+                ></span>
+              </button>
+            </div>
+
+            <!-- Marketing Updates -->
+            <div class="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition-colors">
+              <div>
+                <p class="text-sm font-medium text-gray-900">Product updates</p>
+                <p class="text-xs text-gray-500">New features and improvements</p>
+              </div>
+              <button
+                @click="toggleNotifPref('marketingUpdates')"
+                class="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                :class="notifPrefs.marketingUpdates ? 'bg-summit-600' : 'bg-gray-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                  :class="notifPrefs.marketingUpdates ? 'translate-x-5' : 'translate-x-0'"
+                ></span>
+              </button>
+            </div>
+          </div>
+
+          <p class="text-xs text-gray-400 mt-3 px-3">
+            Preference syncing coming soon — toggles are local for now.
+          </p>
+        </div>
+
         <!-- Sign out -->
-        <button 
+        <button
           @click="handleSignOut"
           class="w-full p-4 text-red-600 font-medium rounded-xl border border-red-200 hover:bg-red-50 transition-colors"
         >

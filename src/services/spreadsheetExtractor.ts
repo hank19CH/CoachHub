@@ -157,22 +157,96 @@ const SUB_HEADER_LABELS = new Set([
 ])
 
 // ─── Phase keywords → blockType mapping ──────────────────────────────────
+// Comprehensive glossary of training block/phase names used across sports.
+// Keys are lowercase. Values are canonical blockType enum values.
 
 const PHASE_BLOCK_TYPES: Record<string, string> = {
+  // General Preparation
   gpp: 'gpp', 'general prep': 'gpp', 'general preparation': 'gpp',
+  'gen prep': 'gpp', 'general': 'gpp',
+
+  // Specific Preparation
   spp: 'spp', 'specific prep': 'spp', 'specific preparation': 'spp',
+  'spec prep': 'spp', 'specific': 'spp',
   'spp i': 'spp', 'spp ii': 'spp', 'spp iii': 'spp',
   'spp1': 'spp', 'spp2': 'spp', 'spp3': 'spp',
+  'spp 1': 'spp', 'spp 2': 'spp', 'spp 3': 'spp',
+
+  // Competition / Peaking
   competition: 'competition', comp: 'competition', cp: 'competition',
+  'competition prep': 'competition', 'comp prep': 'competition',
+  'competition phase': 'competition',
   taper: 'peaking', peak: 'peaking', peaking: 'peaking',
+  'race prep': 'peaking', 'meet prep': 'peaking',
+  realization: 'peaking', realisation: 'peaking',
+  sharpening: 'peaking',
+
+  // Accumulation / Volume
+  accumulation: 'accumulation', accum: 'accumulation', acc: 'accumulation',
+  'volume phase': 'accumulation', volume: 'accumulation',
+
+  // Intensification
+  intensification: 'intensification', intens: 'intensification',
+  'intensity phase': 'intensification', intensity: 'intensification',
+
+  // Hypertrophy / Strength / Power
   hypertrophy: 'hypertrophy', hyp: 'hypertrophy',
   strength: 'strength', str: 'strength',
+  'max strength': 'strength', 'maximal strength': 'strength',
   power: 'power', pow: 'power',
+  'speed-strength': 'power', 'strength-speed': 'power',
+
+  // Transition / Off-Season
   transition: 'transition', 'off-season': 'transition', offseason: 'transition',
-  deload: 'deload', recovery: 'deload',
-  'pre-season': 'pre_season', preseason: 'pre_season',
-  'in-season': 'in_season', inseason: 'in_season',
+  'active rest': 'transition', 'active recovery': 'transition',
+
+  // Deload / Recovery
+  deload: 'deload', recovery: 'deload', unload: 'deload',
+  'recovery week': 'deload', 'deload week': 'deload',
+
+  // Pre/In-Season
+  'pre-season': 'pre_season', preseason: 'pre_season', 'pre season': 'pre_season',
+  'early pre-season': 'pre_season', 'late pre-season': 'pre_season',
+  'in-season': 'in_season', inseason: 'in_season', 'in season': 'in_season',
+  'post-season': 'transition', postseason: 'transition',
+
+  // Base / Build / Endurance phases
+  base: 'base', 'base phase': 'base', 'base building': 'base',
+  'base 1': 'base', 'base 2': 'base', 'base 3': 'base',
+  build: 'build', 'build phase': 'build', 'build 1': 'build', 'build 2': 'build',
+  endurance: 'base', aerobic: 'base',
+
+  // Track & Field / Sprint specific
+  'indoor season': 'competition', 'outdoor season': 'competition',
+  'indoor comp': 'competition', 'outdoor comp': 'competition',
+  'all-schools': 'competition', 'all schools': 'competition', 'allschools': 'competition',
+  xmas: 'spp', 'xmas training': 'spp', christmas: 'spp',
+  holiday: 'transition', holidays: 'transition',
+  'cross country': 'base', xc: 'base', 'xc season': 'base',
+  nationals: 'competition', 'national champs': 'competition',
+  championships: 'competition', champs: 'competition',
+  indoors: 'competition', outdoors: 'competition',
+
+  // Periodization terminology
+  mesocycle: 'accumulation', 'meso 1': 'accumulation', 'meso 2': 'intensification',
+  macrocycle: 'accumulation',
+  preparatory: 'gpp', 'preparatory phase': 'gpp',
+  'prep phase': 'gpp', 'prep 1': 'gpp', 'prep 2': 'spp',
 }
+
+// Subset of keywords that are high-confidence phase indicators
+// (unlikely to appear as exercise names or other metadata)
+const PHASE_KEYWORD_ROOTS = [
+  'gpp', 'spp', 'general prep', 'specific prep', 'competition', 'comp phase',
+  'accumulation', 'accum', 'intensification', 'intens', 'realization',
+  'hypertrophy', 'taper', 'peaking', 'deload', 'unload', 'transition',
+  'pre-season', 'preseason', 'in-season', 'inseason', 'off-season', 'offseason',
+  'post-season', 'postseason', 'base phase', 'build phase', 'prep phase',
+  'indoor season', 'outdoor season', 'mesocycle', 'macrocycle',
+  'race prep', 'meet prep', 'sharpening', 'preparatory',
+  'all schools', 'all-schools', 'nationals', 'championships', 'champs',
+  'xmas', 'christmas', 'indoors', 'outdoors',
+]
 
 // ═════════════════════════════════════════════════════════════════════════
 // MAIN ENTRY POINT
@@ -485,6 +559,11 @@ function extractMultiRowSeasonGrid(
   // ── Pass 4: Week Boundary Detection ──
   const weekBoundaries = detectWeekBoundaries(ps, dayPrefixes)
   console.log(`[Extractor] Week boundaries: ${weekBoundaries.length} weeks`)
+  console.log(`[Extractor] Total sheet rows: ${ps.jsonRows.length}`)
+  if (weekBoundaries.length > 0) {
+    console.log(`[Extractor] Week row ranges:`, weekBoundaries.map((wb, i) => `W${i + 1}=[${wb.startRow}-${wb.endRow}]`).join(', '))
+    console.log(`[Extractor] Block row ranges:`, blockBoundaries.map((bb, i) => `B${i + 1}="${bb.name}"@row${bb.startRow}`).join(', '))
+  }
 
   if (weekBoundaries.length === 0) {
     return {
@@ -505,6 +584,7 @@ function extractMultiRowSeasonGrid(
 
   // Assign weeks to blocks based on block boundaries
   const weekBlockAssignment = assignWeeksToBlocks(weekBoundaries, blockBoundaries, ps)
+  console.log(`[Extractor] Week→Block assignment:`, weekBlockAssignment.map((bi, wi) => `W${wi + 1}→B${bi + 1}(${blockBoundaries[bi]?.name || '?'})`).join(', '))
 
   // Group weeks by block
   const blockWeekMap = new Map<number, typeof weekBoundaries>()
@@ -571,26 +651,37 @@ function extractMultiRowSeasonGrid(
         }
       }
 
-      if (workouts.length > 0) {
-        importWeeks.push({
-          weekNumber: weekCounter,
-          name: `Week ${weekCounter}`,
-          workouts,
-        })
-      }
+      // Always include the week — even if empty — so the coach sees
+      // the full season structure and can fill in sessions later.
+      importWeeks.push({
+        weekNumber: weekCounter,
+        name: `Week ${weekCounter}`,
+        workouts,
+      })
       weekCounter++
     }
 
-    if (importWeeks.length > 0) {
-      allBlocks.push({
-        name: blockInfo.name,
-        blockType: blockInfo.blockType,
-        weeks: importWeeks,
-      })
+    // Always include the block — even if all weeks are empty — so the
+    // full phase structure (GPP → SPP → Competition etc.) is preserved.
+    allBlocks.push({
+      name: blockInfo.name,
+      blockType: blockInfo.blockType,
+      weeks: importWeeks,
+    })
+  }
+
+  if (allBlocks.length === 0) {
+    return {
+      success: false,
+      confidence: detection.confidence * 0.3,
+      pattern: 'multi_row_season_grid',
+      reason: 'No blocks extracted from grid',
     }
   }
 
-  if (allBlocks.length === 0 || totalExercises === 0) {
+  // Season plans may have empty future blocks — that's fine as long as
+  // we extracted at least some content overall.
+  if (totalExercises === 0 && totalWorkouts === 0) {
     return {
       success: false,
       confidence: detection.confidence * 0.3,
@@ -744,22 +835,54 @@ interface BlockBoundary {
   startRow: number  // first row index in jsonRows
 }
 
+/**
+ * Check if a label matches a known phase keyword (exact match or contains a root keyword).
+ * Returns the matched blockType or null.
+ */
+function matchPhaseKeyword(label: string): string | null {
+  const lower = label.toLowerCase().trim()
+
+  // Exact match in glossary
+  if (PHASE_BLOCK_TYPES[lower]) return PHASE_BLOCK_TYPES[lower]
+
+  // Check if label contains a known phase root keyword
+  // e.g., "GPP Phase 1" contains "gpp", "Late Pre-Season" contains "pre-season"
+  for (const root of PHASE_KEYWORD_ROOTS) {
+    if (lower.includes(root)) return PHASE_BLOCK_TYPES[root] || root
+  }
+
+  // Check with trailing numbers stripped: "SPP 4" → "spp"
+  const stripped = lower.replace(/\s*[ivx\d]+$/i, '').trim()
+  if (stripped !== lower && PHASE_BLOCK_TYPES[stripped]) return PHASE_BLOCK_TYPES[stripped]
+
+  return null
+}
+
 function detectPhases(ps: ParsedSheet, metaCols: string[]): BlockBoundary[] {
-  // Look for phase labels in the first few metadata columns
+  // Look for phase labels in the first few metadata columns.
   // Phase labels are text values that repeat across multiple rows, then change.
   // e.g., rows 0-30 have "GPP", rows 31-60 have "SPP I", etc.
-
-  // Try each meta column to find the best phase column
-  let bestPhaseCol = ''
-  let bestPhases: { label: string; startRow: number }[] = []
+  //
+  // KEY IMPROVEMENT (v31): Prefer columns where values match known training phase
+  // vocabulary. A column of "GPP, SPP, Competition" is far more likely to be
+  // the phase column than a column of "Speed, Tempo, Recovery" (session types).
 
   // Also check _col1, _col2 which often hold phase data
   const candidateCols = [
     ...metaCols.slice(0, 3),
     ...ps.headers.filter(h => /^_col[12]$/.test(h)),
   ]
-  // Deduplicate
   const uniqueCandidates = [...new Set(candidateCols)]
+
+  interface PhaseCandidate {
+    col: string
+    phases: { label: string; startRow: number }[]
+    knownCount: number    // how many distinct labels match the phase glossary
+    totalCount: number    // total distinct labels
+    score: number         // ranking score
+  }
+
+  const candidates: PhaseCandidate[] = []
 
   for (const col of uniqueCandidates) {
     const phases: { label: string; startRow: number }[] = []
@@ -781,24 +904,59 @@ function detectPhases(ps: ParsedSheet, metaCols: string[]): BlockBoundary[] {
       }
     }
 
-    // Best candidate: most distinct phases, but not too many (>20 is likely exercise data)
-    if (phases.length >= 2 && phases.length <= 20 && phases.length > bestPhases.length) {
-      bestPhases = phases
-      bestPhaseCol = col
+    // Must have 2-20 distinct values to be a phase column
+    if (phases.length < 2 || phases.length > 20) continue
+
+    // Count how many distinct labels match known phase keywords
+    const distinctLabels = new Set(phases.map(p => p.label))
+    let knownCount = 0
+    for (const label of distinctLabels) {
+      if (matchPhaseKeyword(label)) knownCount++
     }
+
+    // Score: heavily prefer columns with known phase keywords
+    // - knownCount / totalCount gives percentage of recognized phases (0-1)
+    // - Bonus for having at least 2 known phases (very strong signal)
+    const knownRatio = knownCount / distinctLabels.size
+    let score = knownRatio * 10  // 0-10 for keyword match quality
+    if (knownCount >= 2) score += 5  // big bonus for multiple known phases
+    if (knownCount >= 1) score += 2  // small bonus for at least one match
+    // Tiebreaker: prefer more distinct phases (but much lower weight)
+    score += phases.length * 0.1
+
+    candidates.push({
+      col,
+      phases,
+      knownCount,
+      totalCount: distinctLabels.size,
+      score,
+    })
   }
 
-  if (bestPhases.length === 0) {
-    // No phases detected — single block
+  // Sort by score descending
+  candidates.sort((a, b) => b.score - a.score)
+
+  const best = candidates[0]
+
+  if (!best) {
+    // No valid phase column found — single block
     return [{ name: cleanFileName('Training Plan'), startRow: 0 }]
   }
 
-  console.log(`[Extractor] Phase column: "${bestPhaseCol}" with ${bestPhases.length} phases:`,
-    bestPhases.map(p => p.label))
+  // GATE: If the best candidate has ZERO known phase keywords, reject phase detection.
+  // Random text columns (session types, exercise categories) should not be treated as blocks.
+  if (best.knownCount === 0) {
+    console.log(`[Extractor] Phase detection REJECTED — best column "${best.col}" has ${best.totalCount} labels but none match known phase keywords:`,
+      best.phases.map(p => p.label))
+    return [{ name: cleanFileName('Training Plan'), startRow: 0 }]
+  }
 
-  return bestPhases.map(p => ({
+  console.log(`[Extractor] Phase column: "${best.col}" (score=${best.score.toFixed(1)}, ${best.knownCount}/${best.totalCount} known) with ${best.phases.length} phases:`,
+    best.phases.map(p => p.label))
+
+  return best.phases.map(p => ({
     name: p.label,
-    blockType: PHASE_BLOCK_TYPES[p.label.toLowerCase()] || undefined,
+    blockType: matchPhaseKeyword(p.label) || undefined,
     startRow: p.startRow,
   }))
 }

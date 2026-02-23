@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import { supabase } from '@/lib/supabase'
 import { getUserConversations, getTotalUnreadCount, getOrCreateConversation } from '@/services/messages'
 import type { Conversation } from '@/services/messages'
@@ -119,15 +120,8 @@ function getUserInitial(name: string | undefined) {
 
 <template>
   <div class="min-h-screen bg-feed-bg">
-    <!-- Header -->
-    <div class="bg-white border-b border-feed-border sticky top-14 z-10">
-      <div class="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
-        <div>
-          <h1 class="text-xl font-bold text-gray-900">Messages</h1>
-          <p v-if="totalUnread > 0" class="text-sm text-summit-600 mt-0.5">
-            {{ totalUnread }} unread message{{ totalUnread === 1 ? '' : 's' }}
-          </p>
-        </div>
+    <PageHeader title="Messages" sticky-offset="top-14">
+      <template #actions>
         <button
           @click="openNewModal"
           class="w-9 h-9 rounded-full gradient-summit flex items-center justify-center text-white shadow-sm hover:shadow-md transition-shadow"
@@ -137,8 +131,13 @@ function getUserInitial(name: string | undefined) {
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
           </svg>
         </button>
-      </div>
-    </div>
+      </template>
+      <template #sub-header>
+        <p v-if="totalUnread > 0" class="text-sm text-summit-600 mt-1">
+          {{ totalUnread }} unread message{{ totalUnread === 1 ? '' : 's' }}
+        </p>
+      </template>
+    </PageHeader>
 
     <!-- Loading State -->
     <div v-if="loading" class="max-w-lg mx-auto px-4 py-8">

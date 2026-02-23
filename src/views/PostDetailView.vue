@@ -9,6 +9,7 @@ import type { WorkoutCardData } from '@/components/feed/MediaCarousel.vue'
 import CommentsList from '@/components/social/CommentsList.vue'
 import CommentInput from '@/components/social/CommentInput.vue'
 import type { CommentWithAuthor } from '@/components/social/CommentsList.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -256,28 +257,19 @@ const hasMedia = computed(() => post.value?.media && post.value.media.length > 0
 
   <div v-else-if="post" class="pb-20">
     <!-- Header -->
-    <div class="sticky top-0 bg-white/90 backdrop-blur-sm z-10 border-b border-gray-100">
-      <div class="flex items-center justify-between p-4">
-        <button @click="router.back()" class="text-gray-600 hover:text-gray-900 p-1">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+    <PageHeader title="Post" show-back>
+      <template #actions>
+        <button
+          v-if="isOwnPost"
+          @click="showDeleteConfirm = true"
+          class="text-gray-400 hover:text-red-500 p-1 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
         </button>
-        <h1 class="font-display font-semibold text-gray-900">Post</h1>
-        <div class="w-8">
-          <!-- Delete button (own post only) -->
-          <button
-            v-if="isOwnPost"
-            @click="showDeleteConfirm = true"
-            class="text-gray-400 hover:text-red-500 p-1 transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Post Author -->
     <header class="post-header">

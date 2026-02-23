@@ -30,6 +30,23 @@
         </button>
       </div>
 
+      <!-- Seat Limit Reached -->
+      <div v-else-if="seatLimitReached" class="text-center py-8">
+        <svg class="w-16 h-16 text-yellow-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        <h3 class="text-lg font-bold text-gray-900 mb-2">Athlete Limit Reached</h3>
+        <p class="text-sm text-gray-600 mb-6">
+          You've reached your maximum number of athletes. Upgrade your plan to add more.
+        </p>
+        <button
+          @click="router.push('/pricing')"
+          class="bg-summit-600 text-white px-6 py-3 rounded-lg hover:bg-summit-700 transition font-medium"
+        >
+          View Plans
+        </button>
+      </div>
+
       <!-- Success State -->
       <div v-else>
         <p class="text-gray-600 mb-4">
@@ -112,16 +129,20 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { getOrCreateInviteCode } from '@/services/athletes'
+import { canAddAthlete } from '@/services/billing'
 
 defineEmits<{
   close: []
 }>()
 
+const router = useRouter()
 const authStore = useAuthStore()
 const loading = ref(true)
 const error = ref<string | null>(null)
+const seatLimitReached = ref(false)
 const inviteCode = ref('')
 const copied = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
@@ -131,15 +152,24 @@ const inviteLink = ref('')
 async function generateLink() {
   loading.value = true
   error.value = null
-  
+  seatLimitReached.value = false
+
   try {
     if (!authStore.profile?.id) {
       throw new Error('User not authenticated')
     }
 
+    // Check seat limit before generating invite
+    const hasRoom = await canAddAthlete(authStore.profile.id)
+    if (!hasRoom) {
+      seatLimitReached.value = true
+      loading.value = false
+      return
+    }
+
     const code = await getOrCreateInviteCode(authStore.profile.id)
     inviteCode.value = code
-    
+
     // Build the invite link
     const baseUrl = window.location.origin
     inviteLink.value = `${baseUrl}/signup?invite=${code}`

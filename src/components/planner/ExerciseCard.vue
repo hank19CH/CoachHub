@@ -60,7 +60,10 @@ function getPatternIcon(pattern: string | null): string {
       <div class="flex-1 min-w-0">
         <!-- Name + category -->
         <div class="flex items-center gap-2 mb-1">
-          <h4 class="font-semibold text-gray-900 text-sm truncate">{{ exercise.name }}</h4>
+          <h4 class="font-semibold text-gray-900 text-sm truncate" :title="(exercise as any).raw_name ? exercise.name : undefined">
+            {{ (exercise as any).raw_name || exercise.name }}
+            <span v-if="(exercise as any).raw_name" class="text-[10px] font-normal text-amber-500 ml-0.5">alias</span>
+          </h4>
           <span
             v-if="exercise.category"
             :class="['text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0', getCategoryStyle(exercise.category)]"

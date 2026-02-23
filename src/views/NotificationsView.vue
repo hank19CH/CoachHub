@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useNotificationsStore } from '@/stores/notifications'
 import NotificationItem from '@/components/notifications/NotificationItem.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
 const notificationsStore = useNotificationsStore()
@@ -41,10 +42,8 @@ onMounted(() => {
 
 <template>
   <div class="notifications-view pb-20">
-    <!-- Header -->
-    <div class="sticky top-14 z-10 bg-white border-b border-gray-200">
-      <div class="flex items-center justify-between px-4 py-3">
-        <h1 class="text-xl font-bold text-gray-900">Notifications</h1>
+    <PageHeader title="Notifications" sticky-offset="top-14">
+      <template #actions>
         <button
           v-if="unreadCount > 0"
           @click="notificationsStore.markAllAsRead()"
@@ -52,40 +51,40 @@ onMounted(() => {
         >
           Mark all as read
         </button>
-      </div>
-
-      <!-- Tabs -->
-      <div class="flex border-b border-gray-200">
-        <button
-          @click="activeTab = 'all'"
-          :class="[
-            'flex-1 px-4 py-3 text-sm font-medium transition-colors',
-            activeTab === 'all'
-              ? 'text-summit-600 border-b-2 border-summit-600'
-              : 'text-gray-500 hover:text-gray-700'
-          ]"
-        >
-          All
-        </button>
-        <button
-          @click="activeTab = 'unread'"
-          :class="[
-            'flex-1 px-4 py-3 text-sm font-medium transition-colors relative',
-            activeTab === 'unread'
-              ? 'text-summit-600 border-b-2 border-summit-600'
-              : 'text-gray-500 hover:text-gray-700'
-          ]"
-        >
-          Unread
-          <span
-            v-if="unreadCount > 0"
-            class="ml-1.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold text-white bg-valencia-500 rounded-full min-w-[20px]"
+      </template>
+      <template #sub-header>
+        <div class="flex border-t border-gray-200 -mx-4 mt-3">
+          <button
+            @click="activeTab = 'all'"
+            :class="[
+              'flex-1 px-4 py-3 text-sm font-medium transition-colors',
+              activeTab === 'all'
+                ? 'text-summit-600 border-b-2 border-summit-600'
+                : 'text-gray-500 hover:text-gray-700'
+            ]"
           >
-            {{ unreadCount }}
-          </span>
-        </button>
-      </div>
-    </div>
+            All
+          </button>
+          <button
+            @click="activeTab = 'unread'"
+            :class="[
+              'flex-1 px-4 py-3 text-sm font-medium transition-colors relative',
+              activeTab === 'unread'
+                ? 'text-summit-600 border-b-2 border-summit-600'
+                : 'text-gray-500 hover:text-gray-700'
+            ]"
+          >
+            Unread
+            <span
+              v-if="unreadCount > 0"
+              class="ml-1.5 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold text-white bg-valencia-500 rounded-full min-w-[20px]"
+            >
+              {{ unreadCount }}
+            </span>
+          </button>
+        </div>
+      </template>
+    </PageHeader>
 
     <!-- Loading State -->
     <div v-if="loading" class="flex items-center justify-center py-12">

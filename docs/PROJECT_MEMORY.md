@@ -6,11 +6,10 @@
 - Supabase Edge Functions (Deno runtime) for AI API calls
 - Pinia for state management (auth store, plans store, notifications store)
 - Chart.js + vue-chartjs for analytics charts
-- Claude Sonnet 4.5 (claude-sonnet-4-5-20250929) for AI features (plan/session generation, PDF/image import)
-- Claude Haiku 4.5 (claude-haiku-4-5-20250929) for structured JSON extraction (spreadsheet smart-import)
+- Claude Sonnet 4.5 (`claude-sonnet-4-5`) for ALL AI features — plan/session generation, PDF/image import, AND spreadsheet smart-import (v31: Sonnet-only, Haiku removed)
 - SheetJS (`xlsx` npm package) for client-side Excel/CSV pre-parsing before AI processing
 - Mobile-first design with fixed bottom nav
-- Stripe for payments (planned: checkout, webhooks, subscription management)
+- Stripe Billing for payments (checkout, webhooks, subscription management — fully deployed)
 - Supabase project: `mzrmivqwywinsffkaimw` (us-west-2)
 
 ## Key Patterns
@@ -29,6 +28,8 @@
 - `src/components/ui/Toast.vue` - Animated toast notification (replaces native alert())
 - `src/components/social/` - LikeButton, CommentInput, CommentsList, FollowButton
 - `src/components/planner/MethodologyConfirmationCard.vue` - Coach confirms/rejects detected methodology
+- `src/components/billing/UpgradePromptModal.vue` - 4-variant upgrade modal (soft_nudge/bonus_delight/hard_gate/followup)
+- `src/components/billing/SeatUsageBadge.vue` - Inline seat count badge (color-coded by usage %)
 
 ## Architecture Notes
 - Services in `src/services/` handle Supabase queries
@@ -44,7 +45,7 @@
 - **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
 - **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
-- **Smart Import v28:** Pre-import context dropdowns (Sport, Plan Type, Training Focus). Payload compaction (strip Volume columns + drop nulls = 30-50% size reduction). Truncation 80K→150K. Complete block extraction rule. Exercise naming = activity type only ("Sprint" not "60m Sprint"). SessionExercise JSONB maps all structured fields (distance_meters, rpe, tempo, category). Anti-column-shifting guardrails + unified JSON + section headers + raw_name dual fields + bulk exercise name review.
+- **Smart Import v31:** Sonnet-only (Haiku removed). 5 extraction guardrails (unit ambiguity, set/rep notation, intensity inference, exercise substitution ban, multi-week block). AI ambiguity detection → coach resolution UI. Auth keepalive (20s interval) during AI wait prevents token expiry. Max tokens raised 32K→50K. Pre-import context dropdowns, payload compaction, anti-column-shifting guardrails, section headers, raw_name dual fields, bulk exercise name review all retained from v28.
 
 ## Common Gotchas
 - **PRICING**: Never use old placeholder pricing ($25/$50/$100). Confirmed pricing is Coach $19/$29, Team $59/$79 (beta/standard). See Sprint 13 section.
@@ -56,6 +57,8 @@
 - `sport_context` column is PostgreSQL `text[]` array, NOT JSONB — use `ARRAY['x','y']` not `'[\"x\",\"y\"]'::jsonb`
 - Smart Import: `cancelActiveImport()` in aiImport.ts uses AbortController for 2-minute timeout
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
+- **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block.
+- **Ambiguity types** (v31): `ImportAmbiguity` in `src/types/import.ts` — `type`, `location`, `originalValue`, `question`, `options[]`, `priority` (1-10), `resolved`, `resolvedValue`. Returned separately from importResult by edge function.
 - **plan_sessions.workout_id is NOW NULLABLE** (Sprint 12). Self-contained sessions have no workout_id.
 - **workouts.is_library** column: `true` = show in WorkoutsView, `false` = plan instance only
 - `saveImportedProgram()` takes optional `libraryFlags?: Set<string>` param (key: `"blockIdx-weekIdx-workoutIdx"`)
@@ -568,7 +571,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 - `/login`, `/signup` (requiresGuest)
 - `/@:username` (public profile)
 - `/invite/:code` (invitation acceptance)
-- `/pricing` (planned - Sprint 13)
+- `/pricing` (public pricing page)
 
 ### Authenticated Routes (requiresAuth)
 - `/` (Feed), `/explore`, `/create` (post creation)
@@ -582,7 +585,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 - `/coach/exercises`
 - `/coach/groups`, `/coach/groups/:id`
 - `/coach/planner`, `/coach/planner/:planId`
-- `/coach/import`, `/coach/philosophy`
+- `/coach/import`, `/coach/philosophy`, `/coach/billing`
 
 ### Athlete Routes (requiresAthlete)
 - `/athlete/hub`, `/athlete/dashboard`
@@ -635,9 +638,10 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 - `plan_sessions` changes: workout_id now nullable; additions: session_data, session_name
 - `import_history` additions: detected_plan_type, plan_type_confidence
 
-### Pricing & Seat Management (Sprint 13 - Planned)
+### Pricing & Seat Management (Sprint 13)
 - `upgrade_prompts`
-- `coach_profiles` additions: athlete_limit, bonus_seats_granted, bonus_seats_granted_at, bonus_seats_count, peak_athlete_count
+- `coach_profiles` additions: subscription_tier, subscription_status, stripe_customer_id, stripe_subscription_id, billing_interval, subscription_started_at, subscription_ends_at, trial_ends_at, athlete_limit, bonus_seats_granted, bonus_seats_granted_at, bonus_seats_count, peak_athlete_count, is_beta_user
+- DB functions: `can_add_athlete()`, `get_athlete_count()`, `get_beta_slots_remaining()`, `auto_flag_beta_user()` trigger
 
 ### Storage Buckets
 - `post-media` - Social post media uploads
@@ -646,13 +650,16 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 
 ---
 
-## Supabase Edge Functions (All 4)
+## Supabase Edge Functions (All 7)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` (v28) - Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), file type routing: Haiku 4.5 for spreadsheets, Sonnet 4.5 for PDF/images; evolving session schema; accepts pre-parsed SheetJS data
+3. `smart-import` (v31) - **Sonnet-only** (Haiku removed). 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. **NEEDS DEPLOY** — production is still on v39 (old Haiku routing).
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
+5. `create-checkout-session` - Stripe Checkout session creation (JWT-verified, creates Stripe customer if needed, beta/standard price routing)
+6. `stripe-webhook` - Stripe webhook handler (NO JWT, uses webhook signature + service role key, handles subscription lifecycle)
+7. `create-portal-session` - Stripe Billing Portal session creation (JWT-verified)
 
-All functions: `verify_jwt = false` at gateway level (see Technical Debt), internal JWT verification via `supabase.auth.getUser(token)`
+All functions: `verify_jwt = false` at gateway level (see Technical Debt), internal JWT verification via `supabase.auth.getUser(token)` (except stripe-webhook which uses Stripe webhook signature verification)
 
 ---
 
@@ -702,7 +709,7 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 ---
 
 ## Key Project Docs
-- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (44 tables, 10 enums, 120+ indexes, RLS policies, Sprint 12 columns, future proposals)
+- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (46 tables, 10 enums, 120+ indexes, RLS policies, Sprint 13 billing columns, future proposals)
 - `docs/PROJECT_MEMORY.md` - This file
 
 ---
@@ -801,7 +808,7 @@ AI-powered document type classification for Smart Import, self-contained plan se
 
 ---
 
-## Sprint 13 (Planned): Pricing & Seat Management
+## Sprint 13: Pricing & Seat Management (Completed & Deployed)
 
 ### Pricing Tiers
 
@@ -820,101 +827,97 @@ AI-powered document type classification for Smart Import, self-contained plan se
 - Annual discount: ~17% (2 free months)
 
 ### Free Trial Strategy
-- **Coach Tier**: 9-day trial, NO card required (lower friction, more signups)
+- **Coach Tier**: 9-day trial, NO card required (`payment_method_collection: 'if_required'`)
 - **Team Tier**: 9-day trial, CARD required (filters for serious users, prevents AI API abuse)
 - 9 days is intentionally unusual (stands out vs 7/14-day norms)
 
-**Trial Email Sequence:** Day 0 (welcome), Day 1 (onboarding), Day 3 (value stats), Day 6 (check-in), Day 8 (convert CTA), Day 9 (expires)
-
 ### Athlete Seat Limits & Bonus Seats Strategy
-- Coach tier default: **20 athletes**
-- At 18 athletes: soft nudge upgrade prompt
-- At 20 athletes: auto-grant **3 bonus seats** (→ 23 cap), celebration modal
-- At 23 athletes: hard gate, must upgrade to Team
-- 14 days after bonus: follow-up upgrade offer if at 21-23 athletes
+- Free tier: **3 athletes** (default for new coaches)
+- Coach tier: **20 athletes** + auto-grant **3 bonus seats** at 20 → 23 cap
+- Team tier: **unlimited** (999999)
+- At 18 athletes: `soft_nudge` upgrade prompt
+- At 20 athletes: `bonus_delight` — grant 3 bonus seats, celebration modal
+- At 23 athletes: `hard_gate` — must upgrade to Team
+- 14 days after bonus: `followup` upgrade offer if at 21-23 athletes
 - Track `peak_athlete_count` to prevent gaming via delete/re-add
-- Team tier: **unlimited athletes**
 
-**Psychological triggers:** reciprocity (free bonus), loss aversion (don't lose progress), commitment escalation (sunk cost at 20+), delight > friction (surprise bonus vs hard paywall)
+### Beta System
+- `auto_flag_beta_user` DB trigger: first 50 `coach_profiles` INSERTs get `is_beta_user = true`
+- `get_beta_slots_remaining()` returns GREATEST(0, 50 - count) — currently **46**
+- 4 existing coaches retroactively flagged as beta
+- PricingView shows dynamic beta banner with urgency counter, or "beta closed" banner
 
-### Edge Cases
-- Coach deletes athletes to stay under 20 → bonus eligibility based on peak_athlete_count
-- Upgrades before hitting 20 → grant bonus as thanks
-- Downgrade from Team to Coach with >23 athletes → 30-day grace period
+### Stripe Integration (Fully Deployed)
+- **2 Stripe Products**: CoachHub Coach Plan, CoachHub Team Plan
+- **8 Stripe Prices**: coach/team x monthly/annual x beta/standard
+- **3 Edge Functions** (all ACTIVE): `create-checkout-session`, `stripe-webhook`, `create-portal-session`
+- **10 Supabase Secrets** set: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, + 8 `STRIPE_PRICE_*` IDs
+- **4 Webhook Events**: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`
+- Webhook uses signature verification (not JWT), service role key for admin DB access
+- Subscription status mapping: trialing, active, past_due, canceled, inactive, paused
 
-### Database Changes (Sprint 12)
-```sql
--- Add to coach_profiles
-ALTER TABLE coach_profiles ADD COLUMN IF NOT EXISTS
-  athlete_limit INTEGER DEFAULT 20,
-  bonus_seats_granted BOOLEAN DEFAULT FALSE,
-  bonus_seats_granted_at TIMESTAMP WITH TIME ZONE,
-  bonus_seats_count INTEGER DEFAULT 0,
-  peak_athlete_count INTEGER DEFAULT 0;
+### Database Changes (Migration: `20250220_sprint13_pricing_seats.sql`)
+- **12 new columns on `coach_profiles`**: subscription_tier (default 'free'), subscription_status (default 'inactive'), stripe_customer_id, stripe_subscription_id, billing_interval, subscription_started_at, subscription_ends_at, trial_ends_at, athlete_limit (default 3), bonus_seats_granted/count/at, peak_athlete_count, is_beta_user
+- **`upgrade_prompts` table**: coach_id, prompt_type CHECK (soft_nudge/bonus_delight/hard_gate/followup), athlete_count, shown_at, action_taken CHECK (dismissed/upgrade_clicked/downgraded), action_taken_at
+- **DB functions**: `can_add_athlete(coach_user_id)`, `get_athlete_count(coach_user_id)`, `get_beta_slots_remaining()`, `auto_flag_beta_user()` trigger
+- **RLS**: upgrade_prompts (coaches see/insert own), coach_profiles billing columns accessible via existing RLS
 
--- New table: upgrade_prompts
-CREATE TABLE IF NOT EXISTS upgrade_prompts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  coach_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  prompt_type TEXT NOT NULL, -- 'soft_nudge', 'bonus_unlock', 'hard_gate', 'follow_up'
-  athlete_count INTEGER NOT NULL,
-  shown_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  action_taken TEXT, -- 'upgraded', 'dismissed', 'reminded_later', null
-  action_taken_at TIMESTAMP WITH TIME ZONE
-);
+### Frontend Components
+- `src/components/billing/UpgradePromptModal.vue` — 4 variants: soft_nudge (rocket), bonus_delight (gift), hard_gate (lock), followup (bell); emits close/action
+- `src/components/billing/SeatUsageBadge.vue` — color-coded: emerald (unlimited), red (>=100%), yellow (>=80%), gray (normal)
+- `src/views/PricingView.vue` — tier comparison, annual/monthly toggle, dynamic beta/closed banners, strikethrough pricing, slots counter
+- `src/views/coach/BillingView.vue` — current plan details, trial countdown, manage subscription portal link
+- `src/services/billing.ts` — seat checks, upgrade prompts, Stripe checkout/portal session creation, beta slots
 
--- DB function
-CREATE OR REPLACE FUNCTION can_add_athlete(coach_user_id UUID)
-RETURNS BOOLEAN AS $$
-DECLARE
-  current_count INTEGER;
-  limit_count INTEGER;
-BEGIN
-  SELECT
-    (SELECT COUNT(*) FROM coach_athletes WHERE coach_id = coach_user_id AND status = 'active'),
-    (SELECT athlete_limit FROM coach_profiles WHERE id = coach_user_id)
-  INTO current_count, limit_count;
-  RETURN current_count < limit_count;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-```
+### Seat Management Integration
+- `AthletesView.vue`: SeatUsageBadge in header, invite gating, upgrade prompt checks on mount, peak count tracking
+- `InviteAthleteModal.vue`: seat limit check before generating invite, lock icon + upgrade CTA when full
+- `InviteAcceptanceView.vue`: SEAT_LIMIT_REACHED error handling
+- `CoachHubView.vue`: Billing card with credit-card SVG icon
 
-### Implementation Phases
-1. **Phase 1: Core Seat Logic (2-3 days)** — DB schema, RLS, `checkAthleteLimit()`, `grantBonusSeats()`
-2. **Phase 2: UI Components (2-3 days)** — UpgradePrompt.vue, SeatLimitBanner.vue, BonusSeatsUnlock.vue, athlete counter
-3. **Phase 3: Trigger Logic (1-2 days)** — invite checks, nudges at 18, bonus at 20, gate at 23, 14-day follow-up
-4. **Phase 4: Stripe Integration (2-3 days)** — products (Coach/Team x Beta/Standard x Monthly/Annual), checkout, webhooks, proration, trials
-5. **Phase 5: Pricing Page (1 day)** — `/pricing` with tier comparison, annual/monthly toggle, beta counter
+### Action Mapping Gotcha
+- UI emits: 'upgrade' | 'dismiss' | 'manage' | 'claim_bonus'
+- DB CHECK expects: 'dismissed' | 'upgrade_clicked' | 'downgraded'
+- Mapped in AthletesView `handlePromptAction()`: upgrade→upgrade_clicked, others→dismissed
 
-### Planned Components
-- `UpgradePrompt.vue` - Reusable upgrade modal
-- `SeatLimitBanner.vue` - Dashboard warning banner
-- `BonusSeatsUnlock.vue` - Celebration modal
-- Pricing page view
+### Routes
+- `/pricing` (public), `/coach/billing` (requiresCoach)
 
-### Planned Route
-- `/pricing` - Public pricing page with tier comparison and beta spots counter
+---
 
-### Analytics Events
-- `athlete_limit_warning`, `bonus_seats_granted`, `upgrade_prompt_shown`, `upgrade_completed`
+## Smart Import v31: Extraction Guardrails + Ambiguity Detection (Code Complete — NEEDS DEPLOY)
 
-### Target Metrics
-- Coach → Team conversion: 15-25%
-- Trial → Paid (Coach): 25-35%, (Team): 40-50%
+### What Changed
+- **Sonnet-only**: Removed Haiku model constant and all `forceModel` routing. Every smart-import request now uses `claude-sonnet-4-5`.
+- **5 Extraction Guardrails** injected into SYSTEM prompt (STEP 2):
+  1. Unit Ambiguity — flag numbers without clear units
+  2. Set/Rep Notation — only extract when meaning is clear
+  3. Intensity Inference — never assign numeric % from qualitative words
+  4. Exercise Substitution Ban — extract names exactly as written
+  5. Multi-Week Block — flag unclear week/block structure choices
+- **Ambiguity Detection** (STEP 3): AI collects `ambiguities[]` array, classified by type (6 categories), with location, originalValue, question, options, and priority (1-10)
+- **Rule #16**: Mandates ambiguity output (empty array if nothing ambiguous)
+- **Max tokens**: 32K → 50K for both spreadsheet and PDF/image paths
+- **Auth keepalive**: 20-second `setInterval` refreshing Supabase session during edge function `await fetch()`. Prevents token expiry that was causing stuck `processing` records.
+- **Ambiguity Resolution UI**: Card in SmartImportView between exercise review and save button. Priority badges, option buttons, custom input, resolved/undo state. Save button turns amber when high-priority (P7+) items unresolved.
 
-### Competitive Positioning
-- TrainHeroic: Hard limits, no grace period
-- TrueCoach: Strict athlete caps
-- CoachHub: "We grow with you" — bonus seats, delight moments, gradual nudges
+### Files Modified
+- `supabase/functions/smart-import/index.ts` — v31 header, HAIKU removed, guardrails + ambiguity schema, SONNET-only routing, ambiguity extraction in response
+- `src/types/import.ts` — `AmbiguityType`, `ImportAmbiguity` interface, `ambiguities` field on `ImportResult`
+- `src/services/aiImport.ts` — Removed `forceModelSonnet`/`forceModel`, default model → sonnet, auth keepalive interval, ambiguity pass-through
+- `src/views/coach/SmartImportView.vue` — Ambiguity resolution card, state/computed/functions, amber save button warning
+
+### Deploy Needed
+- **Edge function**: `supabase functions deploy smart-import --no-verify-jwt` — production is still v39 (old Haiku routing)
+- **Frontend**: Standard Vercel deploy (or `npx vite build` + deploy)
 
 ---
 
 ## Future Plans (Decided, Not Yet Implemented)
 
 ### Gemini for Smart Import (Cost Optimization)
-- Decision: implement when volume > 1000 imports/month (currently ~10-50/month)
-- Route CSV/images to Gemini Flash (~20x cheaper), keep Claude for PDF/Excel
-- Philosophy analysis to Gemini Pro (~2.4x cheaper)
+- Decision: re-evaluate now that everything uses Sonnet. Volume currently ~10-50/month.
+- Could route spreadsheets to Gemini Flash when volume increases
 
 ### ~~Philosophy Detection -> Methodology Identification~~ **DONE (Sprint 10.5)**
 - Implemented: 10 named methodology fingerprints (Charlie Francis, Westside Barbell, Lydiard, etc.)

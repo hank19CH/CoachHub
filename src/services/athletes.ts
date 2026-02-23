@@ -154,6 +154,13 @@ export async function acceptInviteCode(code: string, athleteId: string): Promise
     return
   }
 
+  // 2.5. Check seat limit
+  const { canAddAthlete } = await import('@/services/billing')
+  const hasRoom = await canAddAthlete(invite.coach_id)
+  if (!hasRoom) {
+    throw new Error('SEAT_LIMIT_REACHED')
+  }
+
   // 3. Create the relationship
   const { error } = await supabase
     .from('coach_athletes')

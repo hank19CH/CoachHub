@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 import type { User, Session } from '@supabase/supabase-js'
 import type { Profile, UserType, ProfileInsert } from '@/types/database'
+import type { CoachSubscription } from '@/services/billing'
 
 export const useAuthStore = defineStore('auth', () => {
   // State
@@ -11,6 +12,8 @@ export const useAuthStore = defineStore('auth', () => {
   const session = ref<Session | null>(null)
   const loading = ref(true)
   const error = ref<string | null>(null)
+  const coachSubscription = ref<CoachSubscription | null>(null)
+  const sessionExpired = ref(false)
 
   // Getters
   const isAuthenticated = computed(() => !!user.value)
@@ -19,6 +22,15 @@ export const useAuthStore = defineStore('auth', () => {
   const isFollower = computed(() => profile.value?.user_type === 'follower')
   const displayName = computed(() => profile.value?.display_name || user.value?.email || 'User')
   const avatarUrl = computed(() => profile.value?.avatar_url || null)
+
+  // Sprint 13 — Subscription getters
+  const subscriptionTier = computed(() => coachSubscription.value?.subscription_tier ?? 'free')
+  const subscriptionStatus = computed(() => coachSubscription.value?.subscription_status ?? 'inactive')
+  const isSubscribed = computed(() =>
+    ['trialing', 'active'].includes(coachSubscription.value?.subscription_status ?? '')
+  )
+  const isBetaUser = computed(() => coachSubscription.value?.is_beta_user ?? false)
+  const athleteLimit = computed(() => coachSubscription.value?.athlete_limit ?? 3)
 
   // Actions
   async function initialize() {
@@ -41,9 +53,17 @@ export const useAuthStore = defineStore('auth', () => {
         user.value = newSession?.user || null
 
         if (event === 'SIGNED_IN' && newSession) {
+          sessionExpired.value = false
           await fetchProfile()
         } else if (event === 'SIGNED_OUT') {
           profile.value = null
+          coachSubscription.value = null
+        } else if (event === 'TOKEN_REFRESHED' && !newSession) {
+          // Token refresh failed — session is dead
+          sessionExpired.value = true
+          user.value = null
+          profile.value = null
+          session.value = null
         }
       })
     } catch (e) {
@@ -74,10 +94,22 @@ export const useAuthStore = defineStore('auth', () => {
       }
 
       profile.value = data
+
+      // Load subscription data for coaches
+      if (data.user_type === 'coach') {
+        const { fetchCoachSubscription } = await import('@/services/billing')
+        coachSubscription.value = await fetchCoachSubscription(data.id)
+      }
     } catch (e) {
       console.error('Error fetching profile:', e)
       profile.value = null
     }
+  }
+
+  async function refreshSubscription() {
+    if (!user.value || !profile.value || profile.value.user_type !== 'coach') return
+    const { fetchCoachSubscription } = await import('@/services/billing')
+    coachSubscription.value = await fetchCoachSubscription(user.value.id)
   }
 
   async function signUp(
@@ -245,6 +277,8 @@ export const useAuthStore = defineStore('auth', () => {
     session,
     loading,
     error,
+    coachSubscription,
+    sessionExpired,
     // Getters
     isAuthenticated,
     isCoach,
@@ -252,9 +286,16 @@ export const useAuthStore = defineStore('auth', () => {
     isFollower,
     displayName,
     avatarUrl,
+    // Sprint 13 — Subscription getters
+    subscriptionTier,
+    subscriptionStatus,
+    isSubscribed,
+    isBetaUser,
+    athleteLimit,
     // Actions
     initialize,
     fetchProfile,
+    refreshSubscription,
     signUp,
     signIn,
     signOut,

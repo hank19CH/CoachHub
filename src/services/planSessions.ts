@@ -275,6 +275,21 @@ export const planSessionsService = {
   },
 
   /**
+   * Update only the session name (lightweight — no exercise data needed).
+   */
+  async updateSessionName(sessionId: string, name: string): Promise<void> {
+    const { error } = await (supabase
+      .from('plan_sessions') as any)
+      .update({ session_name: name, updated_at: new Date().toISOString() })
+      .eq('id', sessionId)
+
+    if (error) {
+      console.error('Error renaming session:', error)
+      throw new Error(error.message || 'Failed to rename session')
+    }
+  },
+
+  /**
    * Get the next available order_index for a given day in a week.
    * Useful for supporting multiple sessions per day.
    */
