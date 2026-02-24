@@ -67,6 +67,7 @@
 - Smart Import: `cancelActiveImport()` in aiImport.ts uses AbortController for 2-minute timeout
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
 - **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block. **Review keepalive** (v33): separate 30s interval during `classify_preview`/`extract_preview` steps, started/stopped via `watch(importStep)`. Explicit `refreshSession()` before save in `handleConfirmImport()`.
+- **Auth lock deadlock fix**: Supabase JS v2 uses an internal lock to prevent concurrent `refreshSession()` calls. If the review keepalive's `refreshSession()` is in-flight when `importProgram()` calls its own `refreshSession()`, the second call blocks indefinitely on the internal auth lock. Fix: `handleClassifyConfirm()` and `handleClassifyFallback()` now call `stopReviewKeepalive()` before starting the extract, eliminating the race condition.
 - **Simulated progress bar** (v33): SmartImportView uses ease-out curve animation over 65s reaching max 92%, then jumps to 100% on API return. 14 rotating messages (e.g., "Detecting sport & structure...", "Parsing sets, reps & intensities..."). Animated gradient bar with pulse effect. Replaced static stage-based progress (uploading→classifying→extracting).
 - **Ambiguity types** (v31): `ImportAmbiguity` in `src/types/import.ts` — `type`, `location`, `originalValue`, `question`, `options[]`, `priority` (1-10), `resolved`, `resolvedValue`. Returned separately from importResult by edge function.
 - **Two-step import flow** (v32): `handleImport()` calls `classifyImport()` first. If mesocycle detected (confidence ≥ 0.4) → shows `ImportClassificationPreview`. Coach confirms → `handleClassifyConfirm()` → `runDirectExtract()`. If classify fails → falls through to `runDirectExtract()` seamlessly. SmartImportView tracks `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`.
@@ -710,6 +711,12 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 - Workouts card remains for one-off session builds
 - Programs files, DB tables, and routes all retained — just not surfaced in Coach Hub UI
 
+### Smart Import Auth Lock Deadlock Fix (2026-02-24)
+- **Bug**: After confirming mesocycle classification, import hung at "Refreshing auth session..." and never proceeded
+- **Root cause**: Supabase JS v2 auth client uses an internal lock to prevent concurrent `refreshSession()` calls. The review keepalive interval (30s) could race with `importProgram()`'s `refreshSession()` call, causing a deadlock — the second call waited for the lock held by the first, but the first never completed because the lock was contended
+- **Fix**: Added `stopReviewKeepalive()` at the top of `handleClassifyConfirm()` and `handleClassifyFallback()` before any async work begins
+- **Files**: `src/views/coach/SmartImportView.vue` (2 lines added)
+
 ---
 
 ## Technical Debt / Cleanup Backlog
@@ -943,8 +950,8 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 ### SmartImportView Integration
 - `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`
 - `handleImport()` → `classifyImport()` first → if mesocycle detected (confidence ≥ 0.4) → show preview
-- `handleClassifyConfirm()` → `runDirectExtract()` (full extraction)
-- `handleClassifyFallback()` → `runDirectExtract()` (skip mesocycle)
+- `handleClassifyConfirm()` → `stopReviewKeepalive()` → `runDirectExtract()` (full extraction)
+- `handleClassifyFallback()` → `stopReviewKeepalive()` → `runDirectExtract()` (skip mesocycle)
 - If classify fails → falls through to direct extract seamlessly (non-blocking)
 - Progress bar: simulated ease-out curve over 65s (max 92%), 14 rotating status messages, animated gradient with pulse. Jumps to 100% on API return. Replaced static stage-based progress.
 
