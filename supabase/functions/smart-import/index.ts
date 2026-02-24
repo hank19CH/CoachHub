@@ -565,7 +565,7 @@ SPECIAL CASES:
 - Mid-block exercise name change (same Order, different name from a specific week): Variation swap.`
 
 function buildClassifySchema(sportContext: string): string {
-  return \`Return a JSON object with this structure:
+  return `Return a JSON object with this structure:
 {
   "detected_type": "mesocycle_program" | "standalone_sessions",
   "confidence": 0.0-1.0,
@@ -634,9 +634,9 @@ RULES:
 5. Section headers (Warm-Up, Main Set, etc.) have is_section_header: true and empty weeks array.
 6. Descending set notation: preserve as comma-separated in the sets field — "4,4,3,2". NEVER average.
 
-\${sportContext}
+${sportContext}
 
-Output ONLY the JSON.\`
+Output ONLY the JSON.`
 }
 
 function buildSchema(sportContext: string): string {

@@ -14,6 +14,9 @@ import PublishWeekModal from '@/components/planner/PublishWeekModal.vue'
 import PlanChangelog from '@/components/planner/PlanChangelog.vue'
 import PlanAnalytics from '@/components/planner/PlanAnalytics.vue'
 import AiAssistPanel from '@/components/planner/AiAssistPanel.vue'
+import ProgressionMatrix from '@/components/planner/ProgressionMatrix.vue'
+import VolumeDesigner from '@/components/planner/VolumeDesigner.vue'
+import ProgressionSuggestions from '@/components/planner/ProgressionSuggestions.vue'
 import Toast from '@/components/ui/Toast.vue'
 
 const route = useRoute()
@@ -31,7 +34,7 @@ const showTemplateBrowser = ref(false)
 const showPublishModal = ref(false)
 
 // Right panel tabs (desktop)
-const rightPanelTab = ref<'details' | 'changelog' | 'analytics' | 'ai'>('details')
+const rightPanelTab = ref<'details' | 'progression' | 'changelog' | 'analytics' | 'ai'>('details')
 
 // Toast
 const toastMessage = ref('')
@@ -257,6 +260,7 @@ function goBackToList() {
           <button
             v-for="tab in ([
               { key: 'details', label: 'Details' },
+              { key: 'progression', label: 'Progression' },
               { key: 'changelog', label: 'History' },
               { key: 'analytics', label: 'Analytics' },
               { key: 'ai', label: 'AI' },
@@ -280,6 +284,31 @@ function goBackToList() {
           @updated="handleBlockUpdated"
           @deleted="handleBlockDeleted"
         />
+        <div v-if="rightPanelTab === 'progression'" class="p-4 space-y-6">
+          <template v-if="plansStore.selectedBlock">
+            <VolumeDesigner
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+              :load-metric="(plansStore.selectedBlock as any).load_metric || 'tonnage'"
+              :initial-params="(plansStore.selectedBlock as any).progression_params ?? null"
+              @updated="handleBlockUpdated"
+            />
+            <ProgressionSuggestions
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+            />
+            <ProgressionMatrix
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+            />
+          </template>
+          <div v-else class="py-8 text-center text-sm text-gray-400">
+            Select a block to view its progression
+          </div>
+        </div>
         <PlanChangelog v-if="rightPanelTab === 'changelog'" />
         <PlanAnalytics v-if="rightPanelTab === 'analytics'" />
         <AiAssistPanel v-if="rightPanelTab === 'ai'" />
@@ -405,9 +434,9 @@ function goBackToList() {
         <AiAssistPanel />
       </div>
 
-      <!-- Session tab: block details + changelog -->
+      <!-- Session tab: block details + progression + changelog -->
       <div v-if="mobileTab === 'session'" class="flex flex-col">
-        <!-- Sub-tabs for details / history -->
+        <!-- Sub-tabs for details / progression / history -->
         <div class="flex border-b border-gray-100 bg-white sticky top-0 z-10">
           <button
             @click="rightPanelTab = 'details'"
@@ -418,7 +447,18 @@ function goBackToList() {
                 : 'text-gray-400 border-transparent'
             ]"
           >
-            Block Details
+            Details
+          </button>
+          <button
+            @click="rightPanelTab = 'progression'"
+            :class="[
+              'flex-1 py-2.5 text-xs font-semibold text-center border-b-2 transition-colors',
+              rightPanelTab === 'progression'
+                ? 'text-summit-700 border-summit-700'
+                : 'text-gray-400 border-transparent'
+            ]"
+          >
+            Progression
           </button>
           <button
             @click="rightPanelTab = 'changelog'"
@@ -437,6 +477,31 @@ function goBackToList() {
           @updated="handleBlockUpdated"
           @deleted="handleBlockDeleted"
         />
+        <div v-if="rightPanelTab === 'progression'" class="p-4 space-y-6">
+          <template v-if="plansStore.selectedBlock">
+            <VolumeDesigner
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+              :load-metric="(plansStore.selectedBlock as any).load_metric || 'tonnage'"
+              :initial-params="(plansStore.selectedBlock as any).progression_params ?? null"
+              @updated="handleBlockUpdated"
+            />
+            <ProgressionSuggestions
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+            />
+            <ProgressionMatrix
+              :block-id="plansStore.selectedBlock.id"
+              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
+              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
+            />
+          </template>
+          <div v-else class="py-8 text-center text-sm text-gray-400">
+            Select a block to view its progression
+          </div>
+        </div>
         <PlanChangelog v-if="rightPanelTab === 'changelog'" />
       </div>
     </div>

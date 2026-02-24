@@ -278,7 +278,7 @@ const formatDate = (dateStr: string) => {
   <div class="min-h-screen bg-gray-50 pb-20">
     <PageHeader title="Coaching Philosophy" show-back sticky-offset="top-14" />
 
-    <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div class="max-w-3xl md:max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
       <!-- Loading -->
       <div v-if="isLoading" class="text-center py-16">
         <svg class="animate-spin h-10 w-10 text-summit-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -413,6 +413,8 @@ const formatDate = (dateStr: string) => {
             <p class="text-sm leading-relaxed text-summit-50">{{ philosophy.coaching_style_summary }}</p>
           </div>
 
+          <!-- Two-column grid for cards at md: -->
+          <div class="md:grid md:grid-cols-2 md:gap-6 space-y-6 md:space-y-0">
           <!-- Periodization -->
           <div class="bg-white rounded-xl border border-gray-200 p-5">
             <h3 class="font-bold text-gray-900 mb-4">Periodization Approach</h3>
@@ -492,11 +494,12 @@ const formatDate = (dateStr: string) => {
               </div>
             </div>
           </div>
+          </div><!-- /Two-column grid -->
 
           <!-- Movement Patterns -->
           <div v-if="philosophy.movement_patterns" class="bg-white rounded-xl border border-gray-200 p-5">
             <h3 class="font-bold text-gray-900 mb-4">Movement Pattern Distribution</h3>
-            <div class="grid grid-cols-3 sm:grid-cols-5 gap-3">
+            <div class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-3">
               <div v-for="(value, pattern) in philosophy.movement_patterns" :key="pattern" class="text-center">
                 <div class="w-14 h-14 mx-auto mb-1.5 rounded-full bg-summit-100 flex items-center justify-center">
                   <span class="text-lg font-bold text-summit-700">{{ ((value as number) * 100).toFixed(0) }}</span>

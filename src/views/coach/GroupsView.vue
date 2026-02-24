@@ -170,51 +170,97 @@ function getInitials(name: string) {
       <button @click="openCreateModal" class="btn-primary">Create Your First Group</button>
     </div>
 
-    <!-- Groups list -->
-    <div v-else class="p-4 space-y-3">
-      <div
-        v-for="group in groups"
-        :key="group.id"
-        class="card-hover p-4 cursor-pointer"
-        @click="router.push(`/coach/groups/${group.id}`)"
-      >
-        <div class="flex items-start gap-3">
-          <!-- Group icon -->
-          <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-summit-600 to-summit-800 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
-            <span v-if="group.sport?.icon">{{ group.sport.icon }}</span>
-            <span v-else>{{ getInitials(group.name) }}</span>
-          </div>
-
-          <!-- Info -->
-          <div class="flex-1 min-w-0">
-            <h3 class="font-semibold text-gray-900 truncate">{{ group.name }}</h3>
-            <p v-if="group.team" class="text-xs text-summit-600 font-medium">{{ group.team.name }}</p>
-            <p class="text-sm text-gray-500 mt-0.5">
-              {{ group.member_count || 0 }} {{ group.member_count === 1 ? 'athlete' : 'athletes' }}
-              <span v-if="group.sport" class="ml-2">{{ group.sport.name }}</span>
-            </p>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex gap-1">
-            <button
-              @click.stop="openEditModal(group)"
-              class="p-2 text-gray-400 hover:text-summit-700 transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-            </button>
-            <button
-              @click.stop="openDeleteConfirm(group)"
-              class="p-2 text-gray-400 hover:text-red-500 transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
+    <!-- Groups list — mobile cards -->
+    <div v-else class="p-4 md:px-6 space-y-3 md:space-y-0">
+      <!-- Mobile: Card list -->
+      <div class="space-y-3 md:hidden">
+        <div
+          v-for="group in groups"
+          :key="group.id"
+          class="card-hover p-4 cursor-pointer"
+          @click="router.push(`/coach/groups/${group.id}`)"
+        >
+          <div class="flex items-start gap-3">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-summit-600 to-summit-800 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+              <span v-if="group.sport?.icon">{{ group.sport.icon }}</span>
+              <span v-else>{{ getInitials(group.name) }}</span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-gray-900 truncate">{{ group.name }}</h3>
+              <p v-if="group.team" class="text-xs text-summit-600 font-medium">{{ group.team.name }}</p>
+              <p class="text-sm text-gray-500 mt-0.5">
+                {{ group.member_count || 0 }} {{ group.member_count === 1 ? 'athlete' : 'athletes' }}
+                <span v-if="group.sport" class="ml-2">{{ group.sport.name }}</span>
+              </p>
+            </div>
+            <div class="flex gap-1">
+              <button @click.stop="openEditModal(group)" class="p-2 text-gray-400 hover:text-summit-700 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button @click.stop="openDeleteConfirm(group)" class="p-2 text-gray-400 hover:text-red-500 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- Desktop: Data table -->
+      <div class="hidden md:block bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table class="w-full">
+          <thead class="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Group</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Sport</th>
+              <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Team</th>
+              <th class="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Members</th>
+              <th class="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr
+              v-for="group in groups"
+              :key="group.id"
+              class="hover:bg-gray-50 cursor-pointer transition-colors"
+              @click="router.push(`/coach/groups/${group.id}`)"
+            >
+              <td class="px-4 py-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-summit-600 to-summit-800 flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                    <span v-if="group.sport?.icon">{{ group.sport.icon }}</span>
+                    <span v-else>{{ getInitials(group.name) }}</span>
+                  </div>
+                  <span class="font-medium text-gray-900 text-sm">{{ group.name }}</span>
+                </div>
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-600">{{ group.sport?.name || '—' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">{{ group.team?.name || '—' }}</td>
+              <td class="px-4 py-3 text-center">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-summit-100 text-summit-700">
+                  {{ group.member_count || 0 }}
+                </span>
+              </td>
+              <td class="px-4 py-3">
+                <div class="flex items-center justify-end gap-1">
+                  <button @click.stop="openEditModal(group)" class="p-1.5 text-gray-400 hover:text-summit-700 rounded-lg hover:bg-summit-50 transition-colors" title="Edit">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button @click.stop="openDeleteConfirm(group)" class="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors" title="Delete">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

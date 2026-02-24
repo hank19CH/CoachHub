@@ -730,7 +730,7 @@ const statusIcon = (status: string) => {
       </div>
     </div>
 
-    <div class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+    <div class="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-6">
       <!-- Import Card -->
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <!-- Classification Preview (step 2: coach reviews mesocycle detection) -->
@@ -963,7 +963,10 @@ const statusIcon = (status: string) => {
         </div>
 
         <!-- Import Preview -->
-        <div v-else class="p-6 space-y-5">
+        <div v-else class="p-6">
+        <div class="md:grid md:grid-cols-[1fr_340px] md:gap-6">
+          <!-- Left: Preview Content -->
+          <div class="space-y-5">
           <!-- Success Header -->
           <div class="flex items-center gap-3 pb-5 border-b border-gray-200">
             <div class="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
@@ -1437,7 +1440,10 @@ const statusIcon = (status: string) => {
               </div>
             </template>
           </div>
+          </div><!-- /Left column -->
 
+          <!-- Right: Sidebar (sticky at md:) -->
+          <div class="space-y-4 md:sticky md:top-4 md:self-start">
           <!-- Library Summary (not shown for single_session — always goes to library) -->
           <div v-if="libraryFlagCount > 0 && selectedPlanType !== 'single_session'" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
             <div class="flex items-center gap-2">
@@ -1555,11 +1561,11 @@ const statusIcon = (status: string) => {
           </div>
 
           <!-- Actions -->
-          <div class="flex gap-3 pt-4 border-t border-gray-200">
+          <div class="flex md:flex-col gap-3 pt-4 border-t border-gray-200 md:border-t-0 md:pt-0">
             <button
               @click="handleConfirmImport"
               :disabled="isSaving"
-              class="flex-1 text-white px-6 py-3 rounded-xl font-medium
+              class="flex-1 md:flex-none text-white px-6 py-3 rounded-xl font-medium text-sm
                 disabled:opacity-50 transition-colors"
               :class="hasUnresolvedHighPriority ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'"
             >
@@ -1577,12 +1583,14 @@ const statusIcon = (status: string) => {
             <button
               @click="handleCancel"
               :disabled="isSaving"
-              class="px-6 py-3 border border-gray-300 rounded-xl font-medium hover:bg-gray-50 transition-colors"
+              class="px-6 py-3 border border-gray-300 rounded-xl font-medium text-sm hover:bg-gray-50 transition-colors"
             >
               Cancel
             </button>
           </div>
-        </div>
+          </div><!-- /Right sidebar -->
+        </div><!-- /md:grid -->
+        </div><!-- /Import Preview (v-else p-6) -->
       </div>
 
       <!-- Import History -->

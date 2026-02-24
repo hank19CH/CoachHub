@@ -12,6 +12,8 @@
 
 import type { ProgressionPattern, LoadMetric } from '@/types/database'
 import type { ExerciseWeekEntry, ExerciseSlot } from '@/types/import'
+import type { BlockProgressionParams, VolumeSpike } from '@/types/progression'
+import { supabase } from '@/lib/supabase'
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -485,6 +487,365 @@ export function formatPrescription(entry: ExerciseWeekEntry): string {
   }
 
   return parts.join(' ') || '—'
+}
+
+// ── Load / Save Block Progression Matrix ──────────────────────────────
+
+/**
+ * Load or rebuild the full ExerciseSlot[] for a block.
+ * Reads block_sessions → exercises for canonical data.
+ * Reads progression_params.exercise_progressions for overrides.
+ * Falls back to extrapolateSession() for weeks without overrides.
+ */
+export async function loadBlockProgressionMatrix(
+  blockId: string
+): Promise<ExerciseSlot[]> {
+  // 1. Fetch the block with its progression config
+  const { data: block, error: blockErr } = await (supabase as any)
+    .from('training_blocks')
+    .select('*, block_weeks(*)')
+    .eq('id', blockId)
+    .single()
+
+  if (blockErr || !block) {
+    console.error('Failed to load block:', blockErr)
+    return []
+  }
+
+  // 2. Check for existing overrides in progression_params
+  const params = (block.progression_params as BlockProgressionParams | null)
+  if (params?.exercise_progressions?.length) {
+    return params.exercise_progressions
+  }
+
+  // 3. No overrides — load canonical exercises from block_sessions
+  const { data: blockSessions, error: bsErr } = await (supabase as any)
+    .from('block_sessions')
+    .select('*, workouts(*, exercises(*))')
+    .eq('training_block_id', blockId)
+    .order('session_day', { ascending: true })
+    .order('order_index', { ascending: true })
+
+  if (bsErr || !blockSessions?.length) {
+    // No block_sessions — try loading from plan_sessions for legacy compatibility
+    return await loadFromPlanSessions(blockId, block)
+  }
+
+  // 4. Build canonical exercises from block_sessions
+  const canonicalExercises: CanonicalExercise[] = []
+  for (const bs of blockSessions) {
+    const workout = Array.isArray(bs.workouts) ? bs.workouts[0] : bs.workouts
+    if (!workout?.exercises) continue
+    const exList = Array.isArray(workout.exercises) ? workout.exercises : []
+    for (const ex of exList) {
+      if (ex.is_section_header) continue
+      canonicalExercises.push({
+        name: ex.name,
+        sets: String(ex.sets ?? ''),
+        reps: String(ex.reps ?? ''),
+        intensity_percent: ex.intensity_percent ?? undefined,
+        rpe: ex.rpe ?? undefined,
+        rest_seconds: ex.rest_seconds ?? undefined,
+        weight: ex.weight ?? undefined,
+        notes: ex.notes ?? undefined,
+      })
+    }
+  }
+
+  if (canonicalExercises.length === 0) return []
+
+  // 5. Build config and extrapolate
+  const config = buildConfigFromBlock(block)
+  return extrapolateSession(canonicalExercises, config)
+}
+
+/**
+ * Fallback: load exercises from plan_sessions (Week 1 sessions) when
+ * block_sessions table isn't populated yet.
+ */
+async function loadFromPlanSessions(blockId: string, block: any): Promise<ExerciseSlot[]> {
+  // Get block_weeks for week 1
+  const weeks = Array.isArray(block.block_weeks) ? block.block_weeks : []
+  const week1 = weeks.find((w: any) => w.week_number === 1)
+  if (!week1) return []
+
+  const { data: sessions, error: sessErr } = await (supabase as any)
+    .from('plan_sessions')
+    .select('*')
+    .eq('block_week_id', week1.id)
+    .order('day_of_week', { ascending: true })
+
+  if (sessErr || !sessions?.length) return []
+
+  const canonicalExercises: CanonicalExercise[] = []
+  for (const session of sessions) {
+    const sessionData = session.session_data
+    if (!sessionData?.exercises) continue
+    for (const ex of sessionData.exercises) {
+      if (ex.is_section_header) continue
+      canonicalExercises.push({
+        name: ex.name || ex.raw_name || 'Unknown',
+        sets: String(ex.sets ?? ''),
+        reps: String(ex.reps ?? ''),
+        intensity_percent: ex.intensity_percent ?? undefined,
+        rpe: ex.rpe ?? undefined,
+        rest_seconds: ex.rest_seconds ?? undefined,
+        weight: ex.weight ?? undefined,
+        notes: ex.notes ?? undefined,
+      })
+    }
+  }
+
+  if (canonicalExercises.length === 0) return []
+  const config = buildConfigFromBlock(block)
+  return extrapolateSession(canonicalExercises, config)
+}
+
+function buildConfigFromBlock(block: any): BlockProgressionConfig {
+  return {
+    duration_weeks: block.duration_weeks || 4,
+    load_metric: block.load_metric || 'reps_only',
+    progression_pattern: block.progression_pattern || 'linear',
+    intensity_start: block.intensity_start ?? null,
+    intensity_end: block.intensity_end ?? null,
+    volume_start: block.volume_start ?? null,
+    volume_end: block.volume_end ?? null,
+    deload_week: block.deload_week ?? null,
+    deload_volume_factor: block.deload_volume_factor ?? 0.6,
+  }
+}
+
+/**
+ * Save a single cell edit back to progression_params JSONB.
+ * Merges the new ExerciseWeekEntry into the existing array.
+ */
+export async function saveWeekEntry(
+  blockId: string,
+  exerciseIndex: number,
+  weekNumber: number,
+  entry: Partial<ExerciseWeekEntry>,
+): Promise<void> {
+  // 1. Fetch current progression_params
+  const { data: block, error: fetchErr } = await (supabase as any)
+    .from('training_blocks')
+    .select('progression_params')
+    .eq('id', blockId)
+    .single()
+
+  if (fetchErr || !block) throw new Error('Failed to fetch block')
+
+  const params: BlockProgressionParams = block.progression_params || { exercise_progressions: [] }
+  const slots = params.exercise_progressions || []
+
+  if (exerciseIndex >= slots.length) throw new Error('Exercise index out of range')
+
+  // 2. Find or create the week entry
+  const slot = slots[exerciseIndex]
+  const weekIdx = slot.weeks.findIndex(w => w.week === weekNumber)
+
+  if (weekIdx >= 0) {
+    // Merge
+    slot.weeks[weekIdx] = { ...slot.weeks[weekIdx], ...entry }
+  } else {
+    // Insert
+    slot.weeks.push({
+      week: weekNumber,
+      sets: entry.sets ?? '',
+      reps: entry.reps ?? '',
+      intensity_percent: entry.intensity_percent,
+      rpe: entry.rpe,
+      rest_seconds: entry.rest_seconds,
+      notes: entry.notes,
+      variation_name: entry.variation_name ?? null,
+    })
+    slot.weeks.sort((a, b) => a.week - b.week)
+  }
+
+  // Update variation flags
+  slot.has_variation = slot.weeks.some(w => w.variation_name != null && w.variation_name !== '')
+  if (slot.has_variation) {
+    const variations = slot.weeks.filter(w => w.variation_name)
+    if (variations.length > 0) {
+      const firstVar = variations[0]
+      slot.variation_summary = `${slot.canonical_name} → ${firstVar.variation_name} (wk ${firstVar.week}+)`
+    }
+  } else {
+    slot.variation_summary = undefined
+  }
+
+  params.exercise_progressions = slots
+
+  // 3. Save back
+  const { error: saveErr } = await (supabase as any)
+    .from('training_blocks')
+    .update({ progression_params: params })
+    .eq('id', blockId)
+
+  if (saveErr) throw new Error('Failed to save progression: ' + saveErr.message)
+}
+
+/**
+ * Detect if week-on-week delta for any exercise exceeds threshold.
+ * Returns list of spikes for Tier 1 rules engine warning (no AI cost).
+ */
+export function detectVolumeSpikes(
+  slots: ExerciseSlot[],
+  thresholdPercent: number = 15,
+): VolumeSpike[] {
+  const spikes: VolumeSpike[] = []
+
+  for (let slotIdx = 0; slotIdx < slots.length; slotIdx++) {
+    const slot = slots[slotIdx]
+    if (slot.is_section_header) continue
+
+    for (let w = 1; w < slot.weeks.length; w++) {
+      const prev = slot.weeks[w - 1]
+      const curr = slot.weeks[w]
+
+      // Check intensity spike
+      if (prev.intensity_percent != null && curr.intensity_percent != null && prev.intensity_percent > 0) {
+        const delta = ((curr.intensity_percent - prev.intensity_percent) / prev.intensity_percent) * 100
+        if (Math.abs(delta) > thresholdPercent) {
+          spikes.push({
+            exercise_name: slot.canonical_name,
+            exercise_index: slotIdx,
+            from_week: prev.week,
+            to_week: curr.week,
+            field: 'intensity',
+            delta_percent: Math.round(delta * 10) / 10,
+            message: `${slot.canonical_name}: Week ${curr.week} intensity ${delta > 0 ? '+' : ''}${Math.round(delta)}% from Week ${prev.week}`,
+          })
+        }
+      }
+
+      // Check volume (sets × reps) spike
+      const prevVol = parseSetsTotal(prev.sets) * (parseRepsString(prev.reps) ?? 1)
+      const currVol = parseSetsTotal(curr.sets) * (parseRepsString(curr.reps) ?? 1)
+      if (prevVol > 0 && currVol > 0) {
+        const delta = ((currVol - prevVol) / prevVol) * 100
+        if (Math.abs(delta) > thresholdPercent) {
+          spikes.push({
+            exercise_name: slot.canonical_name,
+            exercise_index: slotIdx,
+            from_week: prev.week,
+            to_week: curr.week,
+            field: 'volume',
+            delta_percent: Math.round(delta * 10) / 10,
+            message: `${slot.canonical_name}: Week ${curr.week} volume ${delta > 0 ? '+' : ''}${Math.round(delta)}% from Week ${prev.week}`,
+          })
+        }
+      }
+    }
+  }
+
+  return spikes
+}
+
+// ── Volume Preset Shapes (Sprint 13.6) ───────────────────────────────
+
+export interface VolumePresetShape {
+  label: string
+  description: string
+  generate: (weeks: number, base: number, deloadWeek?: number | null, deloadFactor?: number) => number[]
+}
+
+export const VOLUME_PRESET_SHAPES: Record<string, VolumePresetShape> = {
+  linear_ramp: {
+    label: 'Linear Ramp',
+    description: 'Steady increase each week',
+    generate: (weeks, base, deloadWeek, deloadFactor = 0.5) => {
+      const step = base * 0.08 // ~8% increase per week
+      return Array.from({ length: weeks }, (_, i) => {
+        const w = i + 1
+        if (deloadWeek && w === deloadWeek) return Math.round(base * deloadFactor)
+        return Math.round(base + step * i)
+      })
+    },
+  },
+  wave_3_1: {
+    label: 'Wave 3+1',
+    description: '3 loading weeks then 1 deload',
+    generate: (weeks, base, _deloadWeek, deloadFactor = 0.5) => {
+      return Array.from({ length: weeks }, (_, i) => {
+        const pos = i % 4
+        if (pos === 3) return Math.round(base * deloadFactor)
+        return Math.round(base * (1 + pos * 0.1))
+      })
+    },
+  },
+  wave_2_1: {
+    label: 'Wave 2+1',
+    description: '2 loading weeks then 1 deload',
+    generate: (weeks, base, _deloadWeek, deloadFactor = 0.5) => {
+      return Array.from({ length: weeks }, (_, i) => {
+        const pos = i % 3
+        if (pos === 2) return Math.round(base * deloadFactor)
+        return Math.round(base * (1 + pos * 0.12))
+      })
+    },
+  },
+  step_load: {
+    label: 'Step Load',
+    description: 'Hold load for 2 weeks then step up',
+    generate: (weeks, base, deloadWeek, deloadFactor = 0.5) => {
+      return Array.from({ length: weeks }, (_, i) => {
+        const w = i + 1
+        if (deloadWeek && w === deloadWeek) return Math.round(base * deloadFactor)
+        const stepLevel = Math.floor(i / 2)
+        return Math.round(base * (1 + stepLevel * 0.1))
+      })
+    },
+  },
+  peak_taper: {
+    label: 'Peak + Taper',
+    description: 'Ramp to peak then taper last 1-2 weeks',
+    generate: (weeks, base, _deloadWeek, _deloadFactor = 0.5) => {
+      const peakWeek = Math.max(1, weeks - 2)
+      return Array.from({ length: weeks }, (_, i) => {
+        const w = i + 1
+        if (w <= peakWeek) {
+          // Ramp up
+          const factor = peakWeek > 1 ? i / (peakWeek - 1) : 0
+          return Math.round(base * (1 + factor * 0.3))
+        } else {
+          // Taper
+          const taperWeek = w - peakWeek
+          return Math.round(base * (1.3 - taperWeek * 0.2))
+        }
+      })
+    },
+  },
+}
+
+/**
+ * Save volume targets to training_blocks.progression_params JSONB.
+ * Merges without overwriting exercise_progressions.
+ */
+export async function saveVolumeTargets(
+  blockId: string,
+  update: Pick<BlockProgressionParams,
+    'volume_targets' | 'intensity_targets' | 'preset_shape' |
+    'deload_week' | 'deload_volume_factor' | 'volume_unit'
+  >,
+): Promise<void> {
+  // Fetch current to merge
+  const { data: block, error: fetchErr } = await (supabase as any)
+    .from('training_blocks')
+    .select('progression_params')
+    .eq('id', blockId)
+    .single()
+
+  if (fetchErr || !block) throw new Error('Failed to fetch block')
+
+  const current: BlockProgressionParams = block.progression_params || { exercise_progressions: [] }
+  const merged = { ...current, ...update }
+
+  const { error: saveErr } = await (supabase as any)
+    .from('training_blocks')
+    .update({ progression_params: merged })
+    .eq('id', blockId)
+
+  if (saveErr) throw new Error('Failed to save volume targets: ' + saveErr.message)
 }
 
 // ── Internal Helpers ────────────────────────────────────────────────────

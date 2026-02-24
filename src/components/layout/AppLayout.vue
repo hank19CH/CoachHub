@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import BottomNav from '@/components/layout/BottomNav.vue'  // FIXED: Using absolute path
+import BottomNav from '@/components/layout/BottomNav.vue'
 import TopHeader from './TopHeader.vue'
+import CoachSidebar from './CoachSidebar.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -20,29 +21,54 @@ const hideTopHeader = computed(() => {
 
 // Pages that need full width (no max-width constraint)
 const needsFullWidth = computed(() => {
-  const fullWidthRoutes = ['planner', 'coach-planner']
-  return fullWidthRoutes.includes(route.name as string) || route.path.includes('/planner')
+  const fullWidthRoutes = [
+    '/coach/planner',
+    '/coach/import',
+    '/coach/workouts',
+    '/coach/athletes',
+    '/coach/groups',
+    '/coach/philosophy',
+    '/coach/billing',
+    '/workouts',
+  ]
+  return fullWidthRoutes.some(r => route.path.startsWith(r))
 })
+
+// Detect coach routes for sidebar visibility
+const isCoachRoute = computed(() => route.meta.requiresCoach === true)
+
+// Show sidebar only for authenticated coaches on coach routes
+const showSidebar = computed(() => isCoachRoute.value && authStore.isCoach)
 </script>
 
 <template>
-  <div class="min-h-screen bg-feed-bg flex flex-col">
-    <!-- Top Header -->
-    <TopHeader v-if="!hideTopHeader" />
+  <div class="min-h-screen bg-feed-bg flex">
+    <!-- Coach Sidebar — visible at md: on coach routes -->
+    <CoachSidebar v-if="showSidebar" class="hidden md:flex" />
 
-    <!-- Main Content -->
-    <main
-      class="flex-1 w-full"
-      :class="{
-        'pt-14': !hideTopHeader,
-        'pb-20': !hideBottomNav,
-        'max-w-lg mx-auto': !needsFullWidth,
-      }"
+    <!-- Main column -->
+    <div
+      class="flex-1 flex flex-col min-h-screen"
+      :class="{ 'md:ml-16 lg:ml-56': showSidebar }"
     >
-      <slot />
-    </main>
+      <!-- Top Header -->
+      <TopHeader v-if="!hideTopHeader" :slim="showSidebar" />
 
-    <!-- Bottom Navigation -->
-    <BottomNav v-if="!hideBottomNav" />
+      <!-- Main Content -->
+      <main
+        class="flex-1 w-full"
+        :class="{
+          'pt-14': !hideTopHeader,
+          'pb-20': !hideBottomNav && !showSidebar,
+          'md:pb-0': showSidebar,
+          'max-w-lg mx-auto': !needsFullWidth && !showSidebar,
+        }"
+      >
+        <slot />
+      </main>
+
+      <!-- Bottom Navigation — hidden on coach routes at md: when sidebar is visible -->
+      <BottomNav v-if="!hideBottomNav" :class="{ 'md:hidden': showSidebar }" />
+    </div>
   </div>
 </template>

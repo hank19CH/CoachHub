@@ -20,7 +20,7 @@
     </PageHeader>
 
     <!-- Content -->
-    <div class="max-w-2xl mx-auto px-4 py-6">
+    <div class="max-w-2xl md:max-w-none mx-auto px-4 md:px-6 py-6">
       <!-- Loading State -->
       <div v-if="loading" class="flex justify-center py-12">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-summit-600"></div>
@@ -82,21 +82,19 @@
           </button>
         </div>
 
-        <div v-else class="grid gap-4 grid-cols-1 md:grid-cols-2">
+        <!-- Mobile: Card Grid -->
+        <div class="grid gap-4 grid-cols-1 md:hidden">
           <div
             v-for="athleteRelation in filteredAthletes"
-            :key="athleteRelation.id"
+            :key="'card-' + athleteRelation.id"
             class="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition"
           >
             <div class="flex items-start gap-3">
-              <!-- Avatar -->
               <img
                 :src="athleteRelation.athlete.avatar_url || '/default-avatar.svg'"
                 :alt="athleteRelation.athlete.display_name"
                 class="w-12 h-12 rounded-full object-cover"
               />
-
-              <!-- Info -->
               <div class="flex-1 min-w-0">
                 <h3 class="font-semibold text-gray-900 truncate">{{ athleteRelation.athlete.display_name }}</h3>
                 <p class="text-sm text-gray-500">@{{ athleteRelation.athlete.username }}</p>
@@ -104,8 +102,6 @@
                   Last active: {{ formatDate(athleteRelation.last_workout_date) }}
                 </p>
               </div>
-
-              <!-- View Detail -->
               <button
                 @click="viewAthleteDetail(athleteRelation.athlete.id)"
                 class="text-summit-600 hover:text-summit-700 text-sm font-medium"
@@ -113,8 +109,6 @@
                 View
               </button>
             </div>
-
-            <!-- Assign Workout Button -->
             <div class="mt-3 pt-3 border-t border-gray-100">
               <button
                 @click="openAssignModal(athleteRelation.athlete.id)"
@@ -127,6 +121,102 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Desktop: Data Table -->
+        <div class="hidden md:block bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th
+                  @click="toggleSort('name')"
+                  class="text-left px-4 py-3 font-semibold text-gray-500 text-xs uppercase tracking-wider cursor-pointer hover:text-gray-700"
+                >
+                  <div class="flex items-center gap-1">
+                    Athlete
+                    <svg v-if="sortColumn === 'name'" xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" :class="sortDir === 'desc' ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                  </div>
+                </th>
+                <th class="text-left px-4 py-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
+                <th
+                  @click="toggleSort('last_active')"
+                  class="text-left px-4 py-3 font-semibold text-gray-500 text-xs uppercase tracking-wider cursor-pointer hover:text-gray-700"
+                >
+                  <div class="flex items-center gap-1">
+                    Last Active
+                    <svg v-if="sortColumn === 'last_active'" xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" :class="sortDir === 'desc' ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                  </div>
+                </th>
+                <th class="text-right px-4 py-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr
+                v-for="athleteRelation in filteredAthletes"
+                :key="'row-' + athleteRelation.id"
+                class="hover:bg-gray-50 transition-colors cursor-pointer"
+                @click="viewAthleteDetail(athleteRelation.athlete.id)"
+              >
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-3">
+                    <img
+                      :src="athleteRelation.athlete.avatar_url || '/default-avatar.svg'"
+                      :alt="athleteRelation.athlete.display_name"
+                      class="w-9 h-9 rounded-full object-cover flex-shrink-0"
+                    />
+                    <div class="min-w-0">
+                      <div class="font-semibold text-gray-900 truncate">{{ athleteRelation.athlete.display_name }}</div>
+                      <div class="text-xs text-gray-500">@{{ athleteRelation.athlete.username }}</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700">
+                    Active
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-gray-600">
+                  {{ formatDate(athleteRelation.last_workout_date) }}
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <button
+                      @click.stop="viewAthleteDetail(athleteRelation.athlete.id)"
+                      class="p-1.5 rounded-lg hover:bg-summit-50 text-summit-600 transition-colors"
+                      title="View"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                    <button
+                      @click.stop="openAssignModal(athleteRelation.athlete.id)"
+                      class="p-1.5 rounded-lg hover:bg-summit-50 text-summit-600 transition-colors"
+                      title="Assign workout"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                    </button>
+                    <button
+                      @click.stop="router.push('/messages')"
+                      class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
+                      title="Message"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -200,14 +290,41 @@ const activePromptId = ref<string | null>(null)
 const showAssignModal = ref(false)
 const selectedAthleteForAssignment = ref<string | null>(null)
 
+// Sort state for desktop table
+const sortColumn = ref<'name' | 'last_active'>('name')
+const sortDir = ref<'asc' | 'desc'>('asc')
+
+function toggleSort(col: 'name' | 'last_active') {
+  if (sortColumn.value === col) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortColumn.value = col
+    sortDir.value = 'asc'
+  }
+}
+
 const filteredAthletes = computed(() => {
-  if (!searchQuery.value) return athletes.value
-  
-  const query = searchQuery.value.toLowerCase()
-  return athletes.value.filter(athlete =>
-    athlete.athlete.display_name.toLowerCase().includes(query) ||
-    athlete.athlete.username.toLowerCase().includes(query)
-  )
+  let result = athletes.value
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(athlete =>
+      athlete.athlete.display_name.toLowerCase().includes(query) ||
+      athlete.athlete.username.toLowerCase().includes(query)
+    )
+  }
+  // Apply sort
+  return [...result].sort((a, b) => {
+    const dir = sortDir.value === 'asc' ? 1 : -1
+    if (sortColumn.value === 'name') {
+      return dir * a.athlete.display_name.localeCompare(b.athlete.display_name)
+    }
+    if (sortColumn.value === 'last_active') {
+      const da = a.last_workout_date ? new Date(a.last_workout_date).getTime() : 0
+      const db = b.last_workout_date ? new Date(b.last_workout_date).getTime() : 0
+      return dir * (da - db)
+    }
+    return 0
+  })
 })
 
 const formatDate = (date: string | null) => {

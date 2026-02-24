@@ -895,7 +895,9 @@ const exerciseCount = computed(() =>
     </div>
 
     <!-- Content -->
-    <div v-else class="p-4 space-y-4">
+    <div v-else class="p-4 md:flex md:gap-6 md:p-6">
+    <!-- Left Panel: Exercise List -->
+    <div class="space-y-4 md:flex-[4] md:min-w-0">
       <!-- Session mode banner -->
       <div v-if="isSessionMode" class="bg-summit-50 border border-summit-200 rounded-xl p-3">
         <div class="flex items-center gap-2 text-sm">
@@ -1166,7 +1168,129 @@ const exerciseCount = computed(() =>
           </button>
         </div>
       </div>
+    </div><!-- /left panel -->
+
+    <!-- Right Panel: Desktop inline exercise editor (md: only) -->
+    <div class="hidden md:block md:flex-[6] md:min-w-0">
+      <div v-if="showExerciseModal" class="bg-white rounded-xl border border-gray-200 shadow-sm sticky top-20 overflow-y-auto max-h-[calc(100vh-120px)]">
+        <!-- Header -->
+        <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 class="font-semibold text-base text-gray-900">
+            {{ editingExerciseId ? 'Edit Exercise' : 'Add Exercise' }}
+          </h2>
+          <button @click="closeExerciseModal" class="p-1.5 hover:bg-gray-100 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Form -->
+        <div class="p-4 space-y-4">
+          <div v-if="errorMessage" class="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{{ errorMessage }}</div>
+
+          <div>
+            <label class="label">Exercise Name *</label>
+            <input v-model="exerciseForm.name" type="text" placeholder="e.g., Back Squat" class="input" required />
+          </div>
+
+          <div>
+            <label class="label">Description / Instructions</label>
+            <textarea v-model="exerciseForm.description" rows="2" placeholder="Brief instructions or notes..." class="input resize-none"></textarea>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="label">Sets</label>
+              <input v-model="exerciseForm.sets" type="text" inputmode="numeric" placeholder="3 or 3-4" class="input" />
+            </div>
+            <div>
+              <label class="label">Reps</label>
+              <input v-model="exerciseForm.reps" type="text" placeholder="8-10" class="input" />
+            </div>
+            <div>
+              <label class="label">%1RM</label>
+              <input v-model.number="exerciseForm.intensity_percent" type="number" min="0" max="110" step="0.5" placeholder="75" class="input" />
+            </div>
+            <div>
+              <label class="label">RPE</label>
+              <input v-model.number="exerciseForm.rpe" type="number" min="1" max="10" step="0.5" placeholder="8" class="input" />
+            </div>
+            <div>
+              <label class="label">Weight (kg)</label>
+              <input v-model.number="exerciseForm.weight_kg" type="number" min="0" step="0.5" placeholder="60" class="input" />
+            </div>
+            <div>
+              <label class="label">Rest (sec)</label>
+              <input v-model.number="exerciseForm.rest_seconds" type="number" min="0" step="5" placeholder="180" class="input" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="label">Duration (sec)</label>
+              <input v-model.number="exerciseForm.duration_seconds" type="number" min="0" placeholder="30" class="input" />
+            </div>
+            <div>
+              <label class="label">Distance (m)</label>
+              <input v-model.number="exerciseForm.distance_meters" type="number" min="0" placeholder="100" class="input" />
+            </div>
+          </div>
+
+          <div>
+            <label class="label">Notes</label>
+            <textarea v-model="exerciseForm.notes" rows="2" placeholder="Additional notes..." class="input resize-none"></textarea>
+          </div>
+
+          <!-- Advanced -->
+          <details class="group">
+            <summary class="text-xs font-semibold text-gray-500 cursor-pointer hover:text-gray-700">Advanced Prescription</summary>
+            <div class="mt-3 space-y-3">
+              <div>
+                <label class="label">Intensity Prescription</label>
+                <input v-model="exerciseForm.intensity_prescription" type="text" placeholder="70-80% 1RM" class="input" />
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="label">Tempo</label>
+                  <input v-model="exerciseForm.tempo" type="text" placeholder="3-1-2-0" class="input" />
+                </div>
+                <div>
+                  <label class="label">Superset Group</label>
+                  <input v-model="exerciseForm.superset_group" type="text" placeholder="A1" class="input" />
+                </div>
+              </div>
+              <div>
+                <label class="label">Video URL</label>
+                <input v-model="exerciseForm.video_url" type="url" placeholder="https://..." class="input" />
+              </div>
+            </div>
+          </details>
+
+          <!-- Save button -->
+          <div class="flex gap-3 pt-2">
+            <button
+              @click="saveExercise"
+              :disabled="saving || !exerciseForm.name.trim()"
+              class="flex-1 btn-primary py-2.5"
+            >
+              {{ saving ? 'Saving...' : (editingExerciseId ? 'Save Changes' : 'Add Exercise') }}
+            </button>
+            <button @click="closeExerciseModal" class="btn-secondary py-2.5">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty state when no exercise selected -->
+      <div v-else class="bg-gray-50 rounded-xl border-2 border-dashed border-gray-200 p-8 text-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 mx-auto text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+        <p class="text-sm text-gray-400 font-medium">Click an exercise to edit</p>
+        <p class="text-xs text-gray-400 mt-1">Or add a new exercise to get started</p>
+      </div>
     </div>
+    </div><!-- /content flex container -->
 
     <!-- Delete Confirm Dialog -->
     <ConfirmDialog
@@ -1216,10 +1340,10 @@ const exerciseCount = computed(() =>
       </div>
     </Teleport>
 
-    <!-- Exercise Modal -->
+    <!-- Exercise Modal (mobile only — desktop uses inline right panel) -->
     <div
       v-if="showExerciseModal"
-      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50 p-4"
+      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50 p-4 md:hidden"
       @click.self="closeExerciseModal"
     >
       <div class="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col animate-slide-up">

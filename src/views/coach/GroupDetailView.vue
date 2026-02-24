@@ -141,7 +141,7 @@ function getInitials(name: string) {
       </div>
     </div>
 
-    <div v-else-if="group" class="p-4 space-y-6">
+    <div v-else-if="group" class="p-4 md:px-6 space-y-6">
       <!-- Group Info -->
       <div class="card p-4">
         <div class="flex items-start gap-3">
@@ -158,74 +158,79 @@ function getInitials(name: string) {
         </div>
       </div>
 
-      <!-- Members Section -->
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="font-semibold text-gray-900">
-            Members
-            <span class="text-gray-400 font-normal">({{ members.length }})</span>
-          </h3>
-          <button @click="openAddMembersModal" class="btn-sm btn-primary">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-            </svg>
-            Add
-          </button>
-        </div>
-
-        <div v-if="members.length === 0" class="card p-6 text-center text-gray-500 text-sm">
-          No members yet. Add athletes to this group.
-        </div>
-
-        <div v-else class="grid grid-cols-2 gap-3">
-          <div
-            v-for="member in members"
-            :key="member.id"
-            class="card p-3 flex items-center gap-3"
-          >
-            <img
-              v-if="member.athlete?.avatar_url"
-              :src="member.athlete.avatar_url"
-              :alt="member.athlete.display_name"
-              class="w-10 h-10 rounded-full object-cover"
-            />
-            <div
-              v-else
-              class="w-10 h-10 rounded-full bg-gradient-to-br from-summit-600 to-summit-800 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0"
-            >
-              {{ getInitials(member.athlete?.display_name || '?') }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-gray-900 truncate">{{ member.athlete?.display_name }}</p>
-              <p class="text-xs text-gray-500 truncate">@{{ member.athlete?.username }}</p>
-            </div>
-            <button
-              @click="handleRemoveMember(member.athlete_id)"
-              class="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
-              title="Remove"
-            >
+      <!-- Two-column at md: Members + Programs side by side -->
+      <div class="md:grid md:grid-cols-[1fr_320px] md:gap-6 space-y-6 md:space-y-0">
+        <!-- Members Section -->
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-900">
+              Members
+              <span class="text-gray-400 font-normal">({{ members.length }})</span>
+            </h3>
+            <button @click="openAddMembersModal" class="btn-sm btn-primary">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
               </svg>
+              Add
             </button>
           </div>
-        </div>
-      </div>
 
-      <!-- Assign Program Section -->
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="font-semibold text-gray-900">Programs</h3>
-          <button @click="openAssignProgramModal" class="btn-sm btn-primary" :disabled="members.length === 0">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Assign Program
-          </button>
+          <div v-if="members.length === 0" class="card p-6 text-center text-gray-500 text-sm">
+            No members yet. Add athletes to this group.
+          </div>
+
+          <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div
+              v-for="member in members"
+              :key="member.id"
+              class="card p-3 flex items-center gap-3"
+            >
+              <img
+                v-if="member.athlete?.avatar_url"
+                :src="member.athlete.avatar_url"
+                :alt="member.athlete.display_name"
+                class="w-10 h-10 rounded-full object-cover"
+              />
+              <div
+                v-else
+                class="w-10 h-10 rounded-full bg-gradient-to-br from-summit-600 to-summit-800 flex items-center justify-center text-white font-semibold text-xs flex-shrink-0"
+              >
+                {{ getInitials(member.athlete?.display_name || '?') }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-900 truncate">{{ member.athlete?.display_name }}</p>
+                <p class="text-xs text-gray-500 truncate">@{{ member.athlete?.username }}</p>
+              </div>
+              <button
+                @click="handleRemoveMember(member.athlete_id)"
+                class="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                title="Remove"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
-        <p class="text-sm text-gray-500">
-          Assign a program to this group to create workout assignments for all {{ members.length }} members.
-        </p>
+
+        <!-- Assign Program Section (sidebar at md:) -->
+        <div class="md:sticky md:top-4 md:self-start">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-900">Programs</h3>
+            <button @click="openAssignProgramModal" class="btn-sm btn-primary" :disabled="members.length === 0">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Assign Program
+            </button>
+          </div>
+          <div class="card p-4">
+            <p class="text-sm text-gray-500">
+              Assign a program to this group to create workout assignments for all {{ members.length }} members.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   </div>

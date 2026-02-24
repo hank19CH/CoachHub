@@ -261,8 +261,68 @@ function getSessionTypeStyle(type: string) {
         </div>
       </div>
 
-      <!-- Day cards grid -->
-      <div class="grid grid-cols-7 gap-2">
+      <!-- Mobile: Stacked day cards -->
+      <div class="space-y-2 md:hidden">
+        <div
+          v-for="day in days"
+          :key="'m-' + day.index"
+          :class="[
+            'rounded-xl border overflow-hidden',
+            day.isRest && day.sessions.length === 0
+              ? 'bg-gray-50 border-dashed border-gray-200'
+              : 'bg-white border-gray-200'
+          ]"
+        >
+          <div class="flex items-center justify-between px-3 py-2 border-b border-gray-50">
+            <div>
+              <span class="text-xs font-bold text-gray-700">{{ day.name }}</span>
+              <span class="text-[10px] text-gray-400 ml-1.5">{{ day.date }}</span>
+            </div>
+            <button
+              @click="handleAddSession(day.index)"
+              class="text-[10px] font-semibold text-summit-600 hover:text-summit-700 px-2 py-0.5 rounded hover:bg-summit-50 transition-colors"
+            >
+              + Add
+            </button>
+          </div>
+          <div class="px-3 py-2">
+            <div v-if="day.sessions.length === 0 && day.isRest" class="py-1 text-center">
+              <span class="text-[10px] text-gray-400 font-medium">Rest Day</span>
+            </div>
+            <div v-else-if="day.sessions.length === 0" class="py-1 text-center">
+              <span class="text-[10px] text-gray-400">No sessions</span>
+            </div>
+            <div
+              v-for="session in day.sessions"
+              :key="session.id"
+              @click="editingSessionId !== session.id ? handleSessionClick($event, session) : undefined"
+              @dblclick="handleSessionDblClick($event, session)"
+              :class="['py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-summit-400 transition-all relative group mb-1', getSessionTypeStyle(session.type)]"
+            >
+              <div class="flex items-center gap-1.5">
+                <svg v-if="session.isLibrary" xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 shrink-0 opacity-60" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                </svg>
+                <input
+                  v-if="editingSessionId === session.id"
+                  ref="renameInputRef"
+                  v-model="editingSessionName"
+                  @blur="handleSessionRenameConfirm(session.id)"
+                  @keydown="handleRenameKeydown($event, session.id)"
+                  @click.stop
+                  @dblclick.stop
+                  class="w-full bg-white/80 text-xs font-semibold rounded px-1 py-0.5 outline-none ring-1 ring-summit-400 text-gray-900"
+                />
+                <span v-else class="truncate">{{ session.name }}</span>
+                <span v-if="session.exerciseCount > 0 && !session.isLibrary" class="text-[10px] opacity-60 ml-auto">{{ session.exerciseCount }} ex</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop: 7-column day grid -->
+      <div class="hidden md:grid md:grid-cols-7 gap-2">
       <div
         v-for="day in days"
         :key="day.index"

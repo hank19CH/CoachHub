@@ -6,6 +6,10 @@ import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { getTotalUnreadCount } from '@/services/messages'
 
+defineProps<{
+  slim?: boolean
+}>()
+
 const router = useRouter()
 const authStore = useAuthStore()
 const notificationsStore = useNotificationsStore()
@@ -36,23 +40,30 @@ onMounted(async () => {
 </script>
 
 <template>
-  <header class="fixed top-0 left-0 right-0 z-50 bg-white border-b border-feed-border safe-top">
-    <div class="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
+  <header class="fixed top-0 left-0 right-0 z-50 bg-white border-b border-feed-border safe-top"
+    :class="{ 'md:left-16 lg:left-56': slim }">
+    <div class="px-4 h-14 flex items-center justify-between"
+      :class="{ 'max-w-lg mx-auto': !slim }">
       <!-- Logo / Brand -->
       <router-link to="/" class="flex items-center gap-2">
-        <div class="w-8 h-8">
-          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
-            <path 
-              d="M32 8L52 48H12L32 8Z" 
-              class="fill-summit-800"
-            />
-            <path 
-              d="M32 8L42 28L32 24L22 28L32 8Z" 
-              class="fill-peak-500"
-            />
-          </svg>
-        </div>
-        <span class="font-display font-bold text-xl text-summit-800">CoachHub</span>
+        <!-- Hide logo when sidebar is visible (sidebar has its own logo) -->
+        <template v-if="!slim">
+          <div class="w-8 h-8">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
+              <path
+                d="M32 8L52 48H12L32 8Z"
+                class="fill-summit-800"
+              />
+              <path
+                d="M32 8L42 28L32 24L22 28L32 8Z"
+                class="fill-peak-500"
+              />
+            </svg>
+          </div>
+          <span class="font-display font-bold text-xl text-summit-800">CoachHub</span>
+        </template>
+        <!-- Slim mode: just show page context or nothing -->
+        <span v-else class="font-display font-semibold text-lg text-summit-800 hidden md:block"></span>
       </router-link>
 
       <!-- Right side actions -->
