@@ -717,6 +717,12 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 - **Fix**: Added `stopReviewKeepalive()` at the top of `handleClassifyConfirm()` and `handleClassifyFallback()` before any async work begins
 - **Files**: `src/views/coach/SmartImportView.vue` (2 lines added)
 
+### Smart Import Extraction Progress Bar (2026-02-24)
+- **Bug**: No visual feedback after coach clicks "Confirm & Extract Full Program" — progress bar was in a `v-else-if` block that didn't render while `importStep === 'classify_preview'`
+- **Fix**: Added progress bar below ImportClassificationPreview when `isProcessing` is true, disabled action buttons via new `disabled` prop
+- **Files**: `src/views/coach/SmartImportView.vue`, `src/components/planner/ImportClassificationPreview.vue`
+- **Classification caching**: Deferred — classification is lightweight/cheap, extraction (the expensive call) is already cached in `import_history.ai_result`
+
 ---
 
 ## Technical Debt / Cleanup Backlog
@@ -945,7 +951,7 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 - Variation badges for mid-block exercise swaps
 - Week 1 vs Week 2 comparison table
 - Ambiguity resolution UI (priority badges, option buttons, custom input, undo)
-- Action buttons: Confirm & Extract, Skip Mesocycle, Cancel
+- Action buttons: Confirm & Extract, Skip Mesocycle, Cancel — `disabled` prop disables buttons during extraction with "Extracting..." text
 
 ### SmartImportView Integration
 - `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`
@@ -953,6 +959,7 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 - `handleClassifyConfirm()` → `stopReviewKeepalive()` → `runDirectExtract()` (full extraction)
 - `handleClassifyFallback()` → `stopReviewKeepalive()` → `runDirectExtract()` (skip mesocycle)
 - If classify fails → falls through to direct extract seamlessly (non-blocking)
+- Progress bar renders below classification preview during extraction (same animated bar as upload flow), action buttons disabled via `:disabled="isProcessing"` prop
 - Progress bar: simulated ease-out curve over 65s (max 92%), 14 rotating status messages, animated gradient with pulse. Jumps to 100% on API return. Replaced static stage-based progress.
 
 ### Type Additions
