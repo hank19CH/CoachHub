@@ -5,6 +5,7 @@ import { formatPrescription } from '@/services/progressionEngine'
 
 const props = defineProps<{
   classification: ImportClassification
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -389,22 +390,25 @@ const hasHighPriority = computed(() =>
       <button
         v-if="isMesocycle"
         @click="emit('confirm')"
-        class="flex-1 text-white px-6 py-3 rounded-xl font-medium transition-colors"
-        :class="hasHighPriority ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'"
+        :disabled="disabled"
+        class="flex-1 text-white px-6 py-3 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        :class="disabled ? 'bg-summit-600' : hasHighPriority ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'"
       >
-        Confirm &amp; Extract Full Program
+        {{ disabled ? 'Extracting...' : 'Confirm &amp; Extract Full Program' }}
       </button>
       <button
         v-else
         @click="emit('fallback')"
-        class="flex-1 bg-summit-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-summit-700 transition-colors"
+        :disabled="disabled"
+        class="flex-1 bg-summit-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-summit-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        Import as Standalone Sessions
+        {{ disabled ? 'Extracting...' : 'Import as Standalone Sessions' }}
       </button>
       <button
         v-if="isMesocycle"
         @click="emit('fallback')"
-        class="px-6 py-3 border border-gray-300 rounded-xl font-medium hover:bg-gray-50 transition-colors text-sm text-gray-600"
+        :disabled="disabled"
+        class="px-6 py-3 border border-gray-300 rounded-xl font-medium hover:bg-gray-50 transition-colors text-sm text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Skip Mesocycle &mdash; Import as Sessions
       </button>
@@ -412,7 +416,7 @@ const hasHighPriority = computed(() =>
         @click="emit('cancel')"
         class="px-6 py-3 border border-gray-300 rounded-xl font-medium hover:bg-gray-50 transition-colors text-sm"
       >
-        Cancel
+        {{ disabled ? 'Cancel Extraction' : 'Cancel' }}
       </button>
     </div>
   </div>
