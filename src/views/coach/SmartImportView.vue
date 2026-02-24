@@ -604,6 +604,7 @@ const handleImport = async () => {
 const handleClassifyConfirm = async () => {
   if (!file.value || isProcessing.value) return
 
+  stopReviewKeepalive() // Stop keepalive before extract to prevent auth lock contention
   isProcessing.value = true
   error.value = null
   importAbortController = new AbortController()
@@ -629,6 +630,7 @@ const handleClassifyConfirm = async () => {
 const handleClassifyFallback = async () => {
   if (!file.value || isProcessing.value) return
 
+  stopReviewKeepalive() // Stop keepalive before extract to prevent auth lock contention
   classificationResult.value = null
   isProcessing.value = true
   error.value = null
