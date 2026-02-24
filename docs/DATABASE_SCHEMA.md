@@ -1,6 +1,6 @@
 # Vumation (CoachHub) — Complete Database Schema
 
-> **Generated:** 2026-02-16 | **Supabase Project:** `mzrmivqwywinsffkaimw` (us-west-2)
+> **Generated:** 2026-02-23 | **Supabase Project:** `mzrmivqwywinsffkaimw` (us-west-2)
 > **Source of truth:** Live database introspection + migration files + TypeScript types
 
 ---
@@ -41,7 +41,8 @@
 │ coach_prof  │ training_     │ post_media   │ methodology_profiles  │
 │ athlete_    │   blocks      │ likes        │ coach_methodology_    │
 │   prof      │ block_weeks   │ comments     │   matches             │
-│ sports      │ plan_sessions │ follows      │ coach_extracted_      │
+│ sports      │ block_sessions│ follows      │ coach_extracted_      │
+│             │ plan_sessions │              │                       │
 │ coach_      │ workouts      │              │   metrics             │
 │   athletes  │ exercises     │              │ methodology_          │
 │ invite_     │ programs      │              │   learning_log        │
@@ -70,7 +71,7 @@
 └─────────────┴───────────────┴──────────────┴───────────────────────┘
 ```
 
-**Total app tables:** 44 | **Indexes:** 120+ | **RLS policies:** 37+
+**Total app tables:** 45 | **Indexes:** 125+ | **RLS policies:** 38+
 
 ---
 
@@ -407,11 +408,37 @@ Mesocycle blocks within a plan (e.g., "Accumulation", "Intensification").
 | volume_target | `text` | YES | — | |
 | intensity_target | `text` | YES | — | |
 | ai_generated | `boolean` | YES | `false` | |
+| load_metric | `text` | YES | — | e.g., weight, rpe, velocity, time (Sprint 13.5a) |
+| progression_pattern | `text` | YES | — | linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom (Sprint 13.5a) |
+| intensity_start | `numeric` | YES | — | Starting intensity % (Sprint 13.5a) |
+| intensity_end | `numeric` | YES | — | Ending intensity % (Sprint 13.5a) |
+| volume_start | `numeric` | YES | — | Starting volume multiplier (Sprint 13.5a) |
+| volume_end | `numeric` | YES | — | Ending volume multiplier (Sprint 13.5a) |
+| deload_week | `integer` | YES | — | Which week is deload (Sprint 13.5a) |
+| deload_volume_factor | `numeric` | YES | `0.6` | Volume reduction during deload (Sprint 13.5a) |
+| progression_params | `jsonb` | YES | `'{}'` | Additional progression config (Sprint 13.5a) |
 | created_at | `timestamptz` | YES | `now()` | |
 | updated_at | `timestamptz` | YES | `now()` | |
 
 **RLS:** Via plans.coach_id = auth.uid()
 **Indexes:** `idx_training_blocks_plan_id`, `idx_training_blocks_order(plan_id, order_index)`
+
+---
+
+### `block_sessions`
+Canonical Week 1 workouts linked to training blocks. Used by the progression engine to extrapolate week N prescriptions. Added in Sprint 13.5a.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| **id** | `uuid` PK | NO | `gen_random_uuid()` | |
+| training_block_id | `uuid` | NO | — | FK → training_blocks |
+| workout_id | `uuid` | NO | — | FK → workouts |
+| session_day | `integer` | NO | — | 1-7 (day of week) |
+| order_index | `integer` | NO | — | Position within day |
+
+**Constraints:** UNIQUE(training_block_id, session_day, order_index)
+**RLS:** Via training_blocks → plans.coach_id = auth.uid()
+**Indexes:** `idx_block_sessions_block`, `idx_block_sessions_workout`, `idx_block_sessions_unique_day` (UNIQUE)
 
 ---
 
@@ -1412,4 +1439,4 @@ CREATE TABLE marketplace_reviews (
 
 ---
 
-> **Last updated:** 2026-02-16 — auto-generated from live Supabase introspection
+> **Last updated:** 2026-02-23 — Sprint 13.5a progression columns + block_sessions table added

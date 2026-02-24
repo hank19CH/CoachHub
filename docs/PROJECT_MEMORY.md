@@ -31,6 +31,11 @@
 - `src/components/billing/UpgradePromptModal.vue` - 4-variant upgrade modal (soft_nudge/bonus_delight/hard_gate/followup)
 - `src/components/billing/SeatUsageBadge.vue` - Inline seat count badge (color-coded by usage %)
 - `src/components/planner/ImportClassificationPreview.vue` - Two-step import: mesocycle confidence, canonical workout roster, week comparison table, variation badges, ambiguity resolution
+- `src/components/planner/ProgressionMatrix.vue` - Editable week×exercise grid for block progression parameters (Sprint 13.5b)
+- `src/components/planner/CellEditPopover.vue` - Inline popover editor for progression matrix cells (Sprint 13.5b)
+- `src/components/planner/ProgressionSuggestions.vue` - AI-powered progression parameter suggestions with apply/dismiss (Sprint 13.5c)
+- `src/components/planner/VolumeDesigner.vue` - Visual volume planning with Chart.js curves, preset shapes, per-week editing (Sprint 13.6)
+- `src/components/layout/CoachSidebar.vue` - Collapsible coach navigation sidebar for desktop/tablet (Sprint 13.7)
 
 ## Architecture Notes
 - Services in `src/services/` handle Supabase queries
@@ -46,7 +51,7 @@
 - **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
 - **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
-- **Smart Import v32** (Sprint 13.5a): Two-step classify→extract flow. Classify step detects mesocycle structure (no DB writes), coach reviews ImportClassificationPreview, then confirms for full extract. Falls through to direct extract if classify fails or standalone sessions detected. Edge function v32 adds `CLASSIFY_SYSTEM` prompt + `buildClassifySchema()`. Frontend `classifyImport()` in aiImport.ts. SmartImportView has 3 states: `upload` → `classify_preview` → `extract_preview`. **Edge function NEEDS DEPLOY** — production still v39.
+- **Smart Import v33** (Sprint 13.5a): Two-step classify→extract flow. Classify step detects mesocycle structure (no DB writes), coach reviews ImportClassificationPreview, then confirms for full extract. Falls through to direct extract if classify fails or standalone sessions detected. Edge function v33 fixes `callClaude()` to accept `systemPrompt` parameter — classify now correctly uses `CLASSIFY_SYSTEM` (v32 bug: hardcoded `SYSTEM` for all calls). Frontend `classifyImport()` in aiImport.ts. SmartImportView has 3 states: `upload` → `classify_preview` → `extract_preview`. ✅ Edge function v33 deployed 2026-02-23.
 - **Mesocycle Progression Engine** (Sprint 13.5a): Pure TypeScript `src/services/progressionEngine.ts`. Extrapolates week N prescriptions from canonical Week 1 workout + block config. Patterns: linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom. Prilepin's chart maps intensity zones to optimal rep ranges. `detectProgressionPattern()` and `detectDeloadWeek()` analyze exercise slots. `formatPrescription()` renders "4x6 @ 70%" strings.
 - **block_sessions table** (Sprint 13.5a): Links canonical Week 1 workouts to training_blocks. Columns: training_block_id, workout_id, session_day, order_index. RLS via training_blocks → plans.coach_id.
 - **training_blocks progression columns** (Sprint 13.5a): load_metric, progression_pattern, intensity_start/end, volume_start/end, deload_week, deload_volume_factor, progression_params (JSONB).
@@ -61,7 +66,8 @@
 - `sport_context` column is PostgreSQL `text[]` array, NOT JSONB — use `ARRAY['x','y']` not `'[\"x\",\"y\"]'::jsonb`
 - Smart Import: `cancelActiveImport()` in aiImport.ts uses AbortController for 2-minute timeout
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
-- **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block.
+- **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block. **Review keepalive** (v33): separate 30s interval during `classify_preview`/`extract_preview` steps, started/stopped via `watch(importStep)`. Explicit `refreshSession()` before save in `handleConfirmImport()`.
+- **Simulated progress bar** (v33): SmartImportView uses ease-out curve animation over 65s reaching max 92%, then jumps to 100% on API return. 14 rotating messages (e.g., "Detecting sport & structure...", "Parsing sets, reps & intensities..."). Animated gradient bar with pulse effect. Replaced static stage-based progress (uploading→classifying→extracting).
 - **Ambiguity types** (v31): `ImportAmbiguity` in `src/types/import.ts` — `type`, `location`, `originalValue`, `question`, `options[]`, `priority` (1-10), `resolved`, `resolvedValue`. Returned separately from importResult by edge function.
 - **Two-step import flow** (v32): `handleImport()` calls `classifyImport()` first. If mesocycle detected (confidence ≥ 0.4) → shows `ImportClassificationPreview`. Coach confirms → `handleClassifyConfirm()` → `runDirectExtract()`. If classify fails → falls through to `runDirectExtract()` seamlessly. SmartImportView tracks `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`.
 - **ImportClassification type**: `detected_type` is `'mesocycle_program' | 'standalone_sessions'`. `canonical_workouts[]` holds session roster with `ExerciseSlot[]`. `week_samples[]` holds Week 1 vs 2 comparison. `block_config` holds block name/sport.
@@ -666,7 +672,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ## Supabase Edge Functions (All 7)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` (v32) - Two-step classify→extract flow. Classify detects mesocycle structure (no DB writes); extract does full extraction. 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. **NEEDS DEPLOY** — production still v39 (deploy catches up v31+v32).
+3. `smart-import` (v33, ACTIVE) - Two-step classify→extract flow. `callClaude()` parameterized with `systemPrompt` arg (v33 fix: classify now correctly uses `CLASSIFY_SYSTEM` instead of default `SYSTEM`). Classify detects mesocycle structure (no DB writes); extract does full extraction. 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. ✅ Deployed 2026-02-23.
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
 5. `create-checkout-session` - Stripe Checkout session creation (JWT-verified, creates Stripe customer if needed, beta/standard price routing)
 6. `stripe-webhook` - Stripe webhook handler (NO JWT, uses webhook signature + service role key, handles subscription lifecycle)
@@ -722,7 +728,7 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 ---
 
 ## Key Project Docs
-- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (47 tables, 10 enums, 120+ indexes, RLS policies, Sprint 13 billing columns, future proposals)
+- `docs/DATABASE_SCHEMA.md` - Comprehensive database schema (48 tables incl. block_sessions, 10 enums, 120+ indexes, RLS policies, Sprint 13 billing columns, Sprint 13.5a progression columns, future proposals)
 - `docs/PROJECT_MEMORY.md` - This file
 
 ---
@@ -898,7 +904,7 @@ AI-powered document type classification for Smart Import, self-contained plan se
 
 ---
 
-## Sprint 13.5a: Mesocycle Progression Foundation (Completed — NEEDS DEPLOY)
+## Sprint 13.5a: Mesocycle Progression Foundation (Completed & Deployed)
 
 ### Overview
 Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-down (Block → Exercise Roster → Progression Curve → Sessions auto-generate). Two-step classify→extract import flow gives coaches a confirmation preview of detected mesocycle structure before full extraction. Pure TypeScript progression engine calculates week N prescriptions from canonical Week 1 workout + block parameters, with zero AI cost.
@@ -916,8 +922,8 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 - Key exports: `getWeekLoadFactor()`, `extrapolateExercise()`, `extrapolateSession()`, `detectProgressionPattern()`, `detectDeloadWeek()`, `formatPrescription()`
 - Types: `BlockProgressionConfig`, `CanonicalExercise`, `WeekPrescription`
 
-### Smart Import v32 — Two-Step Classify→Extract Flow
-- **Edge function**: Added `CLASSIFY_SYSTEM` prompt (~40 lines), `buildClassifySchema()`, classify route handling
+### Smart Import v33 — Two-Step Classify→Extract Flow
+- **Edge function**: Added `CLASSIFY_SYSTEM` prompt (~40 lines), `buildClassifySchema()`, classify route handling. v33 fix: `callClaude()` parameterized with `systemPrompt` arg (v32 bug: hardcoded `system: SYSTEM` for all calls, so classify never used `CLASSIFY_SYSTEM`).
   - `step: 'classify'` → lightweight AI call detecting mesocycle structure, no DB writes
   - `step: 'extract'` → existing full extraction path (unchanged)
   - Classify returns: `detected_type`, `confidence`, `duration_weeks`, `load_metric`, `progression_pattern`, `canonical_workouts[]`, `week_samples[]`, `ambiguities[]`, `block_config`
@@ -940,7 +946,7 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 - `handleClassifyConfirm()` → `runDirectExtract()` (full extraction)
 - `handleClassifyFallback()` → `runDirectExtract()` (skip mesocycle)
 - If classify fails → falls through to direct extract seamlessly (non-blocking)
-- Progress bar updated: uploading (15%) → classifying (40%) → extracting (65%) → validating (85%) → complete (100%)
+- Progress bar: simulated ease-out curve over 65s (max 92%), 14 rotating status messages, animated gradient with pulse. Jumps to 100% on API return. Replaced static stage-based progress.
 
 ### Type Additions
 - `src/types/database.ts`: `LoadMetric`, `ProgressionPattern` type aliases, `block_sessions` table type, training_blocks progression columns
@@ -948,16 +954,12 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 
 ### Deploy Status
 - **Frontend**: ✅ Committed & pushed. Vercel auto-deploys from main.
-- **Edge function**: ⚠️ `supabase functions deploy smart-import --no-verify-jwt` — production still v39. Deploy catches up both v31 and v32.
+- **Edge function**: ✅ smart-import v33 deployed 2026-02-23 (classify + extract two-step flow live, `callClaude()` system prompt fix).
 - **DB migration**: ⚠️ `20250222_sprint135a_mesocycle_progression.sql` needs to run against production.
-
-### Planned Follow-ups
-- **Sprint 13.5b**: Progression Designer UI — BlockEditor progression tab, visual curve editor
-- **Sprint 13.5c**: AI Suggestions Layer — AI recommends progression params from exercise data
 
 ---
 
-## Smart Import v31: Extraction Guardrails + Ambiguity Detection (Code Complete — NEEDS DEPLOY)
+## Smart Import v31: Extraction Guardrails + Ambiguity Detection (Deployed)
 
 ### What Changed
 - **Sonnet-only**: Removed Haiku model constant and all `forceModel` routing. Every smart-import request now uses `claude-sonnet-4-5`.
@@ -981,7 +983,125 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 
 ### Deploy Status
 - **Frontend**: ✅ Committed & pushed to GitHub (commit `917d298`). Vercel auto-deploys from main.
-- **Edge function**: ⚠️ `supabase functions deploy smart-import --no-verify-jwt` — production is still v39 (old Haiku routing). Must deploy manually.
+- **Edge function**: ✅ smart-import v33 deployed 2026-02-23 (includes v31 guardrails + v32 classify + v33 system prompt fix).
+
+---
+
+## Sprint 13.5b: Progression Designer UI (Completed)
+
+### Overview
+Visual progression matrix for block plans — coaches can see and edit week-by-week exercise prescriptions in a spreadsheet-style grid. Wired into the Planner's Block Editor as a new "Progression" tab.
+
+### New Components
+- `src/components/planner/ProgressionMatrix.vue` — Editable week×exercise grid table. Columns = weeks (1..N), rows = exercises from block_sessions. Each cell shows sets×reps@intensity. Click-to-edit opens CellEditPopover. Loads data via `loadBlockProgressionMatrix()`, saves via `saveWeekEntry()`.
+- `src/components/planner/CellEditPopover.vue` — Inline floating popover for editing a single cell's sets, reps, weight, intensity_percent, rpe, rest_seconds. Positioned via `getBoundingClientRect()`. Emits `save` with partial entry data.
+
+### Progression Engine Additions (`src/services/progressionEngine.ts`)
+- `loadBlockProgressionMatrix(blockId)` — fetches block_sessions + block_weeks, builds week×exercise matrix
+- `saveWeekEntry(blockId, weekNumber, exerciseName, entry)` — upserts a single cell into block_weeks JSONB
+- `detectVolumeSpikes(matrix)` — flags week-over-week volume jumps >20% (returns `VolumeAlert[]`)
+- `VOLUME_PRESET_SHAPES` — 5 named volume curves (linear_ramp, wave_3_1, step_load, reverse_taper, front_loaded) used by VolumeDesigner
+
+### Type Additions (`src/types/progression.ts`)
+- `BlockProgressionParams` — full progression config with pattern, intensity/volume ranges, deload settings
+- `ProgressionMatrixRow`, `WeekEntry`, `VolumeAlert` interfaces
+
+### PlannerView Integration
+- Block Editor right panel: added "Progression" tab alongside Details, History, Analytics, AI
+- Desktop: ProgressionMatrix renders inside block detail panel
+- Mobile: accessible via tab selector
+
+---
+
+## Sprint 13.5c: AI Progression Suggestions (Completed)
+
+### Overview
+AI-powered suggestion layer that recommends progression parameters based on exercise data, block type, and detected patterns. Provides one-click apply for coaches.
+
+### New Component
+- `src/components/planner/ProgressionSuggestions.vue` — Card-based suggestion UI below the ProgressionMatrix. Shows detected patterns, recommended deload weeks, volume curve suggestions. Each suggestion has "Apply" and "Dismiss" buttons. Suggestions generated from `detectProgressionPattern()` and `detectVolumeSpikes()` in progressionEngine.ts.
+
+### PlannerView Integration
+- ProgressionSuggestions wired below ProgressionMatrix in the Progression tab
+- Suggestions auto-refresh when block data changes
+
+---
+
+## Sprint 13.6: Volume Planning Designer (Completed)
+
+### Overview
+Visual volume planning tool with interactive Chart.js line chart, preset volume shapes, and per-week editing. Allows coaches to design the volume curve for a training block visually.
+
+### New Component
+- `src/components/planner/VolumeDesigner.vue` — Full volume planning UI:
+  - Chart.js line chart (via vue-chartjs) showing volume % across weeks with tension curves
+  - 5 preset shape buttons (Linear Ramp, Wave 3:1, Step Load, Reverse Taper, Front Loaded) from `VOLUME_PRESET_SHAPES`
+  - Per-week volume input sliders/number fields
+  - Deload week auto-detection indicator
+  - Save targets via `saveVolumeTargets()` to training_blocks progression_params JSONB
+
+### Progression Engine Additions
+- `saveVolumeTargets(blockId, weekTargets)` — persists volume curve to `training_blocks.progression_params`
+- `VOLUME_PRESET_SHAPES` constant — 5 named curves with percentage arrays
+
+### PlannerView Integration
+- VolumeDesigner wired as a section within the Progression tab, below ProgressionMatrix + Suggestions
+- Volume shape selection auto-populates the week entries
+
+---
+
+## Sprint 13.7: Coach Sidebar + Desktop Layout Uplift (Completed)
+
+### Overview
+Comprehensive desktop/tablet layout overhaul. Added a collapsible coach navigation sidebar, converted mobile-only card views to responsive data tables, and applied two-column layouts across coach views. All changes are additive — mobile-first patterns preserved, desktop enhancements layered via `md:` and `lg:` breakpoints.
+
+### Sprint 13.7a — Coach Sidebar & Layout Foundation
+
+**New Component:**
+- `src/components/layout/CoachSidebar.vue` — Collapsible sidebar navigation for coach routes at `lg:` breakpoint. Fixed left rail with icon-only collapsed state and expanded state with labels. Sections: Training, Athletes, Intelligence, Settings. Active route highlighting. Collapse toggle button.
+
+**Modified Layout Components:**
+- `src/components/layout/AppLayout.vue` — Integrated CoachSidebar for coach routes. `lg:ml-16` (collapsed) / `lg:ml-56` (expanded) margin shift. Sidebar hidden on mobile.
+- `src/components/layout/TopHeader.vue` — Slim mode at `lg:` when sidebar is active (reduced height, hide branding text).
+
+### Sprint 13.7b — View-Level Desktop Uplift
+
+**WeekEditor (`src/components/planner/WeekEditor.vue`):**
+- Mobile: 1-column card stack (unchanged)
+- Desktop: 7-column day grid at `md:` with compact session cards
+
+**WorkoutBuilder (`src/views/coach/WorkoutBuilderView.vue`):**
+- Two-column at `md:`: exercise list (left) + settings/preview sidebar (right, sticky)
+- `md:grid md:grid-cols-[1fr_340px] md:gap-6`
+
+**AthletesView (`src/views/coach/AthletesView.vue`):**
+- Mobile: card list with `md:hidden`
+- Desktop: sortable data table with `hidden md:block` — columns: Athlete (avatar+name), Sport, Status, Joined, Actions
+- Click-to-sort on column headers with asc/desc indicators
+
+**SmartImportView (`src/views/coach/SmartImportView.vue`):**
+- Import preview section: two-column grid at `md:`
+- Left column: success header, plan type selector, adaptive preview
+- Right column (sticky sidebar): library summary, ambiguity resolution, actions
+
+**GroupsView (`src/views/coach/GroupsView.vue`):**
+- Mobile: card list with `md:hidden`
+- Desktop: data table with `hidden md:block` — columns: Group (icon+name), Sport, Team, Members (badge), Actions
+
+**GroupDetailView (`src/views/coach/GroupDetailView.vue`):**
+- Two-column at `md:`: members grid (3-col) on left, programs sidebar (sticky) on right
+- `md:grid md:grid-cols-[1fr_320px] md:gap-6`
+
+**PhilosophyInsightsView (`src/views/coach/PhilosophyInsightsView.vue`):**
+- Widened container to `md:max-w-5xl md:px-6`
+- Periodization + Top Exercises in 2-column grid at `md:`
+- Movement patterns grid: `md:grid-cols-7`
+
+### Desktop Layout Patterns Used
+- **Two-column content + sidebar**: `md:grid md:grid-cols-[1fr_340px] md:gap-6` with `md:sticky md:top-4 md:self-start` on sidebar
+- **Mobile-only / Desktop-only**: `md:hidden` and `hidden md:block` for progressive enhancement
+- **Data tables**: `<table>` with `hover:bg-gray-50` rows, sortable headers, action columns with `@click.stop`
+- **Collapsible sidebar**: Fixed left rail at `lg:`, icon-only when collapsed (`w-16`), expanded with labels (`w-56`)
 
 ---
 

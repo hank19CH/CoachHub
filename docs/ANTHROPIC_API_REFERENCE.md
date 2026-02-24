@@ -29,8 +29,7 @@ Last updated: 2026-02-16
 | Haiku 3 | `claude-3-haiku-20240307` | $0.25 | $1.25 | 4K |
 
 ### Vumation Model Usage
-- **Smart Import (spreadsheets):** `claude-haiku-4-5` (pre-parsed text, ~$0.0005/import)
-- **Smart Import (PDF/images):** `claude-sonnet-4-5` (vision/document parsing)
+- **Smart Import (ALL file types):** `claude-sonnet-4-5` — v31 switched to Sonnet-only (Haiku removed). Two-step classify→extract flow. ~$0.005-0.02/import.
 - **Plan Generation/Modification:** `claude-sonnet-4-5` (Tier 2/3 AI)
 - **Session Generation:** `claude-sonnet-4-5`
 - **Philosophy Analysis:** `claude-sonnet-4-5`

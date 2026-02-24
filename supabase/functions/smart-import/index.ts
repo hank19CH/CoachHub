@@ -1,4 +1,4 @@
-// smart-import Edge Function (v32 - Mesocycle progression + two-step classify/extract)
+// smart-import Edge Function (v33 - Fix: classify step now uses CLASSIFY_SYSTEM prompt)
 // Supports two modes via `step` parameter:
 //   step: "classify" → Detect mesocycle structure, return classification (no DB writes)
 //   step: "extract" (default) → Full extraction (backward compatible with v31)
@@ -778,6 +778,7 @@ async function callClaude(
   model: string,
   maxTokens: number,
   messages: Array<{ role: string; content: any }>,
+  systemPrompt: string = SYSTEM,
 ): Promise<{ text: string; usage: any; stopReason: string }> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -790,7 +791,7 @@ async function callClaude(
       model,
       max_tokens: maxTokens,
       temperature: 0,
-      system: SYSTEM,
+      system: systemPrompt,
       messages,
     }),
   })
@@ -965,7 +966,7 @@ ${fileContent}
 
 ${classifySchema}${glossaryPrompt}${coachContextHints}`,
           },
-        ])
+        ], CLASSIFY_SYSTEM)
       } else {
         const contentBlocks: any[] = []
         if (fileType === 'application/pdf') {
@@ -990,7 +991,7 @@ ${classifySchema}${glossaryPrompt}${coachContextHints}`,
         })
         classifyResult = await callClaude(SONNET, 30000, [
           { role: 'user', content: contentBlocks },
-        ])
+        ], CLASSIFY_SYSTEM)
       }
 
       // Parse classification result

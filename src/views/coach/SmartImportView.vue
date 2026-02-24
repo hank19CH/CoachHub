@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onUnmounted } from 'vue'
 import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext, ImportClassification } from '@/types/import'
 import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS, IMPORT_SPORT_OPTIONS, IMPORT_FOCUS_OPTIONS, IMPORT_PLAN_TYPE_OPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { importProgram, classifyImport, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
 import type { ImportResult, ImportHistoryRecord, ImportAmbiguity } from '@/types/import'
 import { detectAbbreviationsFromCorrections, batchSaveAbbreviations } from '@/services/coachAbbreviations'
+import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CONFIG } from '@/config/ai'
 import Toast from '@/components/ui/Toast.vue'
@@ -36,6 +37,100 @@ const importHistory = ref<ImportHistoryRecord[]>([])
 // Two-step flow: classify → preview → extract
 const importStep = ref<'upload' | 'classify_preview' | 'extract_preview'>('upload')
 const classificationResult = ref<ImportClassification | null>(null)
+
+// ── Session keepalive (keeps Supabase auth alive during review) ──
+let reviewKeepaliveId: ReturnType<typeof setInterval> | null = null
+
+function startReviewKeepalive() {
+  stopReviewKeepalive()
+  reviewKeepaliveId = setInterval(async () => {
+    try { await supabase.auth.refreshSession() }
+    catch { /* ignore */ }
+  }, 30_000) // every 30s during review
+}
+
+function stopReviewKeepalive() {
+  if (reviewKeepaliveId) {
+    clearInterval(reviewKeepaliveId)
+    reviewKeepaliveId = null
+  }
+}
+
+onUnmounted(() => stopReviewKeepalive())
+
+// Start keepalive whenever we enter a review step
+watch(importStep, (step) => {
+  if (step === 'classify_preview' || step === 'extract_preview') {
+    startReviewKeepalive()
+  } else {
+    stopReviewKeepalive()
+  }
+})
+
+// ── Simulated progress bar ──
+const PROGRESS_MESSAGES = [
+  { at: 0, text: 'Preparing your file...' },
+  { at: 5, text: 'Uploading to AI...' },
+  { at: 10, text: 'AI is reading your program...' },
+  { at: 18, text: 'Detecting sport & structure...' },
+  { at: 25, text: 'Identifying exercises...' },
+  { at: 32, text: 'Parsing sets, reps & intensities...' },
+  { at: 40, text: 'Mapping weekly progressions...' },
+  { at: 48, text: 'Checking for abbreviations...' },
+  { at: 55, text: 'Cross-referencing your glossary...' },
+  { at: 62, text: 'Validating exercise prescriptions...' },
+  { at: 70, text: 'Organizing into blocks & sessions...' },
+  { at: 78, text: 'Almost there...' },
+  { at: 85, text: 'Applying final polish...' },
+  { at: 90, text: 'Wrapping up... hang tight!' },
+]
+
+const simulatedProgress = ref(0)
+const progressMessage = ref('Preparing your file...')
+let progressTimerId: ReturnType<typeof setInterval> | null = null
+const progressComplete = ref(false)
+
+function startProgressSimulation() {
+  simulatedProgress.value = 0
+  progressComplete.value = false
+  progressMessage.value = PROGRESS_MESSAGES[0].text
+
+  const TOTAL_DURATION = 65_000 // 65 seconds to reach ~92%
+  const TICK_MS = 300
+  const MAX_SIMULATED = 92 // never exceed this until API returns
+  let elapsed = 0
+
+  progressTimerId = setInterval(() => {
+    elapsed += TICK_MS
+    // Ease-out curve: fast start, slows down near end
+    const t = Math.min(elapsed / TOTAL_DURATION, 1)
+    const eased = 1 - Math.pow(1 - t, 2.5) // quadratic ease-out
+    simulatedProgress.value = Math.min(Math.round(eased * MAX_SIMULATED), MAX_SIMULATED)
+
+    // Update message based on progress
+    for (let i = PROGRESS_MESSAGES.length - 1; i >= 0; i--) {
+      if (simulatedProgress.value >= PROGRESS_MESSAGES[i].at) {
+        progressMessage.value = PROGRESS_MESSAGES[i].text
+        break
+      }
+    }
+  }, TICK_MS)
+}
+
+function completeProgress() {
+  if (progressTimerId) { clearInterval(progressTimerId); progressTimerId = null }
+  simulatedProgress.value = 100
+  progressMessage.value = 'Complete!'
+  progressComplete.value = true
+}
+
+function stopProgressSimulation() {
+  if (progressTimerId) { clearInterval(progressTimerId); progressTimerId = null }
+  simulatedProgress.value = 0
+  progressComplete.value = false
+}
+
+onUnmounted(() => stopProgressSimulation())
 
 // Exercise review & abbreviation learning
 const expandedWorkouts = ref<Set<string>>(new Set())
@@ -389,7 +484,9 @@ onBeforeUnmount(() => {
   if (isProcessing.value) {
     cancelActiveImport()
     importAbortController?.abort()
+    stopProgressSimulation()
   }
+  stopReviewKeepalive()
 })
 
 const fileTypeLabel = computed(() => {
@@ -464,14 +561,10 @@ const handleImport = async () => {
 
   isProcessing.value = true
   error.value = null
-  processingStage.value = 'uploading'
   importAbortController = new AbortController()
+  startProgressSimulation()
 
   try {
-    processingStage.value = 'uploading'
-    await new Promise(resolve => setTimeout(resolve, 400))
-
-    processingStage.value = 'classifying'
     const context = buildPreImportContext()
 
     try {
@@ -479,6 +572,7 @@ const handleImport = async () => {
 
       if (classification.detected_type === 'mesocycle_program' && classification.confidence >= 0.4) {
         // Show classification preview for coach confirmation
+        completeProgress()
         classificationResult.value = classification
         importStep.value = 'classify_preview'
         isProcessing.value = false
@@ -499,6 +593,7 @@ const handleImport = async () => {
     console.error('Import error:', err)
   } finally {
     isProcessing.value = false
+    stopProgressSimulation()
     importAbortController = null
   }
 }
@@ -512,6 +607,7 @@ const handleClassifyConfirm = async () => {
   isProcessing.value = true
   error.value = null
   importAbortController = new AbortController()
+  startProgressSimulation()
 
   try {
     const context = buildPreImportContext()
@@ -522,6 +618,7 @@ const handleClassifyConfirm = async () => {
     console.error('Import error:', err)
   } finally {
     isProcessing.value = false
+    stopProgressSimulation()
     importAbortController = null
   }
 }
@@ -536,6 +633,7 @@ const handleClassifyFallback = async () => {
   isProcessing.value = true
   error.value = null
   importAbortController = new AbortController()
+  startProgressSimulation()
 
   try {
     const context = buildPreImportContext()
@@ -546,6 +644,7 @@ const handleClassifyFallback = async () => {
     console.error('Import error:', err)
   } finally {
     isProcessing.value = false
+    stopProgressSimulation()
     importAbortController = null
   }
 }
@@ -570,15 +669,13 @@ const handleClassifyUnresolveAmbiguity = (index: number) => {
 const runDirectExtract = async (context: PreImportContext) => {
   if (!file.value) return
 
-  processingStage.value = 'parsing'
   if (!importAbortController) importAbortController = new AbortController()
 
   const result = await importProgram(file.value, importAbortController.signal, context)
 
-  processingStage.value = 'validating'
-  await new Promise(resolve => setTimeout(resolve, 300))
+  completeProgress()
+  await new Promise(resolve => setTimeout(resolve, 400))
 
-  processingStage.value = 'complete'
   importResult.value = result.importResult
   historyRecord.value = result.historyRecord
   importStep.value = 'extract_preview'
@@ -600,6 +697,9 @@ const handleConfirmImport = async () => {
   isSaving.value = true
   error.value = null
   try {
+    // Refresh session before save to prevent token expiry during long review
+    await supabase.auth.refreshSession()
+
     // Override the plan type in the import result with the user's selection
     importResult.value.detectedPlanType = selectedPlanType.value
 
@@ -659,7 +759,9 @@ const handleCancel = () => {
     cancelActiveImport()
     importAbortController?.abort()
     isProcessing.value = false
+    stopProgressSimulation()
   }
+  stopReviewKeepalive()
   file.value = null
   importResult.value = null
   historyRecord.value = null
@@ -896,34 +998,26 @@ const statusIcon = (status: string) => {
 
           <!-- Processing Stages -->
           <div v-if="isProcessing" class="space-y-4">
-            <div class="flex items-center gap-4">
-              <div class="flex-1">
-                <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    class="h-full bg-summit-600 transition-all duration-500 ease-out"
-                    :style="{
-                      width: processingStage === 'uploading' ? '15%' :
-                             processingStage === 'classifying' ? '40%' :
-                             processingStage === 'parsing' ? '65%' :
-                             processingStage === 'validating' ? '85%' : '100%'
-                    }"
-                  ></div>
-                </div>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700">{{ progressMessage }}</span>
+                <span class="text-xs font-mono text-gray-400">{{ simulatedProgress }}%</span>
               </div>
-              <div class="text-sm font-medium text-gray-700 min-w-[120px] text-right">
-                {{ processingStage === 'uploading' ? 'Uploading...' :
-                   processingStage === 'classifying' ? 'Classifying...' :
-                   processingStage === 'parsing' ? 'AI Extracting...' :
-                   processingStage === 'validating' ? 'Validating...' : 'Complete!' }}
+              <div class="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-300 ease-out"
+                  :class="progressComplete ? 'bg-emerald-500' : 'bg-gradient-to-r from-summit-500 to-summit-600 animate-pulse'"
+                  :style="{ width: simulatedProgress + '%' }"
+                ></div>
               </div>
             </div>
 
-            <div class="flex items-center gap-2 text-sm text-gray-600">
-              <svg class="animate-spin h-4 w-4 text-summit-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <div class="flex items-center gap-2 text-xs text-gray-500">
+              <svg class="animate-spin h-3.5 w-3.5 text-summit-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span>Processing with AI (est. cost: ${{ AI_CONFIG.import.estimatedCostPerImport.toFixed(4) }})</span>
+              <span>PDFs typically take 60-90 seconds &mdash; spreadsheets are faster</span>
             </div>
           </div>
 
