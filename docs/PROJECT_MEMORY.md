@@ -21,7 +21,7 @@
 - Pinia stores use composition API pattern: `defineStore('name', () => { ... })`
 - Edge Functions use JWT verification via `supabase.auth.getUser(token)`
 - AI methodology guardrails: `getMethodologyContext(coachId)` injected into generate-plan/generate-session Edge Functions
-- Smart Import SheetJS pre-parsing: frontend parses Excel/CSV via `xlsx` before sending structured JSON to Edge Function
+- Smart Import v34.1: `importFileParser.ts` shared `prepareFileContent()` parses once → `PreparedContent` cached and reused for classify + extract. GUARDRAIL 4: exercise names preserved exactly as coach wrote them. Auth data cached from classify, passed to extract (avoids `navigator.locks` deadlock).
 
 ## UI Components
 - `src/components/ui/ConfirmDialog.vue` - Reusable confirm dialog (replaces native confirm())
@@ -681,7 +681,7 @@ Local pattern matching replaces expensive AI philosophy detection ($0.015/call -
 ## Supabase Edge Functions (All 7)
 1. `generate-plan` - Claude Sonnet 4.5, Tier 2/3 AI plan modifications & generation, accepts `methodologyContext` for guardrail injection
 2. `generate-session` - Claude Sonnet 4.5, exercise prescription generation, accepts `methodologyContext` for guardrail injection
-3. `smart-import` (v33, ACTIVE) - Two-step classify→extract flow. `callClaude()` parameterized with `systemPrompt` arg (v33 fix: classify now correctly uses `CLASSIFY_SYSTEM` instead of default `SYSTEM`). Classify detects mesocycle structure (no DB writes); extract does full extraction. 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting, exercise naming rules. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. ✅ Deployed 2026-02-23.
+3. `smart-import` (v34.1, ACTIVE) - Clean 4-module rebuild: `sport-detection.ts`, `prompts.ts`, `claude.ts`, `index.ts` (1235→440 lines). Two-step classify→extract with coach resolutions threaded into extract prompt. GUARDRAIL 4: exercise names preserved EXACTLY as coach wrote them — sport-specific rules focus on structural parsing only. Auth data cached from classify → passed to extract (avoids navigator.locks deadlock). `AbortSignal.any()` + `AbortSignal.timeout()` for cancellation. Review keepalive removed. 5 extraction guardrails + AI ambiguity detection. 50K max output tokens. Pre-import context dropdowns, payload compaction, complete block extraction, anti-column-shifting. Plan type classification (4 types), evolving session schema; accepts pre-parsed SheetJS data. ✅ Deployed 2026-03-01.
 4. `analyze-philosophy` - Coaching philosophy analysis, dual auth (JWT + trigger secret)
 5. `create-checkout-session` - Stripe Checkout session creation (JWT-verified, creates Stripe customer if needed, beta/standard price routing)
 6. `stripe-webhook` - Stripe webhook handler (NO JWT, uses webhook signature + service role key, handles subscription lifecycle)
@@ -719,11 +719,16 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 - Workouts card remains for one-off session builds
 - Programs files, DB tables, and routes all retained — just not surfaced in Coach Hub UI
 
-### Smart Import Auth Lock Deadlock Fix (2026-02-24)
-- **Bug**: After confirming mesocycle classification, import hung at "Refreshing auth session..." and never proceeded
-- **Root cause**: Supabase JS v2 auth client uses an internal lock to prevent concurrent `refreshSession()` calls. The review keepalive interval (30s) could race with `importProgram()`'s `refreshSession()` call, causing a deadlock — the second call waited for the lock held by the first, but the first never completed because the lock was contended
-- **Fix**: Added `stopReviewKeepalive()` at the top of `handleClassifyConfirm()` and `handleClassifyFallback()` before any async work begins
-- **Files**: `src/views/coach/SmartImportView.vue` (2 lines added)
+### Smart Import Auth Lock Deadlock Fix (v34.1, 2026-03-01)
+- **Bug**: After confirming mesocycle classification, extract hung at "Getting auth session..." and never proceeded
+- **Root cause**: Supabase JS v2 auth client uses `navigator.locks` for `getSession()`/`refreshSession()`. After classify→review→extract flow, the second `getSession()` call (in `importProgram()`) would deadlock — stale keepalive intervals or lock contention from the classify phase prevented the lock from being acquired.
+- **Three-part fix**:
+  1. Review keepalive removed entirely (sessions last 1hr, review takes minutes)
+  2. `classifyImport()` now returns `authData: { accessToken, coachId }` — cached by SmartImportView
+  3. `importProgram()` accepts optional `cachedAuth` param, skipping `getSession()` entirely when auth data is available from classify
+- **Also fixed**: `AbortSignal.any()` + `AbortSignal.timeout()` replace fragile `AbortController` + `addEventListener` chain (adding abort listener to already-aborted signal fires synchronously per DOM spec, causing race condition). `importProgram()` finally block cleaned up (removed stale `timeoutId`/`abortController` refs).
+- **Result**: Auth calls per import flow reduced from 7 to 1.
+- **Files**: `src/services/aiImport.ts`, `src/views/coach/SmartImportView.vue`
 
 ### Smart Import Extraction Progress Bar (2026-02-24)
 - **Bug**: No visual feedback after coach clicks "Confirm & Extract Full Program" — progress bar was in a `v-else-if` block that didn't render while `importStep === 'classify_preview'`
@@ -943,13 +948,13 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 - Key exports: `getWeekLoadFactor()`, `extrapolateExercise()`, `extrapolateSession()`, `detectProgressionPattern()`, `detectDeloadWeek()`, `formatPrescription()`
 - Types: `BlockProgressionConfig`, `CanonicalExercise`, `WeekPrescription`
 
-### Smart Import v33 — Two-Step Classify→Extract Flow
-- **Edge function**: Added `CLASSIFY_SYSTEM` prompt (~40 lines), `buildClassifySchema()`, classify route handling. v33 fix: `callClaude()` parameterized with `systemPrompt` arg (v32 bug: hardcoded `system: SYSTEM` for all calls, so classify never used `CLASSIFY_SYSTEM`).
+### Smart Import v34.1 — Two-Step Classify→Extract Flow
+- **Edge function rebuilt** (v34.1): 1235-line monolith split into 4 clean modules: `sport-detection.ts` (10 sport regex banks + rules), `prompts.ts` (system prompts + schemas), `claude.ts` (API wrapper), `index.ts` (handler + routing). All sport-specific rules rewritten to preserve exercise names (no "EXPAND" instructions — aligned with GUARDRAIL 4).
   - `step: 'classify'` → lightweight AI call detecting mesocycle structure, no DB writes
-  - `step: 'extract'` → existing full extraction path (unchanged)
+  - `step: 'extract'` → full extraction; accepts optional `classifyResult` + `coachResolutions` to thread coach's confirmed answers into prompt as "PRIOR CLASSIFICATION" + "COACH RESOLUTIONS" sections
   - Classify returns: `detected_type`, `confidence`, `duration_weeks`, `load_metric`, `progression_pattern`, `canonical_workouts[]`, `week_samples[]`, `ambiguities[]`, `block_config`
   - Logs to `ai_plan_logs` with action `'smart_import_classify'`
-- **Frontend service**: `classifyImport()` in `src/services/aiImport.ts` — same patterns as `importProgram()` (auth keepalive, abort controller, SheetJS pre-parsing)
+- **Frontend service**: `classifyImport()` returns `{ classification, preparedContent, authData }` — `authData` cached by view and passed to `importProgram()` via `cachedAuth` param to avoid `navigator.locks` deadlock. Uses `AbortSignal.any()` + `AbortSignal.timeout()` instead of manual `AbortController` chain.
 
 ### Import Classification Preview (`src/components/planner/ImportClassificationPreview.vue`)
 - Confidence indicator (color-coded: emerald/summit/amber/red)
@@ -963,20 +968,21 @@ Flips Smart Import from bottom-up (build sessions manually, copy, tweak) to top-
 
 ### SmartImportView Integration
 - `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`
-- `handleImport()` → `classifyImport()` first → if mesocycle detected (confidence ≥ 0.4) → show preview
-- `handleClassifyConfirm()` → `stopReviewKeepalive()` → `runDirectExtract()` (full extraction)
-- `handleClassifyFallback()` → `stopReviewKeepalive()` → `runDirectExtract()` (skip mesocycle)
+- `handleImport()` → `prepareFileContent()` once → cache `PreparedContent` + call `classifyImport(file, signal, context, prepared)` → caches `authData` from response → if mesocycle detected (confidence ≥ 0.4) → show preview
+- `handleClassifyConfirm()` → gathers `CoachResolutions` from resolved ambiguities → `runDirectExtract(context, resolutions)` → `importProgram(file, signal, context, resolutions, prepared, cachedAuth)` — file never re-parsed, auth never re-fetched
+- `handleClassifyFallback()` → `runDirectExtract()` without resolutions (skip mesocycle context)
 - If classify fails → falls through to direct extract seamlessly (non-blocking)
+- Review keepalive removed entirely (was causing `navigator.locks` deadlock). Auth keepalive only runs inside `classifyImport()` and `importProgram()` during actual AI `fetch()`.
 - Progress bar renders below classification preview during extraction (same animated bar as upload flow), action buttons disabled via `:disabled="isProcessing"` prop
-- Progress bar: simulated ease-out curve over 65s (max 92%), 14 rotating status messages, animated gradient with pulse. Jumps to 100% on API return. Replaced static stage-based progress.
+- Progress bar: simulated ease-out curve over 65s (max 92%), 14 rotating status messages, animated gradient with pulse. Jumps to 100% on API return.
 
 ### Type Additions
 - `src/types/database.ts`: `LoadMetric`, `ProgressionPattern` type aliases, `block_sessions` table type, training_blocks progression columns
 - `src/types/import.ts`: `ExerciseWeekEntry`, `ExerciseSlot`, `ImportClassification` interfaces
 
 ### Deploy Status
-- **Frontend**: ✅ Committed & pushed. Vercel auto-deploys from main.
-- **Edge function**: ✅ smart-import v33 deployed 2026-02-23 (classify + extract two-step flow live, `callClaude()` system prompt fix).
+- **Frontend**: ✅ Committed. Vercel auto-deploys from main after push.
+- **Edge function**: ✅ smart-import v34.1 deployed 2026-03-01 (4-module rebuild, GUARDRAIL 4 name preservation, auth passthrough, coach resolutions pipeline).
 - **DB migration**: ⚠️ `20250222_sprint135a_mesocycle_progression.sql` needs to run against production.
 
 ---
