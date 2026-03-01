@@ -719,16 +719,17 @@ All functions: `verify_jwt = false` at gateway level (see Technical Debt), inter
 - Workouts card remains for one-off session builds
 - Programs files, DB tables, and routes all retained — just not surfaced in Coach Hub UI
 
-### Smart Import Auth Lock Deadlock Fix (v34.1, 2026-03-01)
-- **Bug**: After confirming mesocycle classification, extract hung at "Getting auth session..." and never proceeded
-- **Root cause**: Supabase JS v2 auth client uses `navigator.locks` for `getSession()`/`refreshSession()`. After classify→review→extract flow, the second `getSession()` call (in `importProgram()`) would deadlock — stale keepalive intervals or lock contention from the classify phase prevented the lock from being acquired.
-- **Three-part fix**:
-  1. Review keepalive removed entirely (sessions last 1hr, review takes minutes)
-  2. `classifyImport()` now returns `authData: { accessToken, coachId }` — cached by SmartImportView
-  3. `importProgram()` accepts optional `cachedAuth` param, skipping `getSession()` entirely when auth data is available from classify
-- **Also fixed**: `AbortSignal.any()` + `AbortSignal.timeout()` replace fragile `AbortController` + `addEventListener` chain (adding abort listener to already-aborted signal fires synchronously per DOM spec, causing race condition). `importProgram()` finally block cleaned up (removed stale `timeoutId`/`abortController` refs).
-- **Result**: Auth calls per import flow reduced from 7 to 1.
-- **Files**: `src/services/aiImport.ts`, `src/views/coach/SmartImportView.vue`
+### Smart Import Auth Lock Deadlock Fix (v34.1→v34.2, 2026-03-01)
+- **Bug (v34.1)**: After confirming mesocycle classification, extract hung at "Using cached auth" and never proceeded — no extract entries in `ai_plan_logs`, no `import_history` records created
+- **Root cause**: The `classifyImport()` keepalive called `refreshSession()` every 20s during the ~108s PDF classify fetch. When classify completed, `clearInterval` stopped scheduling new callbacks but couldn't cancel an in-flight `refreshSession()` still holding the `navigator.locks` lock. The extract step's supabase client calls (`.from('import_history').select()`, `.insert()`, `storage.upload()`) internally call `getSession()` which tried to acquire the same lock → deadlock. The `importProgram()` keepalive had the same risk.
+- **Four-part fix** (v34.2):
+  1. ALL auth keepalives removed from both `classifyImport()` and `importProgram()` — sessions last 1hr, keepalives are unnecessary and dangerous
+  2. `classifyImport()` returns `authData: { accessToken, coachId }` — cached by SmartImportView
+  3. `importProgram()` accepts optional `cachedAuth` param, skipping direct `getSession()` when auth data is available from classify
+  4. Timeout increased from 120s to 300s — PDF extraction takes 100-120s server-side; old timeout was too tight with frontend overhead
+- **Also fixed**: `AbortSignal.any()` + `AbortSignal.timeout()` replace fragile `AbortController` + `addEventListener` chain. Added diagnostic `console.log` between each async supabase call in `importProgram()` to trace hangs. Cleaned 2 stale `processing` records in `import_history`.
+- **Result**: Auth calls per import flow reduced from 7 to 1. Zero lock contention risk.
+- **Files**: `src/services/aiImport.ts`
 
 ### Smart Import Extraction Progress Bar (2026-02-24)
 - **Bug**: No visual feedback after coach clicks "Confirm & Extract Full Program" — progress bar was in a `v-else-if` block that didn't render while `importStep === 'classify_preview'`
