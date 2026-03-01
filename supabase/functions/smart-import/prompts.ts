@@ -168,7 +168,7 @@ export function buildClassifySchema(sportContext: string): string {
   "week_samples": [{
     "week_number": number,
     "exercises": [{
-      "name": "string",
+      "name": "string (pick 4-6 key exercises ONLY — main compound lifts that show progression)",
       "prescription": "string (human-readable: '4x6 @ 70%')",
       "variation_name": "string | null"
     }]
@@ -189,8 +189,8 @@ export function buildClassifySchema(sportContext: string): string {
 }
 
 RULES:
-1. Include week_samples for at least Week 1 and Week 2 (or the first 2 available weeks) so the coach can preview the progression.
-2. For mesocycle_program: EVERY exercise must have entries for ALL weeks, even if prescription is identical (reps_only programs).
+1. week_samples is a SMALL preview — include only 4-6 KEY compound/main exercises that best demonstrate the progression contrast between weeks. Do NOT include every exercise. Include at least Week 1 and Week 2 (or the first 2 available weeks). Pick exercises from different sessions to show variety.
+2. For canonical_workouts: EVERY exercise must have entries for ALL weeks in the exercises[].weeks[] array, even if prescription is identical (reps_only programs). This rule does NOT apply to week_samples (which is just a small preview).
 3. For standalone_sessions: still return the structure but set detected_type to "standalone_sessions" and confidence accordingly.
 4. Variation swaps: canonical_name is always the Week 1 name. variation_name overrides for later weeks.
 5. Section headers (Warm-Up, Main Set, etc.) have is_section_header: true and empty weeks array.
