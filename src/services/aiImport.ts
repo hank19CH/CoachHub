@@ -22,8 +22,9 @@ import type {
 import { plansService } from '@/services/plans'
 import { prepareFileContent } from '@/services/importFileParser'
 
-/** Max time (ms) to wait for AI processing before aborting */
-const IMPORT_TIMEOUT_MS = 120_000 // 2 minutes
+/** Max time (ms) to wait for AI processing before aborting.
+ *  PDF extraction with Sonnet can take 100-120s server-side; 300s gives headroom. */
+const IMPORT_TIMEOUT_MS = 300_000 // 5 minutes
 
 /**
  * Parse a weight string from AI into database-compatible fields.
@@ -124,54 +125,48 @@ export async function classifyImport(
     ? AbortSignal.any([signal, timeoutSignal])
     : timeoutSignal
 
-  // Auth keepalive (classify is fast, but keep session alive just in case)
-  const keepaliveId = setInterval(async () => {
-    try { await supabase.auth.refreshSession() }
-    catch { /* ignore */ }
-  }, 20_000)
+  // NOTE: No auth keepalive here. Sessions last 1 hour; classify/extract take 1-2 min.
+  // The old keepalive called refreshSession() every 20s which acquired navigator.locks,
+  // causing deadlocks when importProgram()'s supabase client calls tried getSession().
 
-  try {
-    const hasAbbreviations = Object.keys(preparedContent.coachAbbreviations).length > 0
+  const hasAbbreviations = Object.keys(preparedContent.coachAbbreviations).length > 0
 
-    console.log(`[SmartImport] Sending classify request to Edge Function... (signal.aborted=${fetchSignal.aborted})`)
-    const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'apikey': supabaseAnonKey,
-      },
-      body: JSON.stringify({
-        fileContent: preparedContent.fileContent,
-        fileType: preparedContent.fileType,
-        fileName: file.name,
-        preParsed: preparedContent.preParsed,
-        step: 'classify',
-        ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
-        ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
-        ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
-        ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
-      }),
-      signal: fetchSignal,
-    })
+  console.log(`[SmartImport] Sending classify request to Edge Function... (signal.aborted=${fetchSignal.aborted})`)
+  const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+      'apikey': supabaseAnonKey,
+    },
+    body: JSON.stringify({
+      fileContent: preparedContent.fileContent,
+      fileType: preparedContent.fileType,
+      fileName: file.name,
+      preParsed: preparedContent.preParsed,
+      step: 'classify',
+      ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
+      ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
+      ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
+      ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+    }),
+    signal: fetchSignal,
+  })
 
-    console.log(`[SmartImport] Classify response: status=${response.status}`)
-    const responseText = await response.text()
-    let data: any
-    try { data = JSON.parse(responseText) }
-    catch { throw new Error(`Edge Function returned ${response.status}: ${responseText.substring(0, 200)}`) }
+  console.log(`[SmartImport] Classify response: status=${response.status}`)
+  const responseText = await response.text()
+  let data: any
+  try { data = JSON.parse(responseText) }
+  catch { throw new Error(`Edge Function returned ${response.status}: ${responseText.substring(0, 200)}`) }
 
-    if (!response.ok) throw new Error(data?.error || `Edge Function returned ${response.status}`)
-    if (!data?.success) throw new Error(data?.error || 'Classification failed')
+  if (!response.ok) throw new Error(data?.error || `Edge Function returned ${response.status}`)
+  if (!data?.success) throw new Error(data?.error || 'Classification failed')
 
-    console.log(`[SmartImport] Classification result: type=${data.classification?.detected_type}, confidence=${data.classification?.confidence}`)
-    return {
-      classification: data.classification as ImportClassification,
-      preparedContent,
-      authData: { accessToken: accessToken!, coachId: coachId! },
-    }
-  } finally {
-    clearInterval(keepaliveId)
+  console.log(`[SmartImport] Classification result: type=${data.classification?.detected_type}, confidence=${data.classification?.confidence}`)
+  return {
+    classification: data.classification as ImportClassification,
+    preparedContent,
+    authData: { accessToken: accessToken!, coachId: coachId! },
   }
 }
 
@@ -240,7 +235,8 @@ export async function importProgram(
   }
 
   // Check for duplicate: same file already processing
-  const { data: existing } = await (supabase as any)
+  console.log('[SmartImport] Checking for duplicate processing record...')
+  const { data: existing, error: dupError } = await (supabase as any)
     .from('import_history')
     .select('id, created_at')
     .eq('coach_id', coachId)
@@ -248,6 +244,9 @@ export async function importProgram(
     .eq('file_size_bytes', file.size)
     .eq('status', 'processing')
     .limit(1)
+
+  if (dupError) console.warn('[SmartImport] Duplicate check error (non-fatal):', dupError.message)
+  console.log(`[SmartImport] Duplicate check done, found=${existing?.length ?? 0}`)
 
   if (existing && existing.length > 0) {
     const staleThreshold = 5 * 60 * 1000 // 5 minutes
@@ -265,6 +264,7 @@ export async function importProgram(
   }
 
   // 1. Create import history record (status: processing)
+  console.log('[SmartImport] Creating import history record...')
   const { data: historyRecord, error: historyError } = await (supabase as any)
     .from('import_history')
     .insert({
@@ -278,6 +278,7 @@ export async function importProgram(
     .single()
 
   if (historyError) throw new Error(historyError.message)
+  console.log(`[SmartImport] History record created: ${historyRecord.id}`)
 
   // Build a race-free abort signal: timeout OR external cancellation
   cancelActiveImport() // cancel any prior request
@@ -288,12 +289,14 @@ export async function importProgram(
 
   try {
     // 2. Upload to Supabase Storage
+    console.log('[SmartImport] Uploading file to storage...')
     const storagePath = `${coachId}/${Date.now()}_${file.name}`
     const { error: uploadError } = await supabase.storage
       .from('program-imports')
       .upload(storagePath, file)
 
     if (uploadError) throw new Error(uploadError.message)
+    console.log(`[SmartImport] File uploaded: ${storagePath}`)
 
     await (supabase as any)
       .from('import_history')
@@ -318,52 +321,40 @@ export async function importProgram(
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-    // Auth keepalive: refresh the session every 20s while waiting for AI
-    const AUTH_KEEPALIVE_MS = 20_000
-    const keepaliveId = setInterval(async () => {
-      try {
-        await supabase.auth.refreshSession()
-        console.log('[SmartImport] Auth keepalive refresh OK')
-      } catch (e) {
-        console.warn('[SmartImport] Auth keepalive refresh failed:', e)
-      }
-    }, AUTH_KEEPALIVE_MS)
+    // NOTE: No auth keepalive here. Sessions last 1 hour; extraction takes 1-2 min.
+    // The old keepalive called refreshSession() every 20s which acquired navigator.locks,
+    // causing deadlocks when supabase client calls tried getSession() internally.
+    // The access token is cached from the classify step (or fetched fresh above).
 
-    let response: Response
-    try {
-      console.log(`[SmartImport] Sending extract request... (signal.aborted=${fetchSignal.aborted})`)
-      response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'apikey': supabaseAnonKey,
-        },
-        body: JSON.stringify({
-          fileContent: preparedContent.fileContent,
-          fileType: preparedContent.fileType,
-          fileName: file.name,
-          preParsed: preparedContent.preParsed,
-          step: 'extract',
-          ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
-          ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
-          ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
-          ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
-          // v34: Thread classify result + coach resolutions into extract
-          ...(coachResolutions?.classifyResult ? { classifyResult: coachResolutions.classifyResult } : {}),
-          ...(coachResolutions ? {
-            coachResolutions: {
-              resolvedAmbiguities: coachResolutions.resolvedAmbiguities?.filter(a => a.resolved) ?? [],
-              confirmedBlockName: coachResolutions.confirmedBlockName,
-            }
-          } : {}),
-        }),
-        signal: fetchSignal,
-      })
-    } finally {
-      clearInterval(keepaliveId)
-      console.log('[SmartImport] Auth keepalive stopped')
-    }
+    console.log(`[SmartImport] Sending extract request... (signal.aborted=${fetchSignal.aborted})`)
+    const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({
+        fileContent: preparedContent.fileContent,
+        fileType: preparedContent.fileType,
+        fileName: file.name,
+        preParsed: preparedContent.preParsed,
+        step: 'extract',
+        ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
+        ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
+        ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
+        ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+        // v34: Thread classify result + coach resolutions into extract
+        ...(coachResolutions?.classifyResult ? { classifyResult: coachResolutions.classifyResult } : {}),
+        ...(coachResolutions ? {
+          coachResolutions: {
+            resolvedAmbiguities: coachResolutions.resolvedAmbiguities?.filter(a => a.resolved) ?? [],
+            confirmedBlockName: coachResolutions.confirmedBlockName,
+          }
+        } : {}),
+      }),
+      signal: fetchSignal,
+    })
 
     // Read response body regardless of status code
     console.log(`[SmartImport] Edge Function responded: status=${response.status}`)
