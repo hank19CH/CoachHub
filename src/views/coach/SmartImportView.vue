@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, onUnmounted } from 'vue'
-import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext, ImportClassification } from '@/types/import'
+import type { ImportBlock, ImportWeek, PlanType, ImportSportCategory, ImportTrainingFocus, PreImportContext, ImportClassification, PreparedContent, CoachResolutions } from '@/types/import'
 import { PLAN_TYPE_LABELS, PLAN_TYPE_DESCRIPTIONS, IMPORT_SPORT_OPTIONS, IMPORT_FOCUS_OPTIONS, IMPORT_PLAN_TYPE_OPTIONS } from '@/types/import'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { importProgram, classifyImport, saveImportedProgram, saveImportedWorkout, getImportHistory, cancelActiveImport, getCachedImportResult } from '@/services/aiImport'
@@ -38,34 +38,16 @@ const importHistory = ref<ImportHistoryRecord[]>([])
 const importStep = ref<'upload' | 'classify_preview' | 'extract_preview'>('upload')
 const classificationResult = ref<ImportClassification | null>(null)
 
-// ── Session keepalive (keeps Supabase auth alive during review) ──
-let reviewKeepaliveId: ReturnType<typeof setInterval> | null = null
+// v34: Cached file parse result — shared between classify and extract
+const cachedPreparedContent = ref<PreparedContent | null>(null)
 
-function startReviewKeepalive() {
-  stopReviewKeepalive()
-  reviewKeepaliveId = setInterval(async () => {
-    try { await supabase.auth.refreshSession() }
-    catch { /* ignore */ }
-  }, 30_000) // every 30s during review
-}
+// Cached auth from classify step — avoids navigator.locks deadlock on extract
+let cachedAuthData: { accessToken: string; coachId: string } | null = null
 
-function stopReviewKeepalive() {
-  if (reviewKeepaliveId) {
-    clearInterval(reviewKeepaliveId)
-    reviewKeepaliveId = null
-  }
-}
-
-onUnmounted(() => stopReviewKeepalive())
-
-// Start keepalive whenever we enter a review step
-watch(importStep, (step) => {
-  if (step === 'classify_preview' || step === 'extract_preview') {
-    startReviewKeepalive()
-  } else {
-    stopReviewKeepalive()
-  }
-})
+// Note: Review keepalive removed (was causing auth lock contention).
+// Supabase sessions last 1 hour — coach review takes minutes at most.
+// Auth keepalive during actual AI fetch calls is handled inside
+// classifyImport() and importProgram() individually.
 
 // ── Simulated progress bar ──
 const PROGRESS_MESSAGES = [
@@ -486,7 +468,6 @@ onBeforeUnmount(() => {
     importAbortController?.abort()
     stopProgressSimulation()
   }
-  stopReviewKeepalive()
 })
 
 const fileTypeLabel = computed(() => {
@@ -552,23 +533,35 @@ const buildPreImportContext = (): PreImportContext => {
 }
 
 /**
- * Step 1: Classify the file to detect mesocycle structure.
+ * Step 1: Prepare file + classify to detect mesocycle structure.
+ * File is parsed ONCE and cached for reuse in the extract step.
  * If mesocycle detected → show classification preview.
  * If standalone sessions or classify fails → fall through to direct extract.
  */
 const handleImport = async () => {
+  console.log('[SmartImport] handleImport called, file=', file.value?.name, 'isProcessing=', isProcessing.value)
   if (!file.value || isProcessing.value) return
 
   isProcessing.value = true
   error.value = null
+  cachedPreparedContent.value = null
   importAbortController = new AbortController()
   startProgressSimulation()
 
   try {
     const context = buildPreImportContext()
+    console.log('[SmartImport] Pre-import context:', context)
 
+    // classifyImport handles auth + file parsing internally.
+    // It returns preparedContent + authData which we cache for the extract step.
     try {
-      const classification = await classifyImport(file.value, importAbortController.signal, context)
+      console.log('[SmartImport] Calling classifyImport...')
+      const { classification, preparedContent, authData } = await classifyImport(
+        file.value, importAbortController.signal, context
+      )
+      cachedPreparedContent.value = preparedContent
+      cachedAuthData = authData
+      console.log('[SmartImport] Classification result:', classification.detected_type, 'confidence=', classification.confidence)
 
       if (classification.detected_type === 'mesocycle_program' && classification.confidence >= 0.4) {
         // Show classification preview for coach confirmation
@@ -586,11 +579,12 @@ const handleImport = async () => {
     }
 
     // Direct extract (no mesocycle or classify failed)
+    console.log('[SmartImport] Running direct extract (no mesocycle or classify failed)')
     await runDirectExtract(context)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Import failed'
     showToast(error.value, 'error')
-    console.error('Import error:', err)
+    console.error('[SmartImport] Import error:', err)
   } finally {
     isProcessing.value = false
     stopProgressSimulation()
@@ -599,12 +593,12 @@ const handleImport = async () => {
 }
 
 /**
- * Step 2a: Coach confirmed mesocycle classification → run full extract.
+ * Step 2a: Coach confirmed mesocycle classification → run full extract
+ * WITH coach resolutions threaded into the extract prompt.
  */
 const handleClassifyConfirm = async () => {
   if (!file.value || isProcessing.value) return
 
-  stopReviewKeepalive() // Stop keepalive before extract to prevent auth lock contention
   isProcessing.value = true
   error.value = null
   importAbortController = new AbortController()
@@ -612,7 +606,15 @@ const handleClassifyConfirm = async () => {
 
   try {
     const context = buildPreImportContext()
-    await runDirectExtract(context)
+
+    // v34: Gather coach resolutions from the classification review
+    const resolutions: CoachResolutions = {
+      classifyResult: classificationResult.value ?? undefined,
+      resolvedAmbiguities: classificationResult.value?.ambiguities?.filter(a => a.resolved) ?? [],
+      confirmedBlockName: classificationResult.value?.block_config?.name,
+    }
+
+    await runDirectExtract(context, resolutions)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Import failed'
     showToast(error.value, 'error')
@@ -625,12 +627,11 @@ const handleClassifyConfirm = async () => {
 }
 
 /**
- * Step 2b: Coach chose "skip mesocycle" → run standard extract.
+ * Step 2b: Coach chose "skip mesocycle" → run standard extract (no resolutions).
  */
 const handleClassifyFallback = async () => {
   if (!file.value || isProcessing.value) return
 
-  stopReviewKeepalive() // Stop keepalive before extract to prevent auth lock contention
   classificationResult.value = null
   isProcessing.value = true
   error.value = null
@@ -639,7 +640,8 @@ const handleClassifyFallback = async () => {
 
   try {
     const context = buildPreImportContext()
-    await runDirectExtract(context)
+    // No resolutions — extract without mesocycle context
+    await runDirectExtract(context, undefined)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Import failed'
     showToast(error.value, 'error')
@@ -665,15 +667,23 @@ const handleClassifyUnresolveAmbiguity = (index: number) => {
 }
 
 /**
- * Run the direct extract (old importProgram flow).
+ * Run the direct extract (importProgram).
  * Shared by both "no mesocycle" and "confirm mesocycle" paths.
+ * v34: Accepts optional CoachResolutions, reuses cached PreparedContent.
  */
-const runDirectExtract = async (context: PreImportContext) => {
+const runDirectExtract = async (context: PreImportContext, resolutions?: CoachResolutions) => {
   if (!file.value) return
 
   if (!importAbortController) importAbortController = new AbortController()
 
-  const result = await importProgram(file.value, importAbortController.signal, context)
+  const result = await importProgram(
+    file.value,
+    importAbortController.signal,
+    context,
+    resolutions,
+    cachedPreparedContent.value ?? undefined,
+    cachedAuthData ?? undefined,
+  )
 
   completeProgress()
   await new Promise(resolve => setTimeout(resolve, 400))
@@ -763,11 +773,12 @@ const handleCancel = () => {
     isProcessing.value = false
     stopProgressSimulation()
   }
-  stopReviewKeepalive()
   file.value = null
   importResult.value = null
   historyRecord.value = null
   classificationResult.value = null
+  cachedPreparedContent.value = null
+  cachedAuthData = null
   importStep.value = 'upload'
   error.value = null
   processingStage.value = 'uploading'

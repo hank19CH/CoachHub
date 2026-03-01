@@ -292,6 +292,30 @@ export interface ImportClassification {
   }
 }
 
+// --- Shared Parsing Types (v34) ---
+
+/** Intermediate parsed sheet from SheetJS — shared between classify and extract */
+export interface ParsedSheet {
+  name: string
+  headers: string[]
+  jsonRows: Record<string, string | number | null>[]
+}
+
+/** Result of prepareFileContent() — cached and reused between classify and extract */
+export interface PreparedContent {
+  fileContent: string                         // JSON text for spreadsheets, base64 for PDF/images
+  preParsed: boolean                          // true for spreadsheets (sent as text)
+  fileType: string                            // MIME type
+  coachAbbreviations: Record<string, string>  // Coach's abbreviation glossary
+}
+
+/** Coach's resolved answers from classification review, threaded into extract */
+export interface CoachResolutions {
+  classifyResult?: ImportClassification
+  resolvedAmbiguities?: ImportAmbiguity[]
+  confirmedBlockName?: string
+}
+
 export interface ImportHistoryRecord {
   id: string
   coach_id: string

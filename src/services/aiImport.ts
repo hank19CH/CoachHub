@@ -1,11 +1,26 @@
+/**
+ * aiImport.ts — Smart Import v34
+ *
+ * Two-step AI pipeline:
+ *   1. classifyImport() → detect mesocycle structure, flag questions for coach
+ *   2. importProgram()  → full extraction using coach's answers from review
+ *
+ * All file parsing is handled by importFileParser.ts.
+ * Both functions accept optional PreparedContent to avoid re-parsing.
+ * importProgram() accepts optional CoachResolutions from the classify review step.
+ *
+ * Code-only extraction (spreadsheetExtractor) removed — deferred to post-beta.
+ */
+
 import { supabase } from '@/lib/supabase'
 import { AI_CONFIG } from '@/config/ai'
-import type { ImportResult, ImportBlock, ImportWeek, ImportWorkout, ImportExercise, ImportHistoryRecord, EvolvingExercise, PreImportContext } from '@/types/import'
+import type {
+  ImportResult, ImportBlock, ImportWeek, ImportWorkout, ImportExercise,
+  ImportHistoryRecord, EvolvingExercise, PreImportContext,
+  ImportClassification, PreparedContent, CoachResolutions,
+} from '@/types/import'
 import { plansService } from '@/services/plans'
-import { planSessionsService } from '@/services/planSessions'
-import { extractFromSheets } from '@/services/spreadsheetExtractor'
-import type { ParsedSheet } from '@/services/spreadsheetExtractor'
-import * as XLSX from 'xlsx'
+import { prepareFileContent } from '@/services/importFileParser'
 
 /** Max time (ms) to wait for AI processing before aborting */
 const IMPORT_TIMEOUT_MS = 120_000 // 2 minutes
@@ -50,17 +65,25 @@ export function cancelActiveImport() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CLASSIFY — Step 1 of 2
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
- * Classify a file for mesocycle structure (Sprint 13.5a, step 1 of 2).
+ * Classify a file for mesocycle structure (step 1 of 2).
  * Returns classification with detected exercises, progression pattern,
  * and week samples — but writes nothing to the database.
  * The coach reviews the classification before confirming extraction.
+ *
+ * Accepts optional PreparedContent to avoid re-parsing.
+ * Returns BOTH classification AND preparedContent so extract can reuse it.
  */
 export async function classifyImport(
   file: File,
   signal?: AbortSignal,
   preImportContext?: PreImportContext,
-): Promise<ImportClassification> {
+  prepared?: PreparedContent,
+): Promise<{ classification: ImportClassification; preparedContent: PreparedContent; authData: { accessToken: string; coachId: string } }> {
   // Validate file
   console.log(`[SmartImport] Starting CLASSIFY: name=${file.name}, type=${file.type}, size=${file.size}`)
 
@@ -75,115 +98,42 @@ export async function classifyImport(
     throw new Error(`Unsupported file type: ${file.type} (${ext})`)
   }
 
-  // Refresh session
-  await supabase.auth.refreshSession()
-  const user = await supabase.auth.getUser()
-  if (!user.data.user) throw new Error('Not authenticated')
-  const coachId = user.data.user.id
+  // Single auth call — getSession gives us both user identity and access token
+  // Avoids triple-lock (refreshSession → getUser → getSession) which deadlocks
+  console.log('[SmartImport] Getting auth session...')
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+  if (sessionError) throw new Error(`Auth error: ${sessionError.message}`)
+  const accessToken = sessionData.session?.access_token
+  const coachId = sessionData.session?.user?.id
+  if (!accessToken || !coachId) throw new Error('Not authenticated')
+  console.log(`[SmartImport] Auth OK, coach=${coachId}`)
 
-  // Prepare file content (same logic as importProgram)
-  const isSpreadsheet = file.type.includes('excel') || file.type.includes('spreadsheet') || file.type === 'text/csv'
-    || ['.xlsx', '.xls', '.csv'].includes(ext)
-
-  let fileContent: string
-  let sendAsText = false
-  let coachAbbreviations: Record<string, string> = {}
-
-  if (isSpreadsheet) {
-    const arrayBuffer = await file.arrayBuffer()
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-    const parsedSheets: ParsedSheet[] = []
-
-    for (const sheetName of workbook.SheetNames) {
-      const sheet = workbook.Sheets[sheetName]
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as (string | number | null)[][]
-      if (rows.length === 0) continue
-
-      let headerRowIdx = 0
-      for (let i = 0; i < Math.min(rows.length, 10); i++) {
-        const nonNull = rows[i].filter(v => v !== null && v !== '').length
-        if (nonNull >= 2) { headerRowIdx = i; break }
-      }
-
-      const rawHeaders = rows[headerRowIdx]
-      const headers = rawHeaders.map((h, i) => {
-        const trimmed = h != null ? String(h).trim() : ''
-        return trimmed || `_col${i + 1}`
-      })
-      const dataRows = rows.slice(headerRowIdx + 1)
-
-      let lastUsedCol = headers.length - 1
-      while (lastUsedCol > 0) {
-        const colHasData = dataRows.some(row => row[lastUsedCol] !== null && row[lastUsedCol] !== '')
-        const isRealHeader = !headers[lastUsedCol].startsWith('_col')
-        if (colHasData || isRealHeader) break
-        lastUsedCol--
-      }
-      const usedHeaders = headers.slice(0, lastUsedCol + 1)
-
-      const jsonRows = dataRows
-        .filter(row => row.some(v => v !== null && v !== ''))
-        .map(row => {
-          const obj: Record<string, string | number | null> = {}
-          usedHeaders.forEach((h, i) => { obj[h] = row[i] ?? null })
-          return obj
-        })
-
-      // Drop nulls for compaction
-      for (let ri = 0; ri < jsonRows.length; ri++) {
-        const compact: Record<string, string | number | null> = {}
-        for (const [k, v] of Object.entries(jsonRows[ri])) {
-          if (v !== null && v !== '') compact[k] = v
-        }
-        jsonRows[ri] = compact
-      }
-
-      parsedSheets.push({ name: sheetName, headers: usedHeaders, jsonRows })
-    }
-
-    // Load coach abbreviations
-    try {
-      const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
-      coachAbbreviations = await getAbbreviationMap(coachId)
-    } catch { /* non-critical */ }
-
-    const sheetTexts = parsedSheets.map(ps => {
-      const hdrs = ps.headers.join(', ')
-      return parsedSheets.length > 1
-        ? `=== Sheet: ${ps.name} ===\nColumns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`
-        : `Columns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`
-    })
-
-    fileContent = sheetTexts.join('\n\n')
-    sendAsText = true
-
-    // Truncate if needed
-    if (fileContent.length > 150_000) {
-      fileContent = fileContent.substring(0, 150_000) + '\n\n[TRUNCATED]'
-    }
-  } else {
-    fileContent = await fileToBase64(file)
-  }
+  // Prepare file content (reuse if already prepared)
+  const preparedContent = prepared ?? await prepareFileContent(file, coachId)
+  console.log(`[SmartImport] File prepared: preParsed=${preparedContent.preParsed}, contentLen=${preparedContent.fileContent.length}, abbrs=${Object.keys(preparedContent.coachAbbreviations).length}`)
 
   // Call edge function with step: 'classify'
-  const session = await supabase.auth.getSession()
-  const accessToken = session.data.session?.access_token
-  if (!accessToken) throw new Error('No active session')
-
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-  const abortController = new AbortController()
-  if (signal) signal.addEventListener('abort', () => abortController.abort())
-  const timeoutId = setTimeout(() => abortController.abort(), IMPORT_TIMEOUT_MS)
+  // Build a race-free abort signal: timeout OR external cancellation
+  // Uses AbortSignal.any() to avoid the addEventListener race condition
+  // (adding an abort listener to an already-aborted signal fires synchronously)
+  const timeoutSignal = AbortSignal.timeout(IMPORT_TIMEOUT_MS)
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal
 
-  // Auth keepalive
+  // Auth keepalive (classify is fast, but keep session alive just in case)
   const keepaliveId = setInterval(async () => {
     try { await supabase.auth.refreshSession() }
     catch { /* ignore */ }
   }, 20_000)
 
   try {
+    const hasAbbreviations = Object.keys(preparedContent.coachAbbreviations).length > 0
+
+    console.log(`[SmartImport] Sending classify request to Edge Function... (signal.aborted=${fetchSignal.aborted})`)
     const response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
       method: 'POST',
       headers: {
@@ -192,19 +142,20 @@ export async function classifyImport(
         'apikey': supabaseAnonKey,
       },
       body: JSON.stringify({
-        fileContent,
-        fileType: file.type,
+        fileContent: preparedContent.fileContent,
+        fileType: preparedContent.fileType,
         fileName: file.name,
-        preParsed: sendAsText,
+        preParsed: preparedContent.preParsed,
         step: 'classify',
-        ...(Object.keys(coachAbbreviations).length > 0 ? { coachAbbreviations } : {}),
+        ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
         ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
         ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
         ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
       }),
-      signal: abortController.signal,
+      signal: fetchSignal,
     })
 
+    console.log(`[SmartImport] Classify response: status=${response.status}`)
     const responseText = await response.text()
     let data: any
     try { data = JSON.parse(responseText) }
@@ -214,30 +165,50 @@ export async function classifyImport(
     if (!data?.success) throw new Error(data?.error || 'Classification failed')
 
     console.log(`[SmartImport] Classification result: type=${data.classification?.detected_type}, confidence=${data.classification?.confidence}`)
-    return data.classification as ImportClassification
+    return {
+      classification: data.classification as ImportClassification,
+      preparedContent,
+      authData: { accessToken: accessToken!, coachId: coachId! },
+    }
   } finally {
-    clearTimeout(timeoutId)
     clearInterval(keepaliveId)
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EXTRACT — Step 2 of 2
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
- * Upload file and process with AI via Edge Function
+ * Upload file and process with AI via Edge Function.
+ *
+ * v34 changes:
+ * - Accepts optional PreparedContent (reuses classify parse — no duplicate SheetJS work)
+ * - Accepts optional CoachResolutions (threaded from classify review into extract prompt)
+ * - Code-only extraction removed (deferred to post-beta)
+ * - Sends explicit `step: 'extract'` to edge function
  */
-export async function importProgram(file: File, signal?: AbortSignal, preImportContext?: PreImportContext): Promise<{
+export async function importProgram(
+  file: File,
+  signal?: AbortSignal,
+  preImportContext?: PreImportContext,
+  coachResolutions?: CoachResolutions,
+  prepared?: PreparedContent,
+  cachedAuth?: { accessToken: string; coachId: string },
+): Promise<{
   importResult: ImportResult
   historyRecord: ImportHistoryRecord
+  expandedAbbreviations?: string[]
 }> {
   const startTime = Date.now()
 
   // Validate file
-  console.log(`[SmartImport] Starting import: name=${file.name}, type=${file.type}, size=${file.size}`)
+  console.log(`[SmartImport] Starting EXTRACT: name=${file.name}, type=${file.type}, size=${file.size}`)
 
   if (file.size > AI_CONFIG.import.maxFileSize) {
     throw new Error(`File too large. Max size: ${AI_CONFIG.import.maxFileSize / 1024 / 1024}MB`)
   }
 
-  // Check MIME type, with extension fallback (some browsers report .xlsx as application/octet-stream)
   const ext = '.' + file.name.split('.').pop()?.toLowerCase()
   const typeOk = AI_CONFIG.import.supportedTypes.includes(file.type)
   const extOk = AI_CONFIG.import.supportedExtensions.includes(ext)
@@ -248,18 +219,25 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     console.warn(`[SmartImport] MIME type "${file.type}" not in allowlist, but extension "${ext}" is valid — proceeding`)
   }
 
-  // Refresh session proactively (prevents stale-token hangs after idle navigation)
-  console.log('[SmartImport] Refreshing auth session...')
-  const { error: refreshError } = await supabase.auth.refreshSession()
-  if (refreshError) {
-    console.warn('[SmartImport] Session refresh failed:', refreshError.message)
+  // Use cached auth from classify step if available (avoids navigator.locks contention
+  // from getSession() which can deadlock after the classify→review→extract flow).
+  // Falls back to getSession() for standalone extract calls.
+  let coachId: string
+  let sessionData: any = null
+  if (cachedAuth) {
+    coachId = cachedAuth.coachId
+    console.log(`[SmartImport] Using cached auth, coach=${coachId}`)
+  } else {
+    console.log('[SmartImport] Getting auth session...')
+    const { data: sd, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError) {
+      console.warn('[SmartImport] Session error:', sessionError.message)
+    }
+    sessionData = sd
+    coachId = sd.session?.user?.id
+    if (!coachId) throw new Error('Not authenticated')
+    console.log(`[SmartImport] Auth OK, coach=${coachId}`)
   }
-
-  const user = await supabase.auth.getUser()
-  if (!user.data.user) throw new Error('Not authenticated')
-
-  const coachId = user.data.user.id
-  console.log(`[SmartImport] Auth OK, coach=${coachId}`)
 
   // Check for duplicate: same file already processing
   const { data: existing } = await (supabase as any)
@@ -276,7 +254,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     const recordAge = Date.now() - new Date(existing[0].created_at).getTime()
 
     if (recordAge > staleThreshold) {
-      // Stale — mark as failed so the coach can retry
       console.warn(`[SmartImport] Clearing stale processing record ${existing[0].id} (${Math.round(recordAge / 60000)}m old)`)
       await (supabase as any)
         .from('import_history')
@@ -302,18 +279,12 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
   if (historyError) throw new Error(historyError.message)
 
-  // Set up abort controller with timeout
+  // Build a race-free abort signal: timeout OR external cancellation
   cancelActiveImport() // cancel any prior request
-  const abortController = new AbortController()
-  activeAbortController = abortController
-
-  // Wire external signal (from component) into our controller
-  if (signal) {
-    signal.addEventListener('abort', () => abortController.abort())
-  }
-
-  // Auto-timeout
-  const timeoutId = setTimeout(() => abortController.abort(), IMPORT_TIMEOUT_MS)
+  const timeoutSignal = AbortSignal.timeout(IMPORT_TIMEOUT_MS)
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal
 
   try {
     // 2. Upload to Supabase Storage
@@ -324,663 +295,30 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     if (uploadError) throw new Error(uploadError.message)
 
-    // Update storage path in history
     await (supabase as any)
       .from('import_history')
       .update({ storage_path: storagePath })
       .eq('id', historyRecord.id)
 
-    // Check if already aborted
-    if (abortController.signal.aborted) {
+    if (fetchSignal.aborted) {
       throw new Error('Import cancelled')
     }
 
-    // 3. Prepare file content for the Edge Function
-    // Excel/CSV: pre-parse on the frontend with SheetJS -> send structured JSON to Sonnet
-    // PDF/Images: send base64 for Sonnet vision/document parsing
-    const isSpreadsheet = file.type.includes('excel') || file.type.includes('spreadsheet') || file.type === 'text/csv'
-      || ['.xlsx', '.xls', '.csv'].includes(ext)
-
-    let fileContent: string
-    let sendAsText = false
-    // v31: All requests use Sonnet 4.5 (forceModel removed)
-    let coachAbbreviations: Record<string, string> = {}
-
-    if (isSpreadsheet) {
-      // Parse Excel/CSV with SheetJS → JSON objects keyed by column headers.
-      // JSON format preserves column-to-value mapping perfectly (no empty-cell
-      // column shift like CSV). Columns without headers get synthetic keys
-      // like _col3, _col4 so no data is ever silently dropped.
-      console.log(`[SmartImport] Local parsing with SheetJS JSON (extension=${ext}, mime=${file.type})`)
-      const arrayBuffer = await file.arrayBuffer()
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-      const sheetCount = workbook.SheetNames.length
-      console.log(`[SmartImport] SheetJS workbook: ${sheetCount} sheet(s):`, workbook.SheetNames)
-
-      const parsedSheets: ParsedSheet[] = []
-
-      for (const sheetName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sheetName]
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }) as (string | number | null)[][]
-        console.log(`[SmartImport] Sheet "${sheetName}": ${rows.length} rows`)
-        if (rows.length === 0) continue
-
-        // Find header row (first row with at least 2 non-null values)
-        let headerRowIdx = 0
-        for (let i = 0; i < Math.min(rows.length, 10); i++) {
-          const nonNull = rows[i].filter(v => v !== null && v !== '').length
-          if (nonNull >= 2) { headerRowIdx = i; break }
-        }
-
-        // Build headers — blank headers get synthetic names (_col3, _col4)
-        // so their data is never silently dropped
-        const rawHeaders = rows[headerRowIdx]
-        const headers = rawHeaders.map((h, i) => {
-          const trimmed = h != null ? String(h).trim() : ''
-          return trimmed || `_col${i + 1}`
-        })
-        const dataRows = rows.slice(headerRowIdx + 1)
-
-        // Strip trailing all-null columns to reduce noise
-        let lastUsedCol = headers.length - 1
-        while (lastUsedCol > 0) {
-          const colHasData = dataRows.some(row => row[lastUsedCol] !== null && row[lastUsedCol] !== '')
-          const isRealHeader = !headers[lastUsedCol].startsWith('_col')
-          if (colHasData || isRealHeader) break
-          lastUsedCol--
-        }
-        const usedHeaders = headers.slice(0, lastUsedCol + 1)
-
-        const jsonRows = dataRows
-          .filter(row => row.some(v => v !== null && v !== '')) // skip fully empty rows
-          .map(row => {
-            const obj: Record<string, string | number | null> = {}
-            usedHeaders.forEach((h, i) => {
-              obj[h] = row[i] ?? null
-            })
-            return obj
-          })
-
-        // ── Sub-header detection & column renaming ──
-        // Season plan spreadsheets have repeating sub-headers (Set, Rep, Distance, Note, Volume)
-        // within the data rows. Detect these and rename _col keys to be descriptive:
-        //   _col8 → "TUESDAY_Rep", _col9 → "TUESDAY_Distance", etc.
-        // This eliminates ambiguity for the AI — it won't need to guess what _col8 means.
-        const subHeaderLabels = new Set(['set', 'rep', 'reps', 'distance', 'dist', 'note', 'notes', 'volume', 'vol', 'time', 'intensity', 'rest'])
-
-        // Find a sub-header row (within first 10 data rows) — it has text like "Set", "Rep", "Distance" in _col positions
-        let subHeaderRowIdx = -1
-        for (let ri = 0; ri < Math.min(jsonRows.length, 10); ri++) {
-          const row = jsonRows[ri]
-          let subHeaderCount = 0
-          for (const [key, val] of Object.entries(row)) {
-            if (key.startsWith('_col') && typeof val === 'string' && subHeaderLabels.has(val.toLowerCase().trim())) {
-              subHeaderCount++
-            }
-          }
-          // Also check named columns (day names) that might hold "Set"
-          for (const [key, val] of Object.entries(row)) {
-            if (!key.startsWith('_col') && typeof val === 'string' && subHeaderLabels.has(val.toLowerCase().trim())) {
-              subHeaderCount++
-            }
-          }
-          if (subHeaderCount >= 3) {
-            subHeaderRowIdx = ri
-            break
-          }
-        }
-
-        if (subHeaderRowIdx >= 0) {
-          const subRow = jsonRows[subHeaderRowIdx]
-          console.log(`[SmartImport] Detected sub-header row at data index ${subHeaderRowIdx}:`,
-            Object.entries(subRow).filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`).join(', '))
-
-          // Build column rename map: for each day column group, prefix _col keys with the day name + sub-header label
-          // e.g., TUESDAY column group: TUESDAY=Set, _col8=Rep, _col9=Distance, _col10=Note, _col11=Volume
-          // → rename _col8 to "TUESDAY_Rep", _col9 to "TUESDAY_Distance", etc.
-          // Also rename the day column itself if it holds a sub-header: TUESDAY → "TUESDAY_Set"
-          const renameMap: Record<string, string> = {}
-          let currentDayCol: string | null = null
-
-          for (const h of usedHeaders) {
-            const subVal = subRow[h]
-            const subStr = subVal != null ? String(subVal).trim() : ''
-
-            if (!h.startsWith('_col')) {
-              // Named column — could be a day name holding a sub-header label
-              if (subHeaderLabels.has(subStr.toLowerCase())) {
-                currentDayCol = h
-                renameMap[h] = `${h}_${subStr}`
-              } else {
-                currentDayCol = h // session type name or day header
-              }
-            } else {
-              // _col column — rename with current day context
-              if (subStr && subHeaderLabels.has(subStr.toLowerCase()) && currentDayCol) {
-                renameMap[h] = `${currentDayCol}_${subStr}`
-              }
-            }
-          }
-
-          // ── Gap-fill pass: infer unlabeled columns between renamed siblings ──
-          // Some coaches leave sub-header cells blank for certain columns (e.g. Note column).
-          // If a _col sits between two renamed columns of the same day group and has data in
-          // exercise rows, infer its label from its position in the repeating group pattern.
-          // Common pattern: Set, Rep, Distance, [Note], Volume — if we see *_Distance before
-          // and *_Volume after, the gap column is Note.
-          const renamedCols = new Map<number, string>() // header index → renamed key
-          for (let hi = 0; hi < usedHeaders.length; hi++) {
-            if (renameMap[usedHeaders[hi]]) renamedCols.set(hi, renameMap[usedHeaders[hi]])
-          }
-
-          for (let hi = 0; hi < usedHeaders.length; hi++) {
-            const h = usedHeaders[hi]
-            // Skip already-renamed or non-synthetic columns
-            if (renameMap[h] || !h.startsWith('_col')) continue
-
-            // Check if this column has ANY data in the exercise rows (skip sub-header row)
-            const hasData = jsonRows.some((row, ri) =>
-              ri !== subHeaderRowIdx && row[h] != null && row[h] !== ''
-            )
-            if (!hasData) continue
-
-            // Find surrounding renamed columns to determine day group and position
-            let prevRenamed: string | null = null
-            for (let pi = hi - 1; pi >= 0; pi--) {
-              if (renamedCols.has(pi)) { prevRenamed = renamedCols.get(pi)!; break }
-            }
-            let nextRenamed: string | null = null
-            for (let ni = hi + 1; ni < usedHeaders.length; ni++) {
-              if (renamedCols.has(ni)) { nextRenamed = renamedCols.get(ni)!; break }
-            }
-
-            // Infer: if prev is *_Distance and next is *_Volume (same day), this is *_Note
-            if (prevRenamed && nextRenamed) {
-              const prevMatch = prevRenamed.match(/^(.+)_Distance$/i)
-              const nextMatch = nextRenamed.match(/^(.+)_Volume$/i)
-              if (prevMatch && nextMatch && prevMatch[1] === nextMatch[1]) {
-                const dayName = prevMatch[1]
-                renameMap[h] = `${dayName}_Note`
-                renamedCols.set(hi, `${dayName}_Note`)
-                console.log(`[SmartImport] Inferred gap column: ${h} → ${dayName}_Note (between ${prevRenamed} and ${nextRenamed})`)
-              }
-            }
-          }
-
-          if (Object.keys(renameMap).length > 0) {
-            console.log(`[SmartImport] Renaming ${Object.keys(renameMap).length} columns:`, renameMap)
-
-            // Update headers
-            for (let hi = 0; hi < usedHeaders.length; hi++) {
-              if (renameMap[usedHeaders[hi]]) {
-                usedHeaders[hi] = renameMap[usedHeaders[hi]]
-              }
-            }
-
-            // Update all data rows
-            for (const row of jsonRows) {
-              for (const [oldKey, newKey] of Object.entries(renameMap)) {
-                if (oldKey in row) {
-                  row[newKey] = row[oldKey]
-                  delete row[oldKey]
-                }
-              }
-            }
-          }
-        }
-
-        parsedSheets.push({ name: sheetName, headers: usedHeaders, jsonRows })
-      }
-
-      // ── Multi-sheet overview detection (3+ sheets) ──
-      // For season plans: one sheet is often an "overview/schedule" where cell values
-      // are session-type names that reference other sheets. Detect this and convert it
-      // to a compact schedule header so the AI doesn't mistake session names for exercises.
-      let scheduleHeader = ''
-      let overviewIdx = -1
-
-      if (parsedSheets.length > 2) {
-        const sheetNamesNorm = parsedSheets.map(s => s.name.toLowerCase().replace(/\s+/g, ''))
-
-        for (let si = 0; si < parsedSheets.length; si++) {
-          const ps = parsedSheets[si]
-          if (ps.jsonRows.length === 0) continue
-
-          const cellValues = new Set<string>()
-          for (const row of ps.jsonRows) {
-            for (const val of Object.values(row)) {
-              if (val != null && typeof val === 'string' && val.trim().length > 0) {
-                cellValues.add(val.trim())
-              }
-            }
-          }
-
-          if (cellValues.size < 2) continue
-
-          let matchCount = 0
-          for (const cv of cellValues) {
-            const cvNorm = cv.toLowerCase().replace(/\s+/g, '')
-            if (sheetNamesNorm.some((sn, idx) => idx !== si && sn === cvNorm)) {
-              matchCount++
-            }
-          }
-
-          const matchRatio = matchCount / cellValues.size
-          if (matchRatio >= 0.3 && matchCount >= 2) {
-            overviewIdx = si
-            console.log(`[SmartImport] Detected overview sheet: "${ps.name}" (${matchCount}/${cellValues.size} values match sheet names, ratio=${matchRatio.toFixed(2)})`)
-
-            const lines: string[] = []
-            lines.push('DOCUMENT STRUCTURE: Multi-sheet season plan.')
-            lines.push('The schedule below maps weeks to session types. Each session type has its own detail sheet with exercise prescriptions.')
-            lines.push('Extract exercises ONLY from the detail sheets below, NOT from session type names.')
-            lines.push('')
-            lines.push('WEEKLY SCHEDULE:')
-
-            const firstHeader = ps.headers[0]?.toLowerCase() || ''
-            const dayKeywords = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'day']
-            const isRowsAreDays = dayKeywords.some(d => firstHeader.includes(d))
-
-            if (isRowsAreDays) {
-              const weekHeaders = ps.headers.slice(1).filter(h => !h.startsWith('_col'))
-              for (let wi = 0; wi < weekHeaders.length; wi++) {
-                const weekName = weekHeaders[wi]
-                const daySessions: string[] = []
-                for (const row of ps.jsonRows) {
-                  const dayName = String(Object.values(row)[0] || '').trim()
-                  const session = row[weekName] ? String(row[weekName]).trim() : ''
-                  if (dayName && session) {
-                    daySessions.push(`${dayName}=${session}`)
-                  }
-                }
-                if (daySessions.length > 0) {
-                  lines.push(`  ${weekName}: ${daySessions.join(', ')}`)
-                }
-              }
-            } else {
-              for (const row of ps.jsonRows) {
-                const vals = Object.entries(row)
-                const weekLabel = String(vals[0]?.[1] || '').trim()
-                if (!weekLabel) continue
-                const sessions: string[] = []
-                for (let ci = 1; ci < vals.length; ci++) {
-                  const colName = vals[ci][0]
-                  if (colName.startsWith('_col')) continue
-                  const val = String(vals[ci][1] || '').trim()
-                  if (val) {
-                    sessions.push(`${colName}=${val}`)
-                  }
-                }
-                if (sessions.length > 0) {
-                  lines.push(`  ${weekLabel}: ${sessions.join(', ')}`)
-                }
-              }
-            }
-
-            lines.push('')
-            lines.push('--- DETAIL SHEETS (extract exercises from these) ---')
-            lines.push('')
-            scheduleHeader = lines.join('\n')
-            break
-          }
-        }
-      }
-
-      // ── Compact & build final output ──
-      // Optimization: strip *_Volume columns (AI ignores them) and drop null
-      // values from JSON rows to significantly reduce payload size for dense
-      // season-plan grids. This prevents late blocks from being truncated.
-      const volumePattern = /_Volume$/i
-      for (const ps of parsedSheets) {
-        // Remove Volume headers
-        const volumeCols = ps.headers.filter(h => volumePattern.test(h))
-        if (volumeCols.length > 0) {
-          ps.headers = ps.headers.filter(h => !volumePattern.test(h))
-          for (const row of ps.jsonRows) {
-            for (const vc of volumeCols) {
-              delete row[vc]
-            }
-          }
-          console.log(`[SmartImport] Stripped ${volumeCols.length} Volume columns from sheet "${ps.name}"`)
-        }
-
-        // Drop null values from each row — AI already knows missing = null
-        for (let ri = 0; ri < ps.jsonRows.length; ri++) {
-          const compact: Record<string, string | number | null> = {}
-          for (const [k, v] of Object.entries(ps.jsonRows[ri])) {
-            if (v !== null && v !== '') compact[k] = v
-          }
-          ps.jsonRows[ri] = compact
-        }
-      }
-
-      // ── Fetch coach abbreviation glossary (needed for code extraction + AI prompt) ──
-      try {
-        const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
-        coachAbbreviations = await getAbbreviationMap(coachId)
-        const abbrCount = Object.keys(coachAbbreviations).length
-        if (abbrCount > 0) {
-          console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
-        }
-      } catch (e) {
-        console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
-      }
-
-      // ── Code-only extraction attempt (v30) ──
-      // Try deterministic extraction before AI. If confidence ≥ 0.55, return directly.
-      // This is instant, free, and never drops exercises.
-      const extraction = extractFromSheets(parsedSheets, {
-        fileName: file.name,
-        preImportContext,
-        coachAbbreviations,
-      })
-
-      if (extraction.success && extraction.confidence >= 0.55 && extraction.importResult) {
-        console.log(`[SmartImport] ✅ Code extraction succeeded: pattern=${extraction.pattern}, confidence=${extraction.confidence.toFixed(2)}`)
-
-        const importResult = extraction.importResult
-        const processingTime = Date.now() - startTime
-
-        // Count imported items
-        const codeAllWeeks = importResult.blocks
-          ? importResult.blocks.flatMap(b => b.weeks ?? [])
-          : (importResult.weeks ?? [])
-        const codeWorkoutsCount = codeAllWeeks.reduce(
-          (sum, week) => sum + (week.workouts ?? []).length, 0
-        )
-        const codeExercisesCount = codeAllWeeks.reduce(
-          (sum, week) => sum + (week.workouts ?? []).reduce(
-            (wsum, workout) => wsum + (workout.exercises ?? []).length, 0
-          ), 0
-        )
-
-        console.log(`[SmartImport] Code-only: ${codeWorkoutsCount} workouts, ${codeExercisesCount} exercises in ${processingTime}ms`)
-
-        // Update import history (code path: no AI cost)
-        try {
-          await supabase.auth.refreshSession()
-          await (supabase as any)
-            .from('import_history')
-            .update({
-              ai_model_used: `code-only:${extraction.pattern}`,
-              processing_cost_usd: 0,
-              processing_time_ms: processingTime,
-              programs_imported: 1,
-              workouts_imported: codeWorkoutsCount,
-              exercises_imported: codeExercisesCount,
-              detected_periodization: importResult.periodization,
-              detected_duration_weeks: importResult.durationWeeks,
-              detected_sport: importResult.sport,
-              detected_plan_type: importResult.detectedPlanType ?? null,
-              plan_type_confidence: importResult.planTypeConfidence ?? null,
-              status: 'success',
-            })
-            .eq('id', historyRecord.id)
-        } catch (dbErr) {
-          console.warn('[SmartImport] DB update failed after code extraction (non-fatal):', dbErr)
-        }
-
-        // Cache result for resume (non-blocking)
-        ;(supabase as any)
-          .from('import_history')
-          .update({ ai_result: importResult })
-          .eq('id', historyRecord.id)
-          .then(({ error: cacheErr }: any) => {
-            if (cacheErr) console.warn('[SmartImport] Failed to cache code-only result:', cacheErr)
-          })
-
-        const codeHistory: ImportHistoryRecord = {
-          ...historyRecord,
-          ai_model_used: `code-only:${extraction.pattern}`,
-          processing_cost_usd: 0,
-          processing_time_ms: processingTime,
-          programs_imported: 1,
-          workouts_imported: codeWorkoutsCount,
-          exercises_imported: codeExercisesCount,
-          detected_periodization: importResult.periodization,
-          detected_duration_weeks: importResult.durationWeeks,
-          detected_sport: importResult.sport,
-          detected_plan_type: importResult.detectedPlanType ?? null,
-          plan_type_confidence: importResult.planTypeConfidence ?? null,
-          status: 'success',
-        }
-
-        return {
-          importResult,
-          historyRecord: codeHistory,
-          expandedAbbreviations: [],
-        }
-      }
-
-      // Code extraction didn't meet confidence threshold — fall through to AI
-      if (extraction.confidence > 0) {
-        console.warn(`[SmartImport] Code extraction: pattern=${extraction.pattern}, confidence=${extraction.confidence.toFixed(2)}, reason=${extraction.reason}. Falling back to AI.`)
-      }
-      // v31: forceModel removed — all requests use Sonnet
-
-      // ── Season plan grid pre-grouping (AI fallback path) ──
-      // If a sheet has day-prefixed columns (TUESDAY_Rep, SATURDAY_Note, etc.),
-      // pre-group exercises by session IN CODE so the AI can't cross-contaminate.
-      // This transforms the flat grid into per-session exercise lists.
-      const sheetTexts: string[] = []
-      for (let i = 0; i < parsedSheets.length; i++) {
-        if (i === overviewIdx) continue
-        const ps = parsedSheets[i]
-
-        // Detect day-prefixed column groups (e.g. TUESDAY_Set, TUESDAY_Rep, ...)
-        const dayPrefixes = new Map<string, string[]>() // dayName → [field suffixes]
-        const dayNames = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']
-        for (const h of ps.headers) {
-          for (const dn of dayNames) {
-            if (h.startsWith(dn + '_')) {
-              const suffix = h.substring(dn.length + 1)
-              if (!dayPrefixes.has(dn)) dayPrefixes.set(dn, [])
-              dayPrefixes.get(dn)!.push(suffix)
-            }
-          }
-        }
-
-        // Only pre-group if we have 2+ day groups with Set/Rep/Distance columns
-        const hasDayGroups = dayPrefixes.size >= 2 &&
-          [...dayPrefixes.values()].filter(suffixes =>
-            suffixes.some(s => /^(rep|distance|set)$/i.test(s))
-          ).length >= 2
-
-        if (hasDayGroups) {
-          console.log(`[SmartImport] Season plan grid detected: ${dayPrefixes.size} day groups: ${[...dayPrefixes.keys()].join(', ')}`)
-
-          // Find session name rows — rows where a day column (without _suffix) has a text value
-          // like "Speed 1", "Speed 2", "Tempo/MB". These come from the raw header row values
-          // that got renamed (e.g., TUESDAY → TUESDAY_Set when sub-header was "Set").
-          // The session name is in the ROW before the sub-header row OR the row where the
-          // day column value is NOT a sub-header label (Set/Rep/Distance/Note/Volume).
-          // We look for a row with text values in day columns that aren't sub-header labels.
-          const subLabelsLower = new Set(['set', 'rep', 'reps', 'distance', 'dist', 'note', 'notes', 'volume', 'vol', 'time', 'intensity', 'rest'])
-
-          // Find session names from the original data: look for rows where *_Set columns
-          // contain session type names (not "Set" or numbers)
-          const sessionNameMap = new Map<string, string>() // dayName → session name
-          for (const row of ps.jsonRows) {
-            for (const [dn] of dayPrefixes) {
-              const setCol = `${dn}_Set`
-              const val = row[setCol]
-              if (val != null && typeof val === 'string' && val.trim().length > 0) {
-                const lower = val.trim().toLowerCase()
-                if (!subLabelsLower.has(lower) && isNaN(Number(val))) {
-                  // This is a session name, not a sub-header or numeric data
-                  if (!sessionNameMap.has(dn)) {
-                    sessionNameMap.set(dn, val.trim())
-                  }
-                }
-              }
-            }
-          }
-
-          console.log(`[SmartImport] Session names:`, Object.fromEntries(sessionNameMap))
-
-          // Find metadata columns (non-day-prefixed: phase, week number, date, etc.)
-          const metaCols = ps.headers.filter(h => !dayNames.some(dn => h.startsWith(dn + '_')) && !h.startsWith('_col'))
-
-          // Identify week boundaries. A week block starts at a "session name row" —
-          // a row where day_Set columns have text names like "Speed 1".
-          // Pattern: [session name row] → [sub-header row] → [exercise rows...] → [total row] → [empty rows] → [next session name row]
-          // OR: The first exercise rows start after the sub-header row at index 0/1.
-          // We detect week boundaries by looking for rows where *_Set has a session name.
-          interface WeekBoundary { startRow: number; weekMeta: Record<string, any> }
-          const weekBoundaries: WeekBoundary[] = []
-
-          for (let ri = 0; ri < ps.jsonRows.length; ri++) {
-            const row = ps.jsonRows[ri]
-            // Check if any day_Set column has a session name (text, not number, not sub-header)
-            let isSessionNameRow = false
-            for (const [dn] of dayPrefixes) {
-              const setCol = `${dn}_Set`
-              const val = row[setCol]
-              if (val != null && typeof val === 'string') {
-                const lower = val.trim().toLowerCase()
-                if (!subLabelsLower.has(lower) && val.trim().length > 0 && isNaN(Number(val))) {
-                  isSessionNameRow = true
-                  break
-                }
-              }
-            }
-            if (isSessionNameRow) {
-              // Extract metadata from the NEXT row (sub-header/metadata row)
-              const metaRow = ps.jsonRows[ri + 1]
-              const meta: Record<string, any> = {}
-              if (metaRow) {
-                for (const mc of metaCols) {
-                  if (metaRow[mc] != null) meta[mc] = metaRow[mc]
-                }
-              }
-              weekBoundaries.push({ startRow: ri + 2, weekMeta: meta }) // exercises start 2 rows after session name
-            }
-          }
-
-          // If no session name rows found, treat the whole sheet as one week starting after row 0
-          if (weekBoundaries.length === 0) {
-            weekBoundaries.push({ startRow: 1, weekMeta: {} })
-          }
-
-          console.log(`[SmartImport] Found ${weekBoundaries.length} week boundaries`)
-
-          // Build pre-grouped output
-          const lines: string[] = []
-          lines.push('PRE-GROUPED SEASON PLAN DATA')
-          lines.push('Each week\'s sessions are pre-separated. Extract exercises from each session group independently.')
-          lines.push('Fields: Set (if present), Rep, Distance (meters), Note (exercise abbreviation/drill type).')
-          lines.push('If Note is present, it is the raw_name. If Note is absent, it is a plain sprint/run.')
-          lines.push('')
-
-          for (let wi = 0; wi < weekBoundaries.length; wi++) {
-            const wb = weekBoundaries[wi]
-            const endRow = wi + 1 < weekBoundaries.length ? weekBoundaries[wi + 1].startRow - 2 : ps.jsonRows.length
-
-            // Extract metadata
-            const phase = wb.weekMeta['_col1'] || wb.weekMeta[metaCols[0]] || ''
-            const weekNum = wi + 1
-
-            lines.push(`=== WEEK ${weekNum}${phase ? ` (${phase})` : ''} ===`)
-
-            // For each day group, extract exercise rows
-            for (const [dn, suffixes] of dayPrefixes) {
-              const sessionName = sessionNameMap.get(dn) || dn
-              const exercises: Record<string, any>[] = []
-
-              for (let ri = wb.startRow; ri < endRow; ri++) {
-                const row = ps.jsonRows[ri]
-                if (!row) continue
-
-                // Check if this row has ANY data in this day's columns
-                const exData: Record<string, any> = {}
-                let hasData = false
-                for (const suffix of suffixes) {
-                  const col = `${dn}_${suffix}`
-                  const val = row[col]
-                  if (val != null && val !== '') {
-                    exData[suffix] = val
-                    hasData = true
-                  }
-                }
-
-                if (hasData) {
-                  exercises.push(exData)
-                }
-              }
-
-              if (exercises.length > 0) {
-                lines.push(`  SESSION: "${sessionName}" (${dn}) — ${exercises.length} exercises`)
-                for (let ei = 0; ei < exercises.length; ei++) {
-                  lines.push(`    ${ei + 1}. ${JSON.stringify(exercises[ei])}`)
-                }
-              }
-            }
-            lines.push('')
-          }
-
-          sheetTexts.push(lines.join('\n'))
-          console.log(`[SmartImport] Pre-grouped ${weekBoundaries.length} weeks across ${dayPrefixes.size} sessions`)
-        } else {
-          // Non-grid sheet — send as raw JSON (original behavior)
-          const hdrs = ps.headers.join(', ')
-          if (parsedSheets.length > 1) {
-            sheetTexts.push(`=== Sheet: ${ps.name} ===\nColumns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
-          } else {
-            sheetTexts.push(`Columns: ${hdrs}\n${JSON.stringify(ps.jsonRows, null, 0)}`)
-          }
-        }
-      }
-
-      fileContent = scheduleHeader + sheetTexts.join('\n\n')
-      sendAsText = true
-      console.log(`[SmartImport] Final content: ${parsedSheets.length} sheet(s), ${fileContent.length} chars`)
-
-      // Truncate if extremely long to keep costs reasonable.
-      // 150k is ~37k tokens — Sonnet 4.5 handles up to 200k context.
-      // The compaction above (null-stripping + Volume removal) typically
-      // saves 30-50% for dense season-plan grids.
-      const TRUNCATION_LIMIT = 150_000
-      if (fileContent.length > TRUNCATION_LIMIT) {
-        console.warn(`[SmartImport] ⚠️ Content exceeds ${TRUNCATION_LIMIT} chars (${fileContent.length}). Truncating — some training blocks may be lost!`)
-        fileContent = fileContent.substring(0, TRUNCATION_LIMIT) + '\n\n[TRUNCATED - file too large. Some later training blocks may be missing. Extract everything visible above.]'
-      }
-    } else {
-      // PDF/Images: send as base64 for vision/document parsing
-      console.log(`[SmartImport] Encoding as base64 for vision (extension=${ext}, mime=${file.type})`)
-      fileContent = await fileToBase64(file)
-    }
-
-    // 4. Fetch coach abbreviation glossary (for non-spreadsheet files; spreadsheets load earlier)
-    if (!isSpreadsheet) {
-      try {
-        const { getAbbreviationMap } = await import('@/services/coachAbbreviations')
-        coachAbbreviations = await getAbbreviationMap(coachId)
-        const abbrCount = Object.keys(coachAbbreviations).length
-        if (abbrCount > 0) {
-          console.log(`[SmartImport] Loaded ${abbrCount} coach abbreviations`)
-        }
-      } catch (e) {
-        console.warn('[SmartImport] Failed to load abbreviations (non-critical):', e)
-      }
-    }
-
-    // 5. Process with AI via Edge Function
-    console.log(`[SmartImport] Sending to Edge Function: preParsed=${sendAsText}, contentLength=${fileContent.length}`)
-
-    // Use raw fetch() instead of supabase.functions.invoke() so we can read
-    // error response bodies (invoke() swallows them on non-2xx)
-    const session = await supabase.auth.getSession()
-    const accessToken = session.data.session?.access_token
+    // 3. Prepare file content (reuse if already prepared from classify step)
+    const preparedContent = prepared ?? await prepareFileContent(file, coachId)
+    const hasAbbreviations = Object.keys(preparedContent.coachAbbreviations).length > 0
+
+    console.log(`[SmartImport] Sending to Edge Function: step=extract, preParsed=${preparedContent.preParsed}, contentLength=${preparedContent.fileContent.length}${coachResolutions ? ', with coach resolutions' : ''}`)
+
+    // 4. Process with AI via Edge Function
+    // Use cached token from classify step, or from the getSession() call above
+    const accessToken = cachedAuth?.accessToken ?? sessionData?.session?.access_token
     if (!accessToken) throw new Error('No active session')
 
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-    const hasAbbreviations = Object.keys(coachAbbreviations).length > 0
-
-    // Auth keepalive: refresh the session every 20s while waiting for AI.
-    // PDF/image imports can take 25-70s — without this the token goes stale
-    // and all subsequent DB writes fail silently.
+    // Auth keepalive: refresh the session every 20s while waiting for AI
     const AUTH_KEEPALIVE_MS = 20_000
     const keepaliveId = setInterval(async () => {
       try {
@@ -993,6 +331,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     let response: Response
     try {
+      console.log(`[SmartImport] Sending extract request... (signal.aborted=${fetchSignal.aborted})`)
       response = await fetch(`${supabaseUrl}/functions/v1/smart-import`, {
         method: 'POST',
         headers: {
@@ -1001,16 +340,25 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
           'apikey': supabaseAnonKey,
         },
         body: JSON.stringify({
-          fileContent,
-          fileType: file.type,
+          fileContent: preparedContent.fileContent,
+          fileType: preparedContent.fileType,
           fileName: file.name,
-          preParsed: sendAsText,
-          ...(hasAbbreviations ? { coachAbbreviations } : {}),
+          preParsed: preparedContent.preParsed,
+          step: 'extract',
+          ...(hasAbbreviations ? { coachAbbreviations: preparedContent.coachAbbreviations } : {}),
           ...(preImportContext?.coachSport ? { coachSport: preImportContext.coachSport } : {}),
           ...(preImportContext?.coachPlanType ? { coachPlanType: preImportContext.coachPlanType } : {}),
           ...(preImportContext?.coachTrainingFocus ? { coachTrainingFocus: preImportContext.coachTrainingFocus } : {}),
+          // v34: Thread classify result + coach resolutions into extract
+          ...(coachResolutions?.classifyResult ? { classifyResult: coachResolutions.classifyResult } : {}),
+          ...(coachResolutions ? {
+            coachResolutions: {
+              resolvedAmbiguities: coachResolutions.resolvedAmbiguities?.filter(a => a.resolved) ?? [],
+              confirmedBlockName: coachResolutions.confirmedBlockName,
+            }
+          } : {}),
         }),
-        signal: abortController.signal,
+        signal: fetchSignal,
       })
     } finally {
       clearInterval(keepaliveId)
@@ -1037,17 +385,14 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     if (!data?.success) throw new Error(data?.error || 'AI processing returned no result')
 
     const importResult: ImportResult = data.importResult
-    // v31: Attach ambiguities from edge function response
+    // Attach ambiguities from edge function response
     if (Array.isArray(data.ambiguities) && data.ambiguities.length > 0) {
       importResult.ambiguities = data.ambiguities
       console.log(`[SmartImport] ${data.ambiguities.length} ambiguities flagged for coach review`)
     }
     console.log(`[SmartImport] AI result: planType=${importResult.detectedPlanType}, blocks=${importResult.blocks?.length ?? 0}, weeks=${importResult.weeks?.length ?? 0}`)
 
-    // 4b. Normalize evolving_session format → standard blocks[] format
-    // The AI returns { exercises: [...], session_name, evolution_weeks } for evolving sessions.
-    // We convert that into blocks[].weeks[].workouts[].exercises[] so the preview UI and
-    // save logic work without any special casing.
+    // Normalize evolving_session format → standard blocks[] format
     if (importResult.detectedPlanType === 'evolving_session' && (importResult as any).exercises) {
       normalizeEvolvingSession(importResult)
     }
@@ -1056,8 +401,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     const processingTime = Date.now() - startTime
     const estimatedCost = AI_CONFIG.import.estimatedCostPerImport
 
-    // Count imported items (null-safe — AI may omit empty arrays)
-    // Support both blocks[] (new) and weeks[] (legacy cached) formats
+    // Count imported items
     const allWeeks = importResult.blocks
       ? importResult.blocks.flatMap(b => b.weeks ?? [])
       : (importResult.weeks ?? [])
@@ -1076,10 +420,7 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     console.log(`[SmartImport] Parsed: ${workoutsCount} workouts, ${exercisesCount} exercises in ${processingTime}ms`)
 
     // 6. Update import history
-    // Auth keepalive above keeps the token fresh, so no extra refresh needed here.
-    // DB update is non-fatal: if AI returned good data, show it to the user regardless
-
-    // 6a. Update metadata + status (small payload, nice-to-have)
+    // 6a. Update metadata + status
     try {
       const { error: updateError } = await (supabase as any)
         .from('import_history')
@@ -1109,7 +450,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     }
 
     // 6b. Cache AI result separately (large payload, non-blocking)
-    // This enables "Resume Save" from history but is not required for the import to succeed
     ;(supabase as any)
       .from('import_history')
       .update({ ai_result: importResult })
@@ -1119,7 +459,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
         else console.log('[SmartImport] AI result cached for resume')
       })
 
-    // Build historyRecord for the view from what we already know (avoids re-fetching the massive row)
     const updatedHistory: ImportHistoryRecord = {
       ...historyRecord,
       ai_model_used: data.model || 'claude-sonnet-4-5',
@@ -1143,7 +482,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
     }
 
   } catch (error) {
-    // Determine user-friendly message
     const isAbort = error instanceof DOMException && error.name === 'AbortError'
     const message = isAbort
       ? 'Import timed out or was cancelled'
@@ -1151,8 +489,6 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     console.error(`[SmartImport] Import failed: ${message}`, error)
 
-    // Update import history (status: failed) — wrapped in its own try/catch
-    // so a network failure here doesn't mask the original error
     try {
       await supabase.auth.refreshSession()
       await (supabase as any)
@@ -1168,21 +504,18 @@ export async function importProgram(file: File, signal?: AbortSignal, preImportC
 
     throw isAbort ? new Error(message) : error
   } finally {
-    clearTimeout(timeoutId)
-    if (activeAbortController === abortController) {
-      activeAbortController = null
-    }
+    // AbortSignal.timeout() manages its own timer — no clearTimeout needed.
+    // Cancellation is handled by the external signal from SmartImportView.
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Normalization helpers
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Convert evolving_session format (exercises[] with weeks[] per exercise)
  * into standard blocks[] format so the preview UI and save logic work unchanged.
- *
- * Input:  { exercises: [{ name, weeks: [{ week_number, sets, reps, ... }] }] }
- * Output: { blocks: [{ weeks: [{ workouts: [{ exercises: [...] }] }] }] }
- *
- * Each week gets ONE workout containing all exercises with that week's prescription.
  */
 function normalizeEvolvingSession(importData: any): void {
   const exercises = importData.exercises as EvolvingExercise[] | undefined
@@ -1191,7 +524,6 @@ function normalizeEvolvingSession(importData: any): void {
   const sessionName = importData.session_name || importData.programName || 'Session'
   const weekCount = importData.evolution_weeks || importData.durationWeeks || 1
 
-  // Collect all unique week numbers
   const weekNumbers = new Set<number>()
   for (const ex of exercises) {
     for (const w of ex.weeks ?? []) {
@@ -1199,12 +531,10 @@ function normalizeEvolvingSession(importData: any): void {
     }
   }
   const sortedWeeks = Array.from(weekNumbers).sort((a, b) => a - b)
-  // Fallback: if exercises have no weeks, create a single week
   if (sortedWeeks.length === 0) {
     sortedWeeks.push(1)
   }
 
-  // Build weeks with one workout each
   const weeks: ImportWeek[] = sortedWeeks.map(weekNum => {
     const weekExercises: ImportExercise[] = exercises.map(ex => {
       const weekData = (ex.weeks ?? []).find(w => w.week_number === weekNum)
@@ -1231,19 +561,16 @@ function normalizeEvolvingSession(importData: any): void {
     }
   })
 
-  // Set blocks on the importData (mutates in place)
   importData.blocks = [{
     name: importData.programName || sessionName,
     blockType: undefined,
     weeks,
   }]
 
-  // Update duration if not set
   if (!importData.durationWeeks || importData.durationWeeks < sortedWeeks.length) {
     importData.durationWeeks = sortedWeeks.length
   }
 
-  // Clean up evolving-specific fields
   delete importData.exercises
   delete importData.session_name
   delete importData.evolution_weeks
@@ -1256,7 +583,6 @@ function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
   if (importData.blocks && importData.blocks.length > 0) {
     return importData.blocks
   }
-  // Legacy cached result with flat weeks[] — wrap in single block
   if (importData.weeks && importData.weeks.length > 0) {
     return [{
       name: importData.programName,
@@ -1266,6 +592,10 @@ function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
   }
   throw new Error('Import data has no blocks or weeks')
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Save functions
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Save imported program to database using Sprint 9 Planner tables.
@@ -1285,7 +615,7 @@ function normalizeImportBlocks(importData: ImportResult): ImportBlock[] {
 export async function saveImportedProgram(
   importData: ImportResult,
   historyId?: string,
-  libraryFlags?: Set<string>, // Set of "blockIdx-weekIdx-workoutIdx" keys to auto-promote
+  libraryFlags?: Set<string>,
 ): Promise<string> {
   const user = await supabase.auth.getUser()
   const coachId = user.data.user?.id
@@ -1297,7 +627,7 @@ export async function saveImportedProgram(
   const totalWorkouts = blocks.reduce((s, b) => s + (b.weeks ?? []).reduce((ws, w) => ws + (w.workouts ?? []).length, 0), 0)
   console.log(`[SmartImport Save] Starting: ${blocks.length} blocks, ${totalWorkouts} sessions, planType=${planType}`)
 
-  // 1. Create plan (with plan_type)
+  // 1. Create plan
   const today = new Date()
   const endDate = new Date(today)
   endDate.setDate(endDate.getDate() + (importData.durationWeeks || 1) * 7)
@@ -1345,10 +675,8 @@ export async function saveImportedProgram(
       throw err
     }
 
-    // Fetch the auto-created block_weeks
     const blockWeeks = await plansService.getBlockWeeks(trainingBlock.id)
 
-    // 3. For each week: create self-contained plan_sessions with session_data
     for (let weekIndex = 0; weekIndex < (blockData.weeks ?? []).length; weekIndex++) {
       const weekData = blockData.weeks[weekIndex]
       const blockWeek = blockWeeks.find(bw => bw.week_number === weekData.weekNumber)
@@ -1360,7 +688,6 @@ export async function saveImportedProgram(
       const weekWorkouts = weekData.workouts ?? []
       if (weekWorkouts.length === 0) continue
 
-      // Build session rows with exercise data in session_data JSONB
       const daySessionCounts: Record<number, number> = {}
       const sessionRows: any[] = []
 
@@ -1370,7 +697,6 @@ export async function saveImportedProgram(
         const orderIndex = daySessionCounts[dayKey] || 0
         daySessionCounts[dayKey] = orderIndex + 1
 
-        // Convert ImportExercise[] → SessionExercise[] for session_data JSONB
         const sessionExercises = (w.exercises ?? []).map((ex, ei) => ({
           order: ei,
           name: ex.name,
@@ -1393,12 +719,10 @@ export async function saveImportedProgram(
 
         savedExercises += sessionExercises.length
 
-        // Check if this session should be auto-promoted to library
         const flagKey = `${blockIndex}-${weekIndex}-${woi}`
         const shouldPromote = libraryFlags?.has(flagKey) ?? false
 
         if (shouldPromote) {
-          // Create a workouts record + exercises + linked plan_session
           const { data: workout, error: wErr } = await (supabase as any)
             .from('workouts')
             .insert({
@@ -1414,7 +738,6 @@ export async function saveImportedProgram(
 
           if (wErr) throw new Error(wErr.message)
 
-          // Insert exercises for the library workout
           if (w.exercises?.length) {
             const exerciseRows = w.exercises.map((ex, ei) => ({
               workout_id: workout.id,
@@ -1444,23 +767,20 @@ export async function saveImportedProgram(
             order_index: orderIndex,
             session_name: w.name,
             session_data: sessionExercises,
-            workout_id: workout.id, // linked to library
+            workout_id: workout.id,
           })
           libraryWorkouts++
         } else {
-          // Self-contained session — no workouts record
           sessionRows.push({
             block_week_id: blockWeek.id,
             day_of_week: dayKey,
             order_index: orderIndex,
             session_name: w.name,
             session_data: sessionExercises,
-            // workout_id omitted — self-contained
           })
         }
       }
 
-      // Batch insert all plan_sessions for this week
       if (sessionRows.length > 0) {
         const { error: sessErr } = await (supabase as any)
           .from('plan_sessions')
@@ -1478,7 +798,6 @@ export async function saveImportedProgram(
 
   console.log(`[SmartImport Save] Complete: ${savedSessions} sessions (${libraryWorkouts} promoted), ${savedExercises} exercises saved to plan ${plan.id}`)
 
-  // Update import_history with plan type + clear cached AI result
   if (historyId) {
     await (supabase as any)
       .from('import_history')
@@ -1494,11 +813,8 @@ export async function saveImportedProgram(
 }
 
 /**
- * Save an imported single session directly as a workout (no plan/block/week/session structure).
+ * Save an imported single session directly as a workout (no plan structure).
  * Used when detectedPlanType === 'single_session'.
- *
- * Creates: workouts (is_library: true) + exercises rows
- * Returns: { id: workoutId, type: 'workout' }
  */
 export async function saveImportedWorkout(
   importData: ImportResult,
@@ -1508,14 +824,12 @@ export async function saveImportedWorkout(
   if (!user.data.user) throw new Error('Not authenticated')
   const coachId = user.data.user.id
 
-  // Find the first workout from the import data
   const blocks = importData.blocks ?? []
   const firstWeek = blocks[0]?.weeks?.[0] ?? importData.weeks?.[0]
   const firstWorkout = firstWeek?.workouts?.[0]
 
   if (!firstWorkout) throw new Error('No workout found in import data')
 
-  // 1. Create the workout record
   const { data: workout, error: wErr } = await (supabase as any)
     .from('workouts')
     .insert({
@@ -1531,7 +845,6 @@ export async function saveImportedWorkout(
 
   if (wErr) throw new Error(wErr.message)
 
-  // 2. Insert exercises
   if (firstWorkout.exercises?.length) {
     const exerciseRows = firstWorkout.exercises.map((ex, ei) => ({
       workout_id: workout.id,
@@ -1561,7 +874,6 @@ export async function saveImportedWorkout(
 
   console.log(`[SmartImport] Saved single session as workout ${workout.id} with ${firstWorkout.exercises?.length ?? 0} exercises`)
 
-  // 3. Update import_history
   if (historyId) {
     await (supabase as any)
       .from('import_history')
@@ -1610,41 +922,23 @@ export async function getCachedImportResult(historyId: string): Promise<ImportRe
  * Get import history for current coach
  */
 export async function getImportHistory(limit = 20): Promise<ImportHistoryRecord[]> {
-  const user = await supabase.auth.getUser()
-  if (!user.data.user) throw new Error('Not authenticated')
+  // Use getSession instead of getUser to avoid auth lock contention
+  const { data: sessionData } = await supabase.auth.getSession()
+  const userId = sessionData.session?.user?.id
+  if (!userId) throw new Error('Not authenticated')
 
-  // Select all columns except ai_result (which can be huge),
-  // but include a boolean flag for whether it exists
   const { data, error } = await (supabase as any)
     .from('import_history')
     .select('*')
-    .eq('coach_id', user.data.user.id)
+    .eq('coach_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit)
 
   if (error) throw new Error(error.message)
 
-  // Add has_cached_result flag and strip the large ai_result payload
   return (data || []).map((r: any) => ({
     ...r,
     has_cached_result: r.ai_result != null,
-    ai_result: undefined, // don't keep the full payload in memory
+    ai_result: undefined,
   }))
-}
-
-/**
- * Convert File to base64 string
- */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      // Remove the data:...;base64, prefix
-      const base64 = result.split(',')[1]
-      resolve(base64)
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
 }

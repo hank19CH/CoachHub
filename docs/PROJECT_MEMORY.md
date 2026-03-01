@@ -51,7 +51,7 @@
 - **Self-contained sessions** (Sprint 12): `plan_sessions.session_data` JSONB stores exercises; `workout_id` is nullable. Sessions stay lightweight until coach "promotes" to Workout Library.
 - **WorkoutsView** filters to `is_library = true` only. Import creates self-contained sessions by default.
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
-- **Smart Import v33** (Sprint 13.5a): Two-step classify→extract flow. Classify step detects mesocycle structure (no DB writes), coach reviews ImportClassificationPreview, then confirms for full extract. Falls through to direct extract if classify fails or standalone sessions detected. Edge function v33 fixes `callClaude()` to accept `systemPrompt` parameter — classify now correctly uses `CLASSIFY_SYSTEM` (v32 bug: hardcoded `SYSTEM` for all calls). Frontend `classifyImport()` in aiImport.ts. SmartImportView has 3 states: `upload` → `classify_preview` → `extract_preview`. ✅ Edge function v33 deployed 2026-02-23.
+- **Smart Import v34.1** (Sprint 13.5a): Clean rebuild of the smart-import edge function (1235→440 lines) with modular architecture. Two-step classify→extract flow with coach resolutions threaded from classify review into the extract prompt. Edge function split into 4 modules: `sport-detection.ts` (10 sport regex banks), `prompts.ts` (system prompts + schemas), `claude.ts` (API wrapper), `index.ts` (clean handler). Frontend refactored: `importFileParser.ts` extracts all SheetJS parsing into shared `prepareFileContent()`, eliminating 400+ lines of duplication between classify and extract. File parsed once, cached as `PreparedContent`, reused for both API calls. GUARDRAIL 4: exercise names preserved EXACTLY as coach wrote them — AI never expands abbreviations (only coach's personal glossary can override). Sport-specific rules focus on structural parsing only. Auth data (`accessToken`, `coachId`) cached from classify and passed to extract, avoiding `navigator.locks` deadlock. `AbortSignal.any()` + `AbortSignal.timeout()` replace fragile `AbortController` chain. Review keepalive removed. v33 archived to `docs/smart-import-v33-archive.ts`.
 - **Mesocycle Progression Engine** (Sprint 13.5a): Pure TypeScript `src/services/progressionEngine.ts`. Extrapolates week N prescriptions from canonical Week 1 workout + block config. Patterns: linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom. Prilepin's chart maps intensity zones to optimal rep ranges. `detectProgressionPattern()` and `detectDeloadWeek()` analyze exercise slots. `formatPrescription()` renders "4x6 @ 70%" strings.
 - **block_sessions table** (Sprint 13.5a): Links canonical Week 1 workouts to training_blocks. Columns: training_block_id, workout_id, session_day, order_index. RLS via training_blocks → plans.coach_id.
 - **training_blocks progression columns** (Sprint 13.5a): load_metric, progression_pattern, intensity_start/end, volume_start/end, deload_week, deload_volume_factor, progression_params (JSONB).
@@ -64,13 +64,14 @@
 - Plans table = `plans`, block_weeks FK = `training_block_id`
 - coach_philosophy needs upsert (not update) since row may not exist
 - `sport_context` column is PostgreSQL `text[]` array, NOT JSONB — use `ARRAY['x','y']` not `'[\"x\",\"y\"]'::jsonb`
-- Smart Import: `cancelActiveImport()` in aiImport.ts uses AbortController for 2-minute timeout
+- Smart Import: uses `AbortSignal.any()` + `AbortSignal.timeout()` for 2-minute timeout. `cancelActiveImport()` is a legacy no-op; the view's `importAbortController.abort()` handles cancellation.
 - Smart Import blocks[] vs weeks[]: AI returns `blocks[].weeks[]` format (backward-compatible with legacy `weeks[]`)
-- **Auth keepalive** (v31): `setInterval` refreshes Supabase session every 20s during edge function `await fetch()`. Prevents token expiry on long AI waits (PDFs: 25-70s). Cleared in `finally` block. **Review keepalive** (v33): separate 30s interval during `classify_preview`/`extract_preview` steps, started/stopped via `watch(importStep)`. Explicit `refreshSession()` before save in `handleConfirmImport()`.
-- **Auth lock deadlock fix**: Supabase JS v2 uses an internal lock to prevent concurrent `refreshSession()` calls. If the review keepalive's `refreshSession()` is in-flight when `importProgram()` calls its own `refreshSession()`, the second call blocks indefinitely on the internal auth lock. Fix: `handleClassifyConfirm()` and `handleClassifyFallback()` now call `stopReviewKeepalive()` before starting the extract, eliminating the race condition.
+- **Auth keepalive** (v34.1): `setInterval(refreshSession, 20s)` runs ONLY inside `classifyImport()` and `importProgram()` during actual AI `fetch()`. Cleared in `finally` block. Review keepalive was REMOVED — caused `navigator.locks` deadlock. Supabase sessions last 1hr; review takes minutes.
+- **Auth lock deadlock** (FIXED v34.1): Supabase JS v2 `navigator.locks` caused `getSession()` to hang indefinitely after classify→review→extract flow. Three fixes: (1) Review keepalive removed entirely. (2) `classifyImport()` returns `authData: { accessToken, coachId }` cached by view. (3) `importProgram()` accepts optional `cachedAuth` param, skipping `getSession()` when auth data available from classify. Auth calls per import reduced from 7 to 1. `AbortSignal.any()` + `AbortSignal.timeout()` replaced fragile `AbortController` + `addEventListener` chain that caused race condition (adding abort listener to already-aborted signal fires synchronously per DOM spec).
 - **Simulated progress bar** (v33): SmartImportView uses ease-out curve animation over 65s reaching max 92%, then jumps to 100% on API return. 14 rotating messages (e.g., "Detecting sport & structure...", "Parsing sets, reps & intensities..."). Animated gradient bar with pulse effect. Replaced static stage-based progress (uploading→classifying→extracting).
 - **Ambiguity types** (v31): `ImportAmbiguity` in `src/types/import.ts` — `type`, `location`, `originalValue`, `question`, `options[]`, `priority` (1-10), `resolved`, `resolvedValue`. Returned separately from importResult by edge function.
-- **Two-step import flow** (v32): `handleImport()` calls `classifyImport()` first. If mesocycle detected (confidence ≥ 0.4) → shows `ImportClassificationPreview`. Coach confirms → `handleClassifyConfirm()` → `runDirectExtract()`. If classify fails → falls through to `runDirectExtract()` seamlessly. SmartImportView tracks `importStep` ref: `'upload' | 'classify_preview' | 'extract_preview'`.
+- **Two-step import flow** (v34.1): `handleImport()` → `classifyImport()` returns `{ classification, preparedContent, authData }`. All three cached in view (`cachedPreparedContent`, `cachedAuthData`). If mesocycle detected (confidence ≥ 0.4) → shows `ImportClassificationPreview`. Coach confirms → `handleClassifyConfirm()` gathers `CoachResolutions` → `runDirectExtract(context, resolutions)` → `importProgram(file, signal, context, resolutions, prepared, cachedAuth)`. `cachedAuth` avoids `getSession()` lock contention. Extract prompt includes "PRIOR CLASSIFICATION" + "COACH RESOLUTIONS" sections. If classify fails → falls through to `runDirectExtract()` without resolutions. File never re-parsed.
+- **Code-only extraction deferred**: `spreadsheetExtractor.ts` is dead code (no imports). Deterministic code-only extraction deferred to post-beta — needs far higher confidence before replacing AI extraction. File retained but unused.
 - **ImportClassification type**: `detected_type` is `'mesocycle_program' | 'standalone_sessions'`. `canonical_workouts[]` holds session roster with `ExerciseSlot[]`. `week_samples[]` holds Week 1 vs 2 comparison. `block_config` holds block name/sport.
 - **ExerciseSlot.variation_name**: Mid-block exercise swaps tracked per-week. `has_variation: true` when any week overrides the canonical name. `variation_summary` is human-readable ("Back Squat → Half Squat (wk 3+)").
 - **ProgressionPattern types differ**: `database.ts` has full set (linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom). `import.ts` ImportClassification uses simplified set (linear, wave, descending_sets, step, custom). Map 'wave' → 'wave_3_1' when saving to DB.
@@ -84,7 +85,7 @@
 - **`exercises.is_section_header`** boolean column — visual section dividers (Warm-Up, Main Set, etc.), NOT actual exercises
 - Default avatar is `/default-avatar.svg` (NOT .png or placeholder URLs)
 - WorkoutBuilder `numOrNull()` helper coerces empty strings to null for numeric DB columns
-- **Exercise naming rule**: Name = activity type ("Sprint", "Run"), NOT prescription ("60m Sprint"). Distance→`distance_meters` field.
+- **Exercise naming rule** (v34.1): GUARDRAIL 4 — exercise names preserved EXACTLY as coach wrote them. `raw_name` and `name` identical by default. ONLY the coach's personal abbreviation glossary can override `name`. Sport-specific rules no longer expand abbreviations. Distance→`distance_meters` field. "Sprint"/"Run" only used for unnamed distance-only prescriptions (structural inference, not abbreviation expansion).
 - **Pre-import context**: Coach can select Sport/PlanType/Focus before upload; overrides AI detection. Passed as `coachSport/coachPlanType/coachTrainingFocus` to edge function.
 - **JSON payload compaction** (v28): Volume columns stripped, null values dropped from rows. Truncation limit 150K (was 80K).
 - **Complete Block Extraction**: AI prompt rule #3 says "scan ENTIRE document, extract ALL blocks". Prevents late phases from being missed.
@@ -466,16 +467,23 @@ Plan -> Training Blocks -> Block Weeks -> Workouts (Sessions) -> Exercises
 - Threshold: First analysis at >= 10 programs, re-analysis every `next_analysis_threshold` (default 10)
 
 ### Supabase Edge Functions
-- `smart-import` (ACTIVE, v2) - Routes by file type, JWT-verified internally, logs to ai_plan_logs
+- `smart-import` (ACTIVE, v34.1) - Two-step classify→extract flow with coach resolutions. 4-module architecture: sport-detection.ts, prompts.ts, claude.ts, index.ts. JWT-verified internally. GUARDRAIL 4: exercise names preserved exactly as written. Sport rules focus on structural parsing only.
 - `analyze-philosophy` (ACTIVE, v2) - Dual auth, fetches all coach programs, Claude analysis, upserts to coach_philosophy
 
 ### Key Files
-- `src/services/aiImport.ts` - importProgram, saveImportedProgram, getImportHistory
+- `src/services/aiImport.ts` - classifyImport (returns authData), importProgram (with CoachResolutions + cachedAuth), saveImportedProgram, getImportHistory. Uses AbortSignal.any/timeout, single getSession per flow.
+- `src/services/importFileParser.ts` - prepareFileContent (shared SheetJS parsing, cached between classify/extract)
 - `src/services/philosophyDetection.ts` - getCoachPhilosophy, triggerPhilosophyAnalysis, getCoachProgramCount
 - `src/config/ai.ts` - AI_CONFIG (maxFileSize 10MB, supportedTypes, estimatedCostPerImport)
-- `src/types/import.ts` - ImportResult, ImportHistoryRecord, CoachPhilosophy types
-- `src/views/coach/SmartImportView.vue` - Drag & drop upload, processing stages, preview, import history
+- `src/types/import.ts` - ImportResult, ImportHistoryRecord, PreparedContent, CoachResolutions, CoachPhilosophy types
+- `src/views/coach/SmartImportView.vue` - Drag & drop upload, classify preview, extract preview, import history
 - `src/views/coach/PhilosophyInsightsView.vue` - Philosophy insights dashboard with charts
+- `supabase/functions/smart-import/index.ts` - v34.1 handler (classify + extract with resolutions, auth passthrough)
+- `supabase/functions/smart-import/sport-detection.ts` - 10 sport regex banks, detectSport(), sport-specific parsing rules (structural only, no abbreviation expansion)
+- `supabase/functions/smart-import/prompts.ts` - SYSTEM (5 guardrails incl. GUARDRAIL 4 name preservation), CLASSIFY_SYSTEM, buildSchema, buildClassifySchema
+- `supabase/functions/smart-import/claude.ts` - callClaude(), extractJSON()
+- `supabase/functions/_shared/cors.ts` - Shared CORS headers for all edge functions
+- `docs/smart-import-v33-archive.ts` - Archived v33 edge function (reference for domain knowledge)
 
 ### Routes
 - `/coach/import` (smart-import, requiresCoach)
