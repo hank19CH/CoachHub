@@ -31,11 +31,12 @@
 - `src/components/billing/UpgradePromptModal.vue` - 4-variant upgrade modal (soft_nudge/bonus_delight/hard_gate/followup)
 - `src/components/billing/SeatUsageBadge.vue` - Inline seat count badge (color-coded by usage %)
 - `src/components/planner/ImportClassificationPreview.vue` - Two-step import: mesocycle confidence, canonical workout roster, week comparison table, variation badges, ambiguity resolution
-- `src/components/planner/ProgressionMatrix.vue` - Editable week×exercise grid for block progression parameters (Sprint 13.5b)
-- `src/components/planner/CellEditPopover.vue` - Inline popover editor for progression matrix cells (Sprint 13.5b)
-- `src/components/planner/ProgressionSuggestions.vue` - AI-powered progression parameter suggestions with apply/dismiss (Sprint 13.5c)
-- `src/components/planner/VolumeDesigner.vue` - Visual volume planning with Chart.js curves, preset shapes, per-week editing (Sprint 13.6)
+- ~~`src/components/planner/ProgressionMatrix.vue`~~ - **DEPRECATED Sprint 14** (replaced by BlockModeler; not imported, delete in Sprint 15). Was: Editable week×exercise grid for block progression parameters (Sprint 13.5b)
+- ~~`src/components/planner/CellEditPopover.vue`~~ - **DEPRECATED Sprint 14** (replaced by BlockModeler; not imported, delete in Sprint 15). Was: Inline popover editor for progression matrix cells (Sprint 13.5b)
+- ~~`src/components/planner/ProgressionSuggestions.vue`~~ - **DEPRECATED Sprint 14** (replaced by BlockModeler; not imported, delete in Sprint 15). Was: AI-powered progression parameter suggestions with apply/dismiss (Sprint 13.5c)
+- ~~`src/components/planner/VolumeDesigner.vue`~~ - **DEPRECATED Sprint 14** (replaced by BlockModeler; not imported, delete in Sprint 15). Was: Visual volume planning with Chart.js curves, preset shapes, per-week editing (Sprint 13.6)
 - `src/components/layout/CoachSidebar.vue` - Collapsible coach navigation sidebar for desktop/tablet (Sprint 13.7)
+- `src/components/planner/BlockModeler.vue` - Progression tab: summary card + full-screen block modeler (Sprint 14). Children: ShapePicker, BlockChart, LeverList, WeekPreview
 
 ## Architecture Notes
 - Services in `src/services/` handle Supabase queries
@@ -53,7 +54,7 @@
 - **WorkoutBuilder session mode**: `route.query.sessionMode=true` + `sessionId` loads/saves from `plan_sessions.session_data` JSONB instead of exercises table.
 - **Smart Import v34.1** (Sprint 13.5a): Clean rebuild of the smart-import edge function (1235→440 lines) with modular architecture. Two-step classify→extract flow with coach resolutions threaded from classify review into the extract prompt. Edge function split into 4 modules: `sport-detection.ts` (10 sport regex banks), `prompts.ts` (system prompts + schemas), `claude.ts` (API wrapper), `index.ts` (clean handler). Frontend refactored: `importFileParser.ts` extracts all SheetJS parsing into shared `prepareFileContent()`, eliminating 400+ lines of duplication between classify and extract. File parsed once, cached as `PreparedContent`, reused for both API calls. GUARDRAIL 4: exercise names preserved EXACTLY as coach wrote them — AI never expands abbreviations (only coach's personal glossary can override). Sport-specific rules focus on structural parsing only. Auth data (`accessToken`, `coachId`) cached from classify and passed to extract, avoiding `navigator.locks` deadlock. `AbortSignal.any()` + `AbortSignal.timeout()` replace fragile `AbortController` chain. Review keepalive removed. v33 archived to `docs/smart-import-v33-archive.ts`.
 - **Mesocycle Progression Engine** (Sprint 13.5a): Pure TypeScript `src/services/progressionEngine.ts`. Extrapolates week N prescriptions from canonical Week 1 workout + block config. Patterns: linear, wave_3_1, wave_2_1, descending_sets, step, conjugate, prilepin, custom. Prilepin's chart maps intensity zones to optimal rep ranges. `detectProgressionPattern()` and `detectDeloadWeek()` analyze exercise slots. `formatPrescription()` renders "4x6 @ 70%" strings.
-- **block_sessions table** (Sprint 13.5a): Links canonical Week 1 workouts to training_blocks. Columns: training_block_id, workout_id, session_day, order_index. RLS via training_blocks → plans.coach_id.
+- **block_sessions table** (Sprint 13.5a, **DEPRECATED Sprint 14** — canonical Week 1 now lives in week-1 `plan_sessions`; table kept, 0 rows): Links canonical Week 1 workouts to training_blocks. Columns: training_block_id, workout_id, session_day, order_index. RLS via training_blocks → plans.coach_id.
 - **training_blocks progression columns** (Sprint 13.5a): load_metric, progression_pattern, intensity_start/end, volume_start/end, deload_week, deload_volume_factor, progression_params (JSONB).
 
 ## Common Gotchas
@@ -1133,6 +1134,43 @@ Comprehensive desktop/tablet layout overhaul. Added a collapsible coach navigati
 - **Collapsible sidebar**: Fixed left rail at `lg:`, icon-only when collapsed (`w-16`), expanded with labels (`w-56`)
 
 ---
+
+## Sprint 14: Block Modeler (Completed)
+
+Replaces the Progression tab (ProgressionMatrix + CellEditPopover + ProgressionSuggestions + VolumeDesigner) with one Block Modeler. Coach builds Week 1 → picks weeks / shape / recovery → previews → generates weeks 2–N. **No AI in this tab.**
+
+### Mental model (programEngine.ts)
+- **Shape** — how hard each week is vs Week 1 (volume multiplier + intensity steps): `steady_build`, `accumulate`, `intensify`, `peak`, `maintain`. Recovery cadence (`none`/`every_3`/`every_4`/`final`) layers on top; Peak adds a taper.
+- **Lever** — how each exercise expresses that week: `hold`, `load`, `volume`, `reps`, `distance`, `ladder`. `defaultLever()` picks it; coach overrides write `progression: { lever }` onto the **Week 1** exercise in `session_data`.
+- **Pin** — a hand-edited generated cell (`pinned: true` + `canonical_ref` in session_data). `generateBlock()` carries pins through any regeneration.
+
+### Storage
+- `training_blocks`: `progression_pattern` = shape slug, `deload_cadence`, `week_overrides` (`{"3":{"volume":1.2}}` from chart drags), `modeled_at`
+- `block_weeks`: `volume_modifier`/`intensity_modifier`/`is_deload` hold the engine's WeekTarget; new `is_taper`, `is_pinned`
+- `plan_sessions` weeks 2..N: `is_generated = true`, `canonical_session_id` → matching week-1 row. Upsert key (day_of_week, order_index) within the week.
+- Library tables (read-only for coaches): `load_shapes`, `progression_levers`, `week_templates` (9 system templates). `exercise_library.load_type` added.
+- Migration `20261005_sprint14_block_modeler.sql` (applied). `20261005_phase2_program_engine.sql` is committed but **must not be applied** before beta feedback.
+- Legacy blocks: `progression_params.preset_shape` maps via `LEGACY_SHAPE_MAP` (migration backfilled; `resolveShapeConfig()` keeps it as a runtime fallback).
+
+### Key Files
+- `src/services/programEngine.ts` — pure engine (shapes, levers, pins, totals). Source of truth for all math; tests in `tests/`.
+- `src/services/channels.ts` — Sprint 15 key-metric/roles engine (shipped with the package, not yet used by the UI)
+- `src/data/weekTemplates.ts` — system templates; `scripts/buildSeed.ts` regenerates the migration's template INSERTs from it (`scripts/sprint14_head.sql` = migration head)
+- `src/services/blockModeler.ts` — all Supabase access: `loadBlockForModeling`, `saveModeledBlock`, `listWeekTemplates`, `applyTemplate`, `weeksToRemove`, `manualSessionsToReplace`
+- `src/components/planner/BlockModeler.vue` (+ `ShapePicker`, `BlockChart`, `LeverList`, `WeekPreview`)
+- `prototype/block-modeler.html` — UX spec (runs the real engine; its Key metric panel is Sprint 15)
+
+### Behaviour notes
+- Preview recomputes locally on every change (no network). Generate writes block → weeks → week-1 lever changes → weeks 2..N.
+- Confirm dialog before deleting weeks beyond the new length or overwriting hand-built (non-generated) sessions in weeks 2..N.
+- WorkoutBuilder session mode: saving a generated session pins every exercise whose prescription changed, and preserves `progression` / `canonical_ref` / `pinned` (previously dropped on save). WeekEditor shows a gold **Pinned** badge.
+- Brand mapping: volume `summit-800`, intensity `peak-500`, recovery/pins `amber-400`/`amber-50` (the brief's `summit-purple-600` / `valencia-orange-500` / `summit-gold-400` tokens don't exist in tailwind.config.js; these match the prototype's hex values).
+- Tests: `npm test` (engine + templates + channels, 23 pass).
+
+### Known limits
+- Saves are sequential writes, not one transaction; re-running Generate repairs a partial save.
+- Exercises added only to a generated week (no Week 1 counterpart) are not carried through regeneration.
+- Pins are matched by session day + name; renaming a generated session drops its pins on the next generate.
 
 ## Future Plans (Decided, Not Yet Implemented)
 

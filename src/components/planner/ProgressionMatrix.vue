@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// DEPRECATED Sprint 14 — replaced by BlockModeler.vue. No longer imported; delete in Sprint 15.
 import { ref, computed, watch, onMounted } from 'vue'
 import type { ExerciseSlot, ExerciseWeekEntry } from '@/types/progression'
 import { loadBlockProgressionMatrix, saveWeekEntry, formatPrescription } from '@/services/progressionEngine'

@@ -145,6 +145,8 @@ const days = computed(() => {
         rpe: s.workout?.target_rpe || null,
         isLibrary: !!s.workout_id, // has a linked workout = promoted to library
         exerciseCount: Array.isArray(s.session_data) ? (s.session_data as any[]).length : 0,
+        // Sprint 14: coach hand-edits inside a generated week survive regeneration
+        pinnedCount: Array.isArray(s.session_data) ? (s.session_data as any[]).filter(e => e?.pinned).length : 0,
       }))
 
     result.push({
@@ -314,7 +316,8 @@ function getSessionTypeStyle(type: string) {
                   class="w-full bg-white/80 text-xs font-semibold rounded px-1 py-0.5 outline-none ring-1 ring-summit-400 text-gray-900"
                 />
                 <span v-else class="truncate">{{ session.name }}</span>
-                <span v-if="session.exerciseCount > 0 && !session.isLibrary" class="text-[10px] opacity-60 ml-auto">{{ session.exerciseCount }} ex</span>
+                <span v-if="session.pinnedCount" class="ml-auto shrink-0 px-1.5 rounded-full bg-amber-100 text-amber-800 text-[10px]" :title="`${session.pinnedCount} pinned edit(s) — kept when the block is regenerated`">Pinned</span>
+                <span v-if="session.exerciseCount > 0 && !session.isLibrary" :class="['text-[10px] opacity-60', session.pinnedCount ? '' : 'ml-auto']">{{ session.exerciseCount }} ex</span>
               </div>
             </div>
           </div>
@@ -392,6 +395,11 @@ function getSessionTypeStyle(type: string) {
             <div v-if="session.exerciseCount > 0 && !session.isLibrary" class="text-[8px] opacity-60 mt-0.5">
               {{ session.exerciseCount }} exercises
             </div>
+            <span
+              v-if="session.pinnedCount"
+              class="inline-block mt-0.5 px-1.5 rounded-full bg-amber-100 text-amber-800 text-[8px]"
+              :title="`${session.pinnedCount} pinned edit(s) — kept when the block is regenerated`"
+            >Pinned</span>
 
             <!-- Save to Library button (only for non-promoted sessions) -->
             <button

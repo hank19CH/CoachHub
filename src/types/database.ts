@@ -37,7 +37,11 @@ export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived'
 export type VolumeTarget = 'low' | 'moderate' | 'high'
 export type IntensityTarget = 'low' | 'moderate' | 'high' | 'peak'
 export type LoadMetric = 'tonnage' | 'relative_intensity' | 'rpe' | 'volume_load' | 'reps_only'
-export type ProgressionPattern = 'linear' | 'wave_3_1' | 'wave_2_1' | 'descending_sets' | 'step' | 'conjugate' | 'prilepin' | 'custom'
+// Sprint 14: progression_pattern now holds a load_shapes.slug; legacy Sprint 13.5a values are tolerated.
+export type ProgressionPattern = 'steady_build' | 'accumulate' | 'intensify' | 'peak' | 'maintain'
+  | 'linear' | 'wave_3_1' | 'wave_2_1' | 'descending_sets' | 'step' | 'conjugate' | 'prilepin' | 'custom'
+export type DeloadCadence = 'none' | 'every_3' | 'every_4' | 'final'
+export type ExerciseLoadType = 'external_load' | 'bodyweight' | 'distance' | 'time' | 'contacts' | 'none'
 export type ExerciseCategory = 'primary' | 'accessory' | 'warmup' | 'cooldown' | 'drill' | 'plyometric'
 export type MovementPattern = 'squat' | 'hinge' | 'push' | 'pull' | 'carry' | 'locomotion' | 'rotation' | 'skill'
 export type AiActionTaken = 'accepted' | 'modified' | 'rejected' | 'pending'
@@ -964,6 +968,9 @@ export interface Database {
           deload_week: number | null
           deload_volume_factor: number
           progression_params: Json
+          deload_cadence: DeloadCadence
+          week_overrides: Json
+          modeled_at: string | null
           created_at: string
           updated_at: string
         }
@@ -987,6 +994,9 @@ export interface Database {
           deload_week?: number | null
           deload_volume_factor?: number
           progression_params?: Json
+          deload_cadence?: DeloadCadence
+          week_overrides?: Json
+          modeled_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1008,6 +1018,9 @@ export interface Database {
           deload_week?: number | null
           deload_volume_factor?: number
           progression_params?: Json
+          deload_cadence?: DeloadCadence
+          week_overrides?: Json
+          modeled_at?: string | null
           updated_at?: string
         }
       }
@@ -1020,6 +1033,8 @@ export interface Database {
           volume_modifier: number
           intensity_modifier: number
           is_deload: boolean
+          is_taper: boolean
+          is_pinned: boolean
           created_at: string
           updated_at: string
         }
@@ -1031,6 +1046,8 @@ export interface Database {
           volume_modifier?: number
           intensity_modifier?: number
           is_deload?: boolean
+          is_taper?: boolean
+          is_pinned?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -1040,6 +1057,8 @@ export interface Database {
           volume_modifier?: number
           intensity_modifier?: number
           is_deload?: boolean
+          is_taper?: boolean
+          is_pinned?: boolean
           updated_at?: string
         }
       }
@@ -1052,6 +1071,8 @@ export interface Database {
           order_index: number
           session_data: Json         // JSONB exercise data for self-contained sessions
           session_name: string | null
+          is_generated: boolean             // Sprint 14: written by the Block Modeler
+          canonical_session_id: string | null  // Sprint 14: matching Week 1 plan_sessions row
           created_at: string
           updated_at: string
         }
@@ -1063,6 +1084,8 @@ export interface Database {
           order_index?: number
           session_data?: Json
           session_name?: string | null
+          is_generated?: boolean
+          canonical_session_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1072,9 +1095,12 @@ export interface Database {
           order_index?: number
           session_data?: Json
           session_name?: string | null
+          is_generated?: boolean
+          canonical_session_id?: string | null
           updated_at?: string
         }
       }
+      // DEPRECATED Sprint 14: canonical Week 1 now lives in plan_sessions (week 1). Not dropped (0 rows).
       block_sessions: {
         Row: {
           id: string
@@ -1112,6 +1138,7 @@ export interface Database {
           video_url: string | null
           cues: string | null
           is_approved: boolean
+          load_type: ExerciseLoadType | null
           created_at: string
           updated_at: string
         }
@@ -1127,6 +1154,7 @@ export interface Database {
           video_url?: string | null
           cues?: string | null
           is_approved?: boolean
+          load_type?: ExerciseLoadType | null
           created_at?: string
           updated_at?: string
         }
@@ -1141,6 +1169,7 @@ export interface Database {
           video_url?: string | null
           cues?: string | null
           is_approved?: boolean
+          load_type?: ExerciseLoadType | null
           updated_at?: string
         }
       }
@@ -1294,6 +1323,118 @@ export interface Database {
         Update: {
           change_summary?: string | null
           metadata?: Json | null
+        }
+      }
+      load_shapes: {
+        Row: {
+          slug: string
+          name: string
+          coach_line: string
+          best_for: string[]
+          default_deload: DeloadCadence
+          formula: Json
+          sort_order: number
+          is_active: boolean
+        }
+        Insert: {
+          slug: string
+          name: string
+          coach_line: string
+          best_for?: string[]
+          default_deload?: DeloadCadence
+          formula: Json
+          sort_order?: number
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          coach_line?: string
+          best_for?: string[]
+          default_deload?: DeloadCadence
+          formula?: Json
+          sort_order?: number
+          is_active?: boolean
+        }
+      }
+      progression_levers: {
+        Row: {
+          slug: string
+          name: string
+          coach_line: string
+          applies_to: string[]
+          default_step: number | null
+          step_unit: string | null
+          sort_order: number
+          is_active: boolean
+        }
+        Insert: {
+          slug: string
+          name: string
+          coach_line: string
+          applies_to?: string[]
+          default_step?: number | null
+          step_unit?: string | null
+          sort_order?: number
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          coach_line?: string
+          applies_to?: string[]
+          default_step?: number | null
+          step_unit?: string | null
+          sort_order?: number
+          is_active?: boolean
+        }
+      }
+      week_templates: {
+        Row: {
+          id: string
+          slug: string | null
+          coach_id: string | null
+          name: string
+          coach_line: string | null
+          sport_tags: string[]
+          methodology_short_name: string | null
+          level: 'beginner' | 'intermediate' | 'advanced' | 'elite' | null
+          shape: string
+          deload: DeloadCadence
+          weeks: number
+          days: Json
+          is_public: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          slug?: string | null
+          coach_id?: string | null
+          name: string
+          coach_line?: string | null
+          sport_tags?: string[]
+          methodology_short_name?: string | null
+          level?: 'beginner' | 'intermediate' | 'advanced' | 'elite' | null
+          shape?: string
+          deload?: DeloadCadence
+          weeks?: number
+          days: Json
+          is_public?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          slug?: string | null
+          name?: string
+          coach_line?: string | null
+          sport_tags?: string[]
+          methodology_short_name?: string | null
+          level?: 'beginner' | 'intermediate' | 'advanced' | 'elite' | null
+          shape?: string
+          deload?: DeloadCadence
+          weeks?: number
+          days?: Json
+          is_public?: boolean
+          updated_at?: string
         }
       }
       periodization_templates: {
