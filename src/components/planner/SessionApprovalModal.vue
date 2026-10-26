@@ -311,10 +311,10 @@ function handleCancel() {
                 <div>
                   <label class="block text-xs font-semibold text-gray-700 mb-1.5">
                     Intensity Modifier
-                    <span class="text-gray-400 font-normal ml-1">({{ intensityModifier.toFixed(1) }}x)</span>
+                    <span class="text-gray-400 font-normal ml-1">({{ intensityMultiplier.toFixed(1) }}x)</span>
                   </label>
                   <input
-                    v-model.number="intensityModifier"
+                    v-model.number="intensityMultiplier"
                     type="range"
                     min="0.8"
                     max="1.2"

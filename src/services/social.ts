@@ -17,45 +17,31 @@ export async function toggleLike(userId: string, postId: string): Promise<{ like
   if (existing) {
     // Unlike
     await supabase.from('likes').delete().eq('id', existing.id)
-    // Decrement count
-    await supabase.rpc('decrement_likes_count', { post_id_input: postId }).catch(() => {
-      // Fallback: manual decrement
-      supabase
-        .from('posts')
-        .select('likes_count')
-        .eq('id', postId)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            supabase
-              .from('posts')
-              .update({ likes_count: Math.max(0, (data.likes_count || 1) - 1) })
-              .eq('id', postId)
-          }
-        })
-    })
+    await adjustLikesCount(postId, -1)
     return { liked: false }
   } else {
     // Like
     await supabase.from('likes').insert({ user_id: userId, post_id: postId })
-    // Increment count
-    await supabase.rpc('increment_likes_count', { post_id_input: postId }).catch(() => {
-      // Fallback: manual increment
-      supabase
-        .from('posts')
-        .select('likes_count')
-        .eq('id', postId)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            supabase
-              .from('posts')
-              .update({ likes_count: (data.likes_count || 0) + 1 })
-              .eq('id', postId)
-          }
-        })
-    })
+    await adjustLikesCount(postId, 1)
     return { liked: true }
+  }
+}
+
+/**
+ * Bump posts.likes_count via RPC, falling back to a manual read-modify-write.
+ * Supabase returns RPC failures as `{ error }` (query builders have no .catch()).
+ */
+async function adjustLikesCount(postId: string, delta: 1 | -1) {
+  const fn = delta > 0 ? 'increment_likes_count' : 'decrement_likes_count'
+  const { error } = await supabase.rpc(fn, { post_id_input: postId })
+  if (!error) return
+
+  const { data } = await supabase.from('posts').select('likes_count').eq('id', postId).single()
+  if (data) {
+    await supabase
+      .from('posts')
+      .update({ likes_count: Math.max(0, (data.likes_count || 0) + delta) })
+      .eq('id', postId)
   }
 }
 
