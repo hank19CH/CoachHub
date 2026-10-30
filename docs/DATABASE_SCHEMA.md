@@ -744,8 +744,8 @@ Social feed posts.
 | workout_completion_id | `uuid` | YES | — | FK → workout_completions |
 | visibility | `visibility` | YES | `'public'` | |
 | is_pinned | `boolean` | YES | `false` | |
-| likes_count | `integer` | YES | `0` | Denormalized counter, maintained by `trg_likes_sync_post_count` — never write from the client |
-| comments_count | `integer` | YES | `0` | Denormalized counter |
+| likes_count | `integer` | YES | `0` | Denormalized counter, maintained by `trg_likes_sync_post_count` — client writes are ignored |
+| comments_count | `integer` | YES | `0` | Denormalized counter, maintained by `trg_comments_sync_post_count` — client writes are ignored |
 | created_at | `timestamptz` | YES | `now()` | |
 | updated_at | `timestamptz` | YES | `now()` | |
 
@@ -1138,6 +1138,8 @@ Tracks upgrade prompt interactions for analytics and deduplication.
 | `is_team_athlete(team_id, user_id)` | `boolean` | Check team membership for RLS |
 | `check_philosophy_trigger()` | `trigger` | Auto-notify when analysis threshold reached |
 | `sync_post_likes_count()` | `trigger` | Keeps `posts.likes_count` in step with `likes` (bypasses posts RLS) |
+| `sync_post_comments_count()` | `trigger` | Keeps `posts.comments_count` in step with `comments` (bypasses posts RLS) |
+| `guard_post_counters()` | `trigger` | Ignores direct client writes to `posts.likes_count` / `comments_count` |
 
 ### Triggers
 
@@ -1145,6 +1147,8 @@ Tracks upgrade prompt interactions for analytics and deduplication.
 |---------|-------|-------|----------|
 | `trigger_philosophy_check` | `programs` | AFTER INSERT | `check_philosophy_trigger()` |
 | `trg_likes_sync_post_count` | `likes` | AFTER INSERT OR DELETE | `sync_post_likes_count()` |
+| `trg_comments_sync_post_count` | `comments` | AFTER INSERT OR DELETE | `sync_post_comments_count()` |
+| `trg_posts_guard_counters` | `posts` | BEFORE INSERT OR UPDATE OF likes_count, comments_count | `guard_post_counters()` |
 
 ---
 

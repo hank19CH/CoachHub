@@ -74,6 +74,7 @@ export async function getPostComments(postId: string, limit = 50) {
   })
 }
 
+// posts.comments_count is kept in sync by the trg_comments_sync_post_count trigger on comments.
 export async function addComment(postId: string, authorId: string, content: string, parentId?: string) {
   const { data, error } = await supabase
     .from('comments')
@@ -91,20 +92,6 @@ export async function addComment(postId: string, authorId: string, content: stri
     return null
   }
 
-  // Increment comment count on post
-  const { data: post } = await supabase
-    .from('posts')
-    .select('comments_count')
-    .eq('id', postId)
-    .single()
-
-  if (post) {
-    await supabase
-      .from('posts')
-      .update({ comments_count: (post.comments_count || 0) + 1 })
-      .eq('id', postId)
-  }
-
   // Normalize author
   if (data) {
     const normalized = { ...data } as any
@@ -115,26 +102,12 @@ export async function addComment(postId: string, authorId: string, content: stri
   return data
 }
 
-export async function deleteComment(commentId: string, postId: string) {
+export async function deleteComment(commentId: string, _postId: string) {
   const { error } = await supabase.from('comments').delete().eq('id', commentId)
 
   if (error) {
     console.error('Error deleting comment:', error)
     return false
-  }
-
-  // Decrement comment count
-  const { data: post } = await supabase
-    .from('posts')
-    .select('comments_count')
-    .eq('id', postId)
-    .single()
-
-  if (post) {
-    await supabase
-      .from('posts')
-      .update({ comments_count: Math.max(0, (post.comments_count || 1) - 1) })
-      .eq('id', postId)
   }
 
   return true
