@@ -14,9 +14,7 @@ import PublishWeekModal from '@/components/planner/PublishWeekModal.vue'
 import PlanChangelog from '@/components/planner/PlanChangelog.vue'
 import PlanAnalytics from '@/components/planner/PlanAnalytics.vue'
 import AiAssistPanel from '@/components/planner/AiAssistPanel.vue'
-import ProgressionMatrix from '@/components/planner/ProgressionMatrix.vue'
-import VolumeDesigner from '@/components/planner/VolumeDesigner.vue'
-import ProgressionSuggestions from '@/components/planner/ProgressionSuggestions.vue'
+import BlockModeler from '@/components/planner/BlockModeler.vue'
 import Toast from '@/components/ui/Toast.vue'
 
 const route = useRoute()
@@ -92,6 +90,14 @@ async function handleBlockCreated() {
 async function handleBlockUpdated() {
   showToast('Block updated')
   await plansStore.refreshPlan()
+}
+
+// Block Modeler rewrote block_weeks / plan_sessions: reload plan and remount WeekEditor.
+const weekEditorKey = ref(0)
+async function handleBlockModeled() {
+  showToast('Block generated')
+  await plansStore.refreshPlan()
+  weekEditorKey.value++
 }
 
 async function handleBlockDeleted() {
@@ -250,7 +256,7 @@ function goBackToList() {
             Publish Week
           </button>
         </div>
-        <WeekEditor @create-session="handleCreateSession" @open-session="handleOpenSession" />
+        <WeekEditor :key="weekEditorKey" @create-session="handleCreateSession" @open-session="handleOpenSession" />
       </div>
 
       <!-- RIGHT: Block Details / Changelog / Analytics -->
@@ -284,26 +290,9 @@ function goBackToList() {
           @updated="handleBlockUpdated"
           @deleted="handleBlockDeleted"
         />
-        <div v-if="rightPanelTab === 'progression'" class="p-4 space-y-6">
+        <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <VolumeDesigner
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-              :load-metric="(plansStore.selectedBlock as any).load_metric || 'tonnage'"
-              :initial-params="(plansStore.selectedBlock as any).progression_params ?? null"
-              @updated="handleBlockUpdated"
-            />
-            <ProgressionSuggestions
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-            />
-            <ProgressionMatrix
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-            />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression
@@ -415,7 +404,7 @@ function goBackToList() {
           </div>
 
           <!-- Reuse WeekEditor for mobile too (shows actual sessions) -->
-          <WeekEditor @create-session="handleCreateSession" @open-session="handleOpenSession" />
+          <WeekEditor :key="weekEditorKey" @create-session="handleCreateSession" @open-session="handleOpenSession" />
         </div>
 
         <div v-else class="p-6 text-center">
@@ -477,26 +466,9 @@ function goBackToList() {
           @updated="handleBlockUpdated"
           @deleted="handleBlockDeleted"
         />
-        <div v-if="rightPanelTab === 'progression'" class="p-4 space-y-6">
+        <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <VolumeDesigner
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-              :load-metric="(plansStore.selectedBlock as any).load_metric || 'tonnage'"
-              :initial-params="(plansStore.selectedBlock as any).progression_params ?? null"
-              @updated="handleBlockUpdated"
-            />
-            <ProgressionSuggestions
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-            />
-            <ProgressionMatrix
-              :block-id="plansStore.selectedBlock.id"
-              :duration-weeks="plansStore.selectedBlock.duration_weeks || 4"
-              :deload-week="(plansStore.selectedBlock as any).deload_week ?? null"
-            />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression

@@ -33,6 +33,8 @@ const isSessionMode = computed(() => route.query.sessionMode === 'true')
 const sessionId = computed(() => route.query.sessionId as string | undefined)
 const sessionExercises = ref<SessionExercise[]>([])
 const sessionName = ref('') // editable session name
+// Sprint 14: sessions written by the Block Modeler. Hand edits to them are pinned.
+const sessionIsGenerated = ref(false)
 const promotingToLibrary = ref(false)
 
 // Session header fields (Sprint 9.3b)
@@ -222,6 +224,7 @@ async function loadSessionData() {
       return
     }
     sessionName.value = session.session_name || 'Session'
+    sessionIsGenerated.value = !!session.is_generated
     const data = session.session_data as any
     sessionExercises.value = Array.isArray(data) ? data : []
 
@@ -246,9 +249,13 @@ async function loadSessionData() {
       notes: se.notes ?? null,
       video_url: null,
       is_section_header: se.is_section_header || false,
+      tempo: se.tempo ?? null,
+      superset_group: se.superset_group ?? null,
+      category: se.category ?? null,
       created_at: '',
       updated_at: '',
-    } as Exercise))
+      _src: se,  // original session_data row: carries engine fields + pin detection on save
+    } as unknown as Exercise))
   } catch (e) {
     console.error('Error loading session data:', e)
     showToast('Failed to load session', 'error')
@@ -263,11 +270,43 @@ function parseSessionWeight(w: string): number | null {
   return match ? parseFloat(match[1]) : null
 }
 
+/** Prescription fields compared when deciding whether a generated cell was hand-edited. */
+const PIN_FIELDS = ['name', 'sets', 'reps', 'distance_meters', 'duration_seconds', 'rest_seconds',
+  'intensity_percent', 'weight', 'rpe', 'tempo', 'notes'] as const
+
+function samePrescription(a: Record<string, any>, b: Record<string, any>): boolean {
+  const norm = (v: unknown) => {
+    if (v === null || v === undefined || v === '') return ''
+    const n = parseFloat(String(v))
+    return /^[\d.]+\s*(kg)?$/i.test(String(v).trim()) && Number.isFinite(n) ? String(n) : String(v).trim()
+  }
+  return PIN_FIELDS.every(k => {
+    const av = k === 'intensity_percent' ? a.load_percent ?? a.intensity_percent : a[k]
+    const bv = k === 'intensity_percent' ? b.load_percent ?? b.intensity_percent : b[k]
+    return norm(av) === norm(bv)
+  })
+}
+
 function exercisesToSessionData(): SessionExercise[] {
-  return exercises.value.map((ex, i) => ({
+  return exercises.value.map((ex, i) => {
+    const src = (ex as any)._src as Record<string, any> | undefined
+    const row = toSessionRow(ex, i, src)
+    // Block Modeler fields the builder doesn't edit — keep them, or regeneration loses the link to Week 1.
+    if (src) {
+      for (const k of ['progression', 'canonical_ref', 'pinned', 'channel']) {
+        if (src[k] !== undefined) (row as any)[k] = src[k]
+      }
+    }
+    if (sessionIsGenerated.value && (!src || !samePrescription(row, src))) (row as any).pinned = true
+    return row
+  })
+}
+
+function toSessionRow(ex: Exercise, i: number, src?: Record<string, any>): SessionExercise {
+  return {
     order: ex.order_index ?? i,
     name: ex.name,
-    raw_name: (ex as any).raw_name ?? undefined,
+    raw_name: (ex as any).raw_name ?? src?.raw_name ?? undefined,
     sets: ex.sets ?? '',
     reps: ex.reps ?? undefined,
     distance_meters: ex.distance_meters ?? undefined,
@@ -279,11 +318,11 @@ function exercisesToSessionData(): SessionExercise[] {
     weight: ex.weight_kg ? `${ex.weight_kg}kg` : undefined,
     rpe: ex.rpe ?? undefined,
     tempo: (ex as any).tempo ?? undefined,
-    category: (ex as any).category ?? undefined,
+    category: (ex as any).category ?? src?.category ?? undefined,
     notes: ex.notes ?? undefined,
     superset_group: (ex as any).superset_group ?? undefined,
     is_section_header: (ex as any).is_section_header || undefined,
-  }))
+  }
 }
 
 async function saveSessionData() {
@@ -606,6 +645,7 @@ async function saveExercise() {
         const idx = exercises.value.findIndex(e => e.id === editingExerciseId.value)
         if (idx >= 0) {
           newExercise.order_index = exercises.value[idx].order_index
+          ;(newExercise as any)._src = (exercises.value[idx] as any)._src
           exercises.value[idx] = newExercise
         }
       } else {

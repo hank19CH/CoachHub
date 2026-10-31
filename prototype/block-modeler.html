@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Block Modeler — CoachHub prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FAF9FC; --ink:#18122B; --muted:#6B6480; --line:#E7E3F0; --panel:#FFFFFF;
+    --purple:#5B21B6; --purple-soft:#EDE7FA; --orange:#F97316; --gold:#FBBF24; --gold-soft:#FEF5DC;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 Manrope,system-ui,sans-serif}
+  h1,h2,h3,.num,.tabs button,.cell,svg text{font-family:"Space Grotesk",Manrope,system-ui,sans-serif}
+  h1{font-size:1.6rem;line-height:1.15;margin:0 0 .25rem;font-weight:700;letter-spacing:-.01em}
+  h2{font-size:1.05rem;margin:0 0 .6rem;font-weight:600}
+  p{margin:0}
+  .muted{color:var(--muted)}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 16px 120px}
+  header{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;justify-content:space-between;margin-bottom:20px}
+  select,button,input{font:inherit;color:inherit}
+  select{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:8px 10px}
+  .grid{display:grid;gap:20px}
+  @media(min-width:960px){.grid{grid-template-columns:minmax(0,440px) minmax(0,1fr)}}
+  .grid>*{min-width:0}
+  @media(max-width:959px){.col{display:contents}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .step{display:flex;gap:10px;align-items:baseline}
+  .step b{font-family:"Space Grotesk",system-ui,sans-serif;color:var(--purple)}
+  .seg{display:flex;flex-wrap:wrap;gap:6px}
+  .seg button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;cursor:pointer}
+  .seg button[aria-pressed=true]{background:var(--purple);border-color:var(--purple);color:#fff}
+  .seg button:focus-visible,.cell:focus-visible,select:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .shapes{display:grid;gap:6px}
+  .shape{text-align:left;border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 12px;cursor:pointer}
+  .shape[aria-pressed=true]{border-color:var(--purple);box-shadow:inset 3px 0 0 var(--purple);background:var(--purple-soft)}
+  .shape strong{display:block;font-family:"Space Grotesk",system-ui,sans-serif;font-weight:600}
+  .shape span{font-size:.85rem;color:var(--muted)}
+  .row{margin-top:16px}
+  label.lbl{display:block;font-weight:600;margin-bottom:6px}
+  /* chart */
+  .chart{width:100%;height:auto;display:block;touch-action:none}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin-top:8px}
+  .sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+  .totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
+  .totals div{border-top:1px solid var(--line);padding-top:6px}
+  .totals .num{font-size:1.2rem;font-weight:600}
+  /* levers */
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;font-size:.9rem}
+  th{font-weight:600;color:var(--muted)}
+  td select{padding:4px 6px;font-size:.85rem}
+  tr.grp td{border-bottom:none;padding-top:14px;font-weight:600;color:var(--muted);font-size:.8rem}
+  td.lv{width:1%;text-align:right}
+  table{table-layout:auto}
+  td .arrow{white-space:normal}
+  .arrow{color:var(--muted)}
+  .arrow b{color:var(--ink);font-weight:600}
+  /* weeks */
+  .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px}
+  .tabs button{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-family:"Space Grotesk"}
+  .tabs button[aria-pressed=true]{border-color:var(--ink);background:var(--ink);color:#fff}
+  .tabs .d{background:var(--gold-soft)}
+  .sess{margin-bottom:14px}
+  .sess h3{font-size:.95rem;margin:0 0 4px;font-family:"Space Grotesk",system-ui,sans-serif;font-weight:600}
+  .ex{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed var(--line)}
+  .cell{border:none;background:none;padding:2px 6px;border-radius:6px;cursor:pointer;font-family:"Space Grotesk",system-ui,sans-serif;white-space:nowrap}
+  .cell.chg{background:var(--purple-soft);color:var(--purple)}
+  .cell.pin{background:var(--gold-soft);color:#92400E}
+  .pinmark{font-size:.75rem;margin-left:4px}
+  .ed{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px;background:var(--gold-soft);border-radius:8px;margin:6px 0}
+  .ed input{width:68px;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  .ed button,.btn{border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--ink);color:#fff;padding:12px 16px}
+  .bar .in{max-width:1180px;margin:0 auto;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  .btn.primary{background:var(--orange);color:#fff}
+  .btn.ghost{background:transparent;color:#fff;border:1px solid #ffffff44}
+  .note{font-size:.85rem;color:var(--muted);margin-top:8px}
+  .chrow{padding:12px 0;border-top:1px solid var(--line)}
+  .chrow:first-of-type{border-top:none}
+  .chrow.focus{background:var(--purple-soft);margin:0 -16px;padding:12px 16px;border-radius:10px;border-top:none}
+  .chhead{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .chhead strong{font-family:"Space Grotesk",system-ui,sans-serif}
+  .seg.sm button{padding:3px 10px;font-size:.8rem}
+  .bars{display:grid;gap:4px;align-items:end;height:92px}
+  .bars .b{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;font-size:.7rem;color:var(--muted)}
+  .bars .b i{display:block;width:70%;border-radius:4px 4px 0 0;min-height:2px}
+  .bars .b.dl i{opacity:.55}
+  .bars .b b{color:var(--ink);font-weight:600;font-family:"Space Grotesk",system-ui,sans-serif}
+  .targets{display:grid;gap:4px;margin-top:6px}
+  .targets input{width:100%;min-width:0;border:1px solid var(--line);border-radius:6px;padding:3px 2px;font-size:.75rem;text-align:center;background:#fff}
+  .warn{font-size:.8rem;color:#92400E;background:var(--gold-soft);border-radius:8px;padding:8px 10px;margin-top:10px}
+  @media(prefers-reduced-motion:no-preference){.cell,.shape{transition:background .15s}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="title">Model this block</h1>
+      <p class="muted">Week 1 is yours. Pick a shape — the engine writes the rest. Anything you edit stays put.</p>
+    </div>
+    <div>
+      <label class="lbl" for="tpl">Start from</label>
+      <select id="tpl"></select>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="grid col" style="grid-template-columns:1fr;align-content:start">
+      <section aria-labelledby="s1" style="order:1">
+        <div class="step"><b>1</b><h2 id="s1">How long?</h2></div>
+        <div class="seg" id="weeks"></div>
+        <div class="row">
+          <div class="step"><b>2</b><h2>Which direction?</h2></div>
+          <div class="shapes" id="shapes"></div>
+        </div>
+        <div class="row">
+          <label class="lbl">Recovery week</label>
+          <div class="seg" id="deload"></div>
+        </div>
+      </section>
+      <section aria-labelledby="s3" style="order:4">
+        <div class="step"><b>3</b><h2 id="s3">What progresses?</h2></div>
+        <p class="note" style="margin:0 0 8px">Defaults are set from each exercise. Change one only if it's wrong.</p>
+        <table><tbody id="levers"></tbody></table>
+        <button class="seg" id="showhold" style="margin-top:10px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;cursor:pointer"></button>
+      </section>
+    </div>
+
+    <div class="grid col" style="grid-template-columns:1fr;align-content:start">
+      <section aria-labelledby="sc" style="order:2">
+        <h2 id="sc">The block at a glance</h2>
+        <svg class="chart" id="chart" viewBox="0 0 640 240" role="img" aria-label="Weekly volume and intensity"></svg>
+        <div class="legend">
+          <span><i class="sw" style="background:var(--purple)"></i>Volume vs Week 1 (drag a bar to adjust)</span>
+          <span><i class="sw" style="background:var(--orange)"></i>Intensity steps</span>
+          <span><i class="sw" style="background:var(--gold)"></i>Recovery / taper</span>
+        </div>
+        <div class="totals" id="totals"></div>
+      </section>
+      <section aria-labelledby="sm" style="order:3">
+        <div class="chhead" style="margin-bottom:4px"><h2 id="sm" style="margin:0">Key metric</h2>
+          <select id="preset" aria-label="Sport preset"></select></div>
+        <p class="note" style="margin:0 0 8px">Flag the one mode this block is built around. The shape drives it; the others follow their role: they grow less and cut more, so the key quality has room.</p>
+        <div id="channels"></div>
+        <div id="warns"></div>
+      </section>
+      <section aria-labelledby="sw" style="order:5">
+        <div class="step"><b>4</b><h2 id="sw">Check the weeks</h2></div>
+        <div class="tabs" id="tabs"></div>
+        <div id="week"></div>
+        <p class="note">Purple = changed by the engine. Gold = your edit (pinned — survives regenerating). Tap any prescription to edit.</p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="bar"><div class="in">
+  <span id="summary"></span>
+  <span style="display:flex;gap:8px">
+    <button class="btn ghost" id="reset">Clear my edits</button>
+    <button class="btn primary" id="save">Generate weeks 2–<span id="lastwk"></span></button>
+  </span>
+</div></div>
+
+<script>var CH=(()=>{var E=Object.defineProperty;var ee=Object.getOwnPropertyDescriptor;var ne=Object.getOwnPropertyNames;var te=Object.prototype.hasOwnProperty;var se=(e,n)=>{for(var t in n)E(e,t,{get:n[t],enumerable:!0})},re=(e,n,t,i)=>{if(n&&typeof n=="object"||typeof n=="function")for(let r of ne(n))!te.call(e,r)&&r!==t&&E(e,r,{get:()=>n[r],enumerable:!(i=ee(n,r))||i.enumerable});return e};var oe=e=>re(E({},"__esModule",{value:!0}),e);var Se={};se(Se,{CHANNELS:()=>N,DEFAULT_STEPS:()=>G,LEGACY_SHAPE_MAP:()=>he,METRICS:()=>z,MIN_VOLUME:()=>j,SHAPES:()=>W,SPORT_PRESETS:()=>ye,WEEK_TEMPLATES:()=>Z,applyLever:()=>C,buildWeekTargets:()=>M,channelTotals:()=>D,classifyChannel:()=>O,defaultLever:()=>U,formatPrescription:()=>ge,generateBlock:()=>me,generateChannelBlock:()=>_e,metricValue:()=>V,num:()=>c,parseRange:()=>h,refOf:()=>x,roleTarget:()=>Y,speedType:()=>J,weekTotals:()=>K,zoneWarnings:()=>Q});var W={steady_build:{name:"Steady build",coachLine:"Volume holds, intensity climbs a step each week. The classic.",build:e=>({volume:1+.025*e,intensity:e}),defaultDeload:"every_4"},accumulate:{name:"Accumulate",coachLine:"Volume climbs, intensity holds. GPP, hypertrophy, work capacity.",build:e=>({volume:Math.min(1.4,1+.08*e),intensity:0}),defaultDeload:"every_4"},intensify:{name:"Intensify",coachLine:"Volume comes down as intensity goes up. SPP, strength, speed.",build:e=>({volume:Math.max(.6,1-.1*e),intensity:e}),defaultDeload:"every_4"},peak:{name:"Peak",coachLine:"Sharpen, then cut volume hard in the final weeks. Competition.",build:e=>({volume:Math.max(.7,1-.05*e),intensity:e}),defaultDeload:"none"},maintain:{name:"Maintain",coachLine:"Same work every week. In-season \u2014 keep what you built.",build:()=>({volume:1,intensity:0}),defaultDeload:"none"}},ie=.6,ae=2,le=.2,pe=.4;function ce(e,n,t){return e===1?!1:t==="every_3"?e%3===0:t==="every_4"?e%4===0:t==="final"?e===n:!1}function M(e){let n=I(Math.round(e.weeks),2,12),t=W[e.shape]??W.steady_build,i=e.shape==="peak"?Math.max(1,Math.round(n/3)):0,r=n-i+1,p=[],l=0,o={volume:1,intensity:0};for(let a=1;a<=n;a++){let u;if(i&&a>=r){let g=a-r+1;u={week:a,buildIndex:l,isDeload:!1,isTaper:!0,volume:Math.max(pe,o.volume*(1-le*g)),intensity:o.intensity,label:"Taper"}}else if(ce(a,n,e.deload))u={week:a,buildIndex:l,isDeload:!0,isTaper:!1,volume:o.volume*ie,intensity:o.intensity-ae,label:"Deload"};else{let g=t.build(l);o=g,u={week:a,buildIndex:l,isDeload:!1,isTaper:!1,...g,label:a===1?"Week 1":"Build"},l++}let m=e.overrides?.[a];m&&a>1&&(m.volume!==void 0&&(u.volume=m.volume),m.intensity!==void 0&&(u.intensity=m.intensity),u.pinned=!0),u.volume=L(u.volume,3),p.push(u)}return p}function c(e){if(e==null||e==="")return null;let n=typeof e=="number"?e:parseFloat(String(e));return Number.isFinite(n)?n:null}function h(e){if(e==null)return null;let n=String(e).trim(),t=n.match(/^(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)$/);return t?{min:+t[1],max:+t[2]}:/^\d+(\.\d+)?$/.test(n)?{min:+n,max:+n}:null}var de=new Set(["warm_up","warmup","mobility","cooldown","drill","technique"]),ue=new Set(["sprint","plyometric","conditioning","tempo","run"]);function T(e){return c(e.intensity_percent)??c(e.load_percent)}function U(e){if(e.is_section_header)return"hold";let n=(e.category??"").toLowerCase();if(de.has(n))return"hold";if(ue.has(n)||c(e.distance_meters)&&!T(e)&&!c(e.weight_kg))return"volume";if(T(e)!==null||c(e.weight_kg)!==null||c(e.rpe)!==null)return"load";let t=h(e.reps);return t&&t.max>t.min?"reps":"hold"}var G={hold:0,load:2.5,volume:0,reps:1,distance:10,ladder:0};function $(e){return e.isDeload||e.isTaper?Math.max(0,e.buildIndex-1):e.buildIndex}function w(e,n){let t=h(e);if(!t)return e;let i=l=>n<1&&n>=.5?Math.round(l-.25):Math.round(l),r=Math.max(1,i(t.min*n)),p=Math.max(1,i(t.max*n));return r===p?String(r):`${r}-${p}`}function A(e,n){let t=String(L(I(n,30,100),1));e.intensity_percent!==void 0&&e.intensity_percent!==""&&(e.intensity_percent=t),e.load_percent!==void 0&&e.load_percent!==""&&(e.load_percent=t)}function C(e,n){let{pinned:t,...i}=e,r={...i};if(n.week===1)return r;let p=e.progression?.lever??U(e),l=e.progression?.step??G[p];switch(p){case"hold":return r;case"load":{let o=T(e),a=c(e.weight_kg),u=c(e.rpe);return o!==null?A(r,o+l*n.intensity):a!==null?r.weight_kg=String(Math.max(0,H(a+l*n.intensity,2.5))):u!==null&&(r.rpe=String(I(L(u+.5*n.intensity,1),5,10))),r.sets=w(e.sets,n.volume),r}case"volume":{let o=c(e.sets)??0,a=c(e.reps)??0;o<=1&&a<=1&&c(e.distance_meters)?r.distance_meters=H(c(e.distance_meters)*n.volume,10):a>=o?r.reps=w(e.reps,n.volume):r.sets=w(e.sets,n.volume);let u=T(e);return u!==null&&l&&A(r,u+l*n.intensity),r}case"reps":{let o=h(e.reps);if(o){let a=o.max>o.min?o.max:o.min+3;r.reps=n.isDeload?String(o.min):String(Math.min(a,o.min+l*$(n)))}return r.sets=w(e.sets,n.volume),r}case"ladder":{let o=e.progression?.ladder??[];if(!o.length)return r;let a=o[(n.week-1)%o.length];return Object.assign(r,a),a.intensity_percent!==void 0&&A(r,c(a.intensity_percent)??0),r}case"distance":{let o=c(e.distance_meters);return o&&(r.distance_meters=o+l*$(n),c(e.reps)!==null?r.reps=w(e.reps,n.volume):r.sets=w(e.sets,n.volume)),r}}}function x(e,n){return n.canonical_ref??`${e}:${n.order}`}function me(e,n,t={}){return M(n).map(r=>{let p=t[r.week]??[],l=e.map(o=>{let a=p.find(m=>m.day_of_week===o.day_of_week&&m.session_name===o.session_name),u=o.exercises.map(m=>{let g=x(o.day_of_week,m),S=a?.exercises.find(b=>b.pinned&&x(o.day_of_week,b)===g);return S||{...C(m,r),canonical_ref:g}});return{...o,exercises:u}});return{target:r,sessions:l,totals:K(l)}})}function K(e){let n={sets:0,loadedReps:0,relativeLoad:0,meters:0,contacts:0,avgIntensity:null},t=0,i=0;for(let r of e)for(let p of r.exercises){if(p.is_section_header)continue;let l=h(p.sets)?.max??1,o=h(p.reps)?.max??1,a=T(p),u=(p.category??"").toLowerCase();n.sets+=h(p.sets)?.max??0,c(p.distance_meters)&&(n.meters+=c(p.distance_meters)*l*o),u==="plyometric"&&(n.contacts+=l*o),(a!==null||c(p.weight_kg)!==null||c(p.rpe)!==null)&&(n.loadedReps+=l*o,a!==null&&(n.relativeLoad+=l*o*(a/100),t+=a,i++))}return n.relativeLoad=L(n.relativeLoad,1),n.avgIntensity=i?L(t/i,1):null,n}function ge(e){let n=e.sets===""||e.sets==null?null:String(e.sets),t=e.reps===""||e.reps==null?null:String(e.reps),i=c(e.distance_meters),r=[n,t].filter(Boolean).join("\xD7");i&&(r=r?`${r}\xD7${i}m`:`${i}m`);let p=T(e),l=c(e.weight_kg),o=c(e.rpe),a=p!==null?`${p}%`:l!==null?`${l}kg`:o!==null?`RPE ${o}`:"";return[r||"\u2014",a].filter(Boolean).join(" @ ")}var he={linear_ramp:{shape:"accumulate",deload:"none"},wave_3_1:{shape:"steady_build",deload:"every_4"},wave_2_1:{shape:"steady_build",deload:"every_3"},step_load:{shape:"steady_build",deload:"every_4"},reverse_taper:{shape:"peak",deload:"none"},front_loaded:{shape:"intensify",deload:"none"}};function I(e,n,t){return Math.min(t,Math.max(n,e))}function L(e,n){let t=10**n;return Math.round(e*t)/t}function H(e,n){return Math.round(e/n)*n}var N={speed:{name:"Speed",unit:"m"},tempo:{name:"Tempo",unit:"m"},plyo:{name:"Plyometrics",unit:"contacts"},strength:{name:"Strength",unit:"heavy reps"},conditioning:{name:"Conditioning",unit:"m"},other:{name:"Other",unit:""}},z={"speed.meters":{channel:"speed",name:"Sprint meters (\u226590%)"},"speed.accel":{channel:"speed",name:"Acceleration meters"},"speed.maxV":{channel:"speed",name:"Max-velocity meters"},"speed.se":{channel:"speed",name:"Speed-endurance meters"},"tempo.meters":{channel:"tempo",name:"Tempo meters"},"plyo.contacts":{channel:"plyo",name:"Foot contacts"},"strength.heavyReps":{channel:"strength",name:"Heavy reps (\u226580%)"},"strength.relLoad":{channel:"strength",name:"Relative load (sets\xD7reps\xD7%)"},"strength.tonnage":{channel:"strength",name:"Tonnage (kg)"},"conditioning.meters":{channel:"conditioning",name:"Conditioning meters"}},ye={sprinter_speed:{name:"Sprinter \u2014 speed block",focusMetric:"speed.meters",roles:{speed:"focus",tempo:"support",plyo:"support",strength:"maintain"}},sprinter_gpp:{name:"Sprinter \u2014 GPP block",focusMetric:"tempo.meters",roles:{tempo:"focus",strength:"support",plyo:"support",speed:"maintain"}},sprinter_strength:{name:"Sprinter \u2014 strength block",focusMetric:"strength.heavyReps",roles:{strength:"focus",speed:"support",plyo:"maintain",tempo:"maintain"}},field_offseason:{name:"Field sport \u2014 off-season",focusMetric:"strength.heavyReps",roles:{strength:"focus",speed:"support",plyo:"support",conditioning:"support"}},field_inseason:{name:"Field sport \u2014 in-season",focusMetric:"speed.maxV",roles:{speed:"focus",strength:"maintain",plyo:"maintain",conditioning:"maintain"}},endurance:{name:"Endurance",focusMetric:"conditioning.meters",roles:{conditioning:"focus",strength:"maintain",speed:"maintain"}},lifter:{name:"Strength sport",focusMetric:"strength.relLoad",roles:{strength:"focus",plyo:"maintain"}}},F=e=>c(e.intensity_percent)??c(e.load_percent);function O(e){if(typeof e.channel=="string"&&e.channel in N)return e.channel;if(e.is_section_header)return"other";let n=(e.category??"").toLowerCase(),t=F(e);return["warm_up","warmup","mobility","cooldown","drill","technique"].includes(n)?"other":n==="plyometric"?"plyo":n==="sprint"?t!==null&&t<90?"tempo":"speed":n==="conditioning"?"conditioning":t!==null||c(e.weight_kg)!==null||c(e.rpe)!==null||["compound_lift","isolation"].includes(n)?"strength":"other"}function J(e){let n=e.name.toLowerCase(),t=c(e.distance_meters)??0;return/fly|flying/.test(n)?"maxV":t>=80?"se":"accel"}function D(e){let n={speed:{meters:0,accel:0,maxV:0,se:0},tempo:{meters:0},plyo:{contacts:0},strength:{sets:0,heavyReps:0,relLoad:0,tonnage:0},conditioning:{meters:0}};for(let t of e)for(let i of t.exercises){let r=O(i),p=h(i.sets)?.max??1,l=h(i.reps)?.max??1,o=(c(i.distance_meters)??0)*p*l;switch(r){case"speed":n.speed.meters+=o,n.speed[J(i)]+=o;break;case"tempo":n.tempo.meters+=o;break;case"conditioning":n.conditioning.meters+=o;break;case"plyo":n.plyo.contacts+=o?Math.round(o/2.5):p*l;break;case"strength":{let a=F(i),u=c(i.weight_kg);n.strength.sets+=h(i.sets)?.max??0,a!==null&&a>=80&&(n.strength.heavyReps+=p*l),a!==null&&(n.strength.relLoad+=p*l*a/100),u!==null&&(n.strength.tonnage+=p*l*u)}}}return n.strength.relLoad=Math.round(n.strength.relLoad*10)/10,n}function V(e,n){return{"speed.meters":e.speed.meters,"speed.accel":e.speed.accel,"speed.maxV":e.speed.maxV,"speed.se":e.speed.se,"tempo.meters":e.tempo.meters,"plyo.contacts":e.plyo.contacts,"strength.heavyReps":e.strength.heavyReps,"strength.relLoad":e.strength.relLoad,"strength.tonnage":e.strength.tonnage,"conditioning.meters":e.conditioning.meters}[n]}var fe={focus:{up:1,down:1,taper:.6},support:{up:.5,down:1,taper:1},maintain:{up:0,down:1.25,taper:1.5}},j=.4;function Y(e,n){if(e.week===1)return e;let t=fe[n],i=e.volume-1,r=i>=0?t.up:e.isTaper?t.taper:t.down,p=Math.max(j,1+i*r),l=n==="maintain"&&!e.isDeload?Math.min(e.intensity,0):e.intensity;return{...e,volume:Math.round(p*1e3)/1e3,intensity:l}}function _e(e,n,t,i={}){let r=M(n),p=t.focusMetric?z[t.focusMetric].channel:void 0,l=t.focusMetric?V(D(e),t.focusMetric):0;return r.map((o,a)=>{let u=i[o.week]??[],m=b=>e.map(_=>{let P=u.find(y=>y.day_of_week===_.day_of_week&&y.session_name===_.session_name);return{..._,exercises:_.exercises.map(y=>{let k=x(_.day_of_week,y),v=P?.exercises.find(q=>q.pinned&&x(_.day_of_week,q)===k);if(v)return v;let R=O(y);if(R==="other")return{...C(y,{...o,volume:1,intensity:0}),canonical_ref:k};let B=Y(o,t.roles[R]??"support");return R===p&&b!==null&&(B={...B,volume:b}),{...C(y,B),canonical_ref:k}})}}),g=t.focusTargets?.[a],S=m(null);if(g!=null&&g>0&&l>0&&o.week>1&&t.focusMetric){let b=g/l,_=1/0;for(let P=0;P<6;P++){let y=m(b),k=V(D(y),t.focusMetric),v=Math.abs(k-g);if(v<_&&(_=v,S=y),!k||v/g<.05)break;b*=g/k}}return{target:o,sessions:S,channels:D(S),warnings:Q(S)}})}function Q(e){let n=[];for(let t of e)for(let i of t.exercises){let r=F(i);(i.category??"").toLowerCase()==="sprint"&&r!==null&&r>75&&r<95&&n.push(`${t.session_name}: ${i.name} at ${r}% sits in the 76\u201394% middle zone`)}return n}var X=0,be=()=>{X=0},s=(e,n,t)=>({name:e,order:X++,category:n,sets:"",reps:"",...t}),d=(e,n,...t)=>{let i={day_of_week:e-1,session_name:n,exercises:t};return be(),i},f=(e,n="1",t="20m")=>s(e,"warm_up",{sets:n,reps:t}),Z=[{slug:"sprint-gpp-high-low",name:"Sprint GPP \u2014 High/Low",coachLine:"Three high-CNS days separated by tempo days. Build work capacity without grey-zone running.",sportTags:["athletics","sprints","team-sport-speed"],methodology:"Francis",level:"intermediate",shape:"accumulate",deload:"every_4",weeks:6,days:[d(1,"High \u2014 Acceleration + Strength",f("A-Skip","2"),f("B-Skip","2"),s("Acceleration Sprint","sprint",{reps:"6",distance_meters:30,intensity_percent:"95"}),s("Back Squat","compound_lift",{sets:"4",reps:"5",intensity_percent:"75",load_percent:"75"}),s("Hurdle Hop","plyometric",{sets:"4",reps:"5"})),d(2,"Low \u2014 Extensive Tempo",s("Tempo 200m","sprint",{reps:"10",distance_meters:200,intensity_percent:"70"}),s("Bird Dog","isolation",{sets:"3",reps:"8-12"})),d(3,"High \u2014 Max Velocity + Power",f("A-Skip","2"),f("High Knees","2"),s("Flying Sprint","sprint",{reps:"4",distance_meters:30,intensity_percent:"97"}),s("Bounding","plyometric",{sets:"4",reps:"1",distance_meters:30}),s("Barbell Bench Press","compound_lift",{sets:"4",reps:"5",intensity_percent:"75",load_percent:"75"})),d(4,"Low \u2014 Tempo + Core",s("Tempo 100m","sprint",{reps:"16",distance_meters:100,intensity_percent:"70"}),s("Ab Wheel Rollout","isolation",{sets:"3",reps:"8-12"})),d(5,"High \u2014 Acceleration + Strength",f("A-Skip","2"),s("Falling Start","sprint",{reps:"5",distance_meters:40,intensity_percent:"95"}),s("Conventional Deadlift","compound_lift",{sets:"4",reps:"4",intensity_percent:"78",load_percent:"78"}),s("Box Jump","plyometric",{sets:"4",reps:"4"})),d(6,"Low \u2014 Extensive Tempo",s("Tempo 200m","sprint",{reps:"8",distance_meters:200,intensity_percent:"68"}))]},{slug:"sprint-spp-short-to-long",name:"Sprint SPP \u2014 Short-to-Long",coachLine:"Speed distances grow week to week while total meters come down. Gym intensifies.",sportTags:["athletics","sprints"],methodology:"Francis",level:"advanced",shape:"intensify",deload:"every_4",weeks:6,days:[d(1,"Acceleration + Strength",f("A-Skip","2"),s("Block Start","sprint",{reps:"6",distance_meters:30,intensity_percent:"98",progression:{lever:"distance",step:10}}),s("Back Squat","compound_lift",{sets:"4",reps:"3",intensity_percent:"82",load_percent:"82"})),d(2,"Tempo",s("Tempo 100m","sprint",{reps:"12",distance_meters:100,intensity_percent:"70"})),d(3,"Max Velocity",f("A-Skip","2"),s("Flying Sprint","sprint",{reps:"4",distance_meters:20,intensity_percent:"98",progression:{lever:"distance",step:10}}),s("Depth Jump","plyometric",{sets:"3",reps:"5"})),d(5,"Speed Endurance + Strength",s("Speed Endurance","sprint",{reps:"4",distance_meters:80,intensity_percent:"95",progression:{lever:"distance",step:10}}),s("Power Clean","compound_lift",{sets:"5",reps:"2",intensity_percent:"80",load_percent:"80"}))]},{slug:"strength-linear-3day",name:"Linear Strength \u2014 3 Day Full Body",coachLine:"Same lifts, a bit heavier every week. The right start for newer lifters.",sportTags:["general","strength"],methodology:"Linear",level:"beginner",shape:"steady_build",deload:"every_4",weeks:8,days:[d(1,"Full Body A",s("Back Squat","compound_lift",{sets:"3",reps:"5",intensity_percent:"70",load_percent:"70"}),s("Barbell Bench Press","compound_lift",{sets:"3",reps:"5",intensity_percent:"70",load_percent:"70"}),s("Barbell Row","isolation",{sets:"3",reps:"8-10"})),d(3,"Full Body B",s("Conventional Deadlift","compound_lift",{sets:"2",reps:"5",intensity_percent:"72",load_percent:"72"}),s("Dumbbell Shoulder Press","isolation",{sets:"3",reps:"8-10"}),s("Chin-Up","isolation",{sets:"3",reps:"5-8"})),d(5,"Full Body A",s("Back Squat","compound_lift",{sets:"3",reps:"5",intensity_percent:"70",load_percent:"70"}),s("Barbell Bench Press","compound_lift",{sets:"3",reps:"5",intensity_percent:"70",load_percent:"70"}),s("Back Extension","isolation",{sets:"3",reps:"10-15"}))]},{slug:"hypertrophy-upper-lower",name:"Hypertrophy \u2014 Upper/Lower 4 Day",coachLine:"Reps climb inside each range, sets build across the block, then deload.",sportTags:["general","bodybuilding"],methodology:null,level:"intermediate",shape:"accumulate",deload:"every_4",weeks:4,days:[d(1,"Upper",s("Barbell Bench Press","compound_lift",{sets:"3",reps:"6-10",rpe:"7"}),s("Barbell Row","isolation",{sets:"3",reps:"8-12"}),s("Cable Lateral Raise","isolation",{sets:"3",reps:"12-15"})),d(2,"Lower",s("Back Squat","compound_lift",{sets:"3",reps:"6-10",rpe:"7"}),s("Bulgarian Split Squat","isolation",{sets:"3",reps:"8-12"}),s("Back Extension","isolation",{sets:"3",reps:"10-15"})),d(4,"Upper",s("Dumbbell Shoulder Press","isolation",{sets:"3",reps:"8-12"}),s("Chin-Up","isolation",{sets:"3",reps:"6-10"}),s("Cable Fly","isolation",{sets:"3",reps:"12-15"})),d(5,"Lower",s("Conventional Deadlift","compound_lift",{sets:"3",reps:"5-8",rpe:"7"}),s("Cable Crunch","isolation",{sets:"3",reps:"10-15"}))]},{slug:"dup-3day",name:"Daily Undulating \u2014 3 Day",coachLine:"Volume day, strength day, power day every week. All three get heavier together.",sportTags:["general","strength","powerlifting"],methodology:"DUP",level:"intermediate",shape:"steady_build",deload:"every_4",weeks:8,days:[d(1,"Hypertrophy Day",s("Back Squat","compound_lift",{sets:"4",reps:"10",intensity_percent:"68",load_percent:"68"}),s("Barbell Bench Press","compound_lift",{sets:"4",reps:"10",intensity_percent:"68",load_percent:"68"}),s("Barbell Row","isolation",{sets:"4",reps:"8-12"})),d(3,"Strength Day",s("Back Squat","compound_lift",{sets:"5",reps:"5",intensity_percent:"80",load_percent:"80"}),s("Barbell Bench Press","compound_lift",{sets:"5",reps:"5",intensity_percent:"80",load_percent:"80"}),s("Conventional Deadlift","compound_lift",{sets:"3",reps:"3",intensity_percent:"82",load_percent:"82"})),d(5,"Power Day",s("Back Squat","compound_lift",{sets:"5",reps:"3",intensity_percent:"86",load_percent:"86"}),s("Barbell Bench Press","compound_lift",{sets:"5",reps:"2",intensity_percent:"88",load_percent:"88"}),s("Box Jump","plyometric",{sets:"4",reps:"3"}))]},{slug:"wave-531-style-4day",name:"Wave Loading \u2014 5s/3s/1s + Deload",coachLine:"Four-week waves on the main lift (5s, 3s, 1s, deload), steady volume on supplemental work.",sportTags:["general","strength"],methodology:"5/3/1",level:"intermediate",shape:"maintain",deload:"none",weeks:8,days:[[1,"Squat Day","Back Squat"],[2,"Bench Day","Barbell Bench Press"],[4,"Deadlift Day","Conventional Deadlift"],[5,"Press Day","Dumbbell Shoulder Press"]].map(([e,n,t])=>d(e,n,s(t,"compound_lift",{sets:"3",reps:"5",intensity_percent:"85",load_percent:"85",progression:{lever:"ladder",ladder:[{reps:"5",intensity_percent:"85"},{reps:"3",intensity_percent:"90"},{reps:"1",intensity_percent:"95"},{reps:"5",intensity_percent:"60"}]}}),s(`${t} (supplemental)`,"compound_lift",{sets:"5",reps:"5",intensity_percent:"65",load_percent:"65",progression:{lever:"hold"}}),s("Barbell Row","isolation",{sets:"3",reps:"10-15"})))},{slug:"team-inseason-2day",name:"Team Sport In-Season \u2014 2 Day",coachLine:"Short, heavy-ish, low-soreness. Keep strength and speed through the season.",sportTags:["football","rugby","basketball","soccer","afl","netball"],methodology:null,level:"intermediate",shape:"maintain",deload:"none",weeks:8,days:[d(2,"MD-4 Strength",f("Leg Swing","1","10"),s("Back Squat","compound_lift",{sets:"3",reps:"3",intensity_percent:"80",load_percent:"80"}),s("Chin-Up","isolation",{sets:"3",reps:"5-8"}),s("Broad Jump","plyometric",{sets:"3",reps:"3"})),d(4,"MD-2 Speed + Primer",s("Flying Sprint","sprint",{reps:"4",distance_meters:20,intensity_percent:"95"}),s("Barbell Bench Press","compound_lift",{sets:"2",reps:"3",intensity_percent:"75",load_percent:"75"}))]},{slug:"endurance-polarized-5day",name:"Endurance Base \u2014 Polarized 5 Day",coachLine:"Mostly easy, a little very hard, almost nothing in between. Volume builds 3 weeks, backs off 1.",sportTags:["running","triathlon","middle-distance"],methodology:"Polarized",level:"intermediate",shape:"accumulate",deload:"every_4",weeks:8,days:[d(1,"Easy Run",s("Easy Run","conditioning",{sets:"1",reps:"1",distance_meters:8e3,notes:"Conversational pace"})),d(2,"Intervals",s("1km Repeats","conditioning",{reps:"5",distance_meters:1e3,intensity_percent:"92"})),d(3,"Easy Run",s("Easy Run","conditioning",{sets:"1",reps:"1",distance_meters:6e3})),d(5,"Strides + Easy",s("Easy Run","conditioning",{sets:"1",reps:"1",distance_meters:6e3}),s("Strides","sprint",{reps:"6",distance_meters:100,progression:{lever:"hold"}})),d(6,"Long Run",s("Long Run","conditioning",{sets:"1",reps:"1",distance_meters:14e3}))]},{slug:"youth-athletic-2day",name:"Youth Athletic Development \u2014 2 Day",coachLine:"Movement quality first. Bodyweight progressions with gentle volume growth.",sportTags:["youth","multi-sport"],methodology:null,level:"beginner",shape:"accumulate",deload:"every_4",weeks:6,days:[d(2,"Movement + Speed",f("A-Skip","2"),f("Carioca","2"),s("Acceleration Sprint","sprint",{reps:"5",distance_meters:20}),s("Goblet Squat","isolation",{sets:"3",reps:"8-12"}),s("Vertical Jump","plyometric",{sets:"3",reps:"4"})),d(4,"Strength Skills",s("Push-Up","isolation",{sets:"3",reps:"6-10"}),s("Inverted Row","isolation",{sets:"3",reps:"6-10"}),s("Single-Leg Hop","plyometric",{sets:"2",reps:"5"}))]}];return oe(Se);})();
+</script>
+<script>
+/* ── State ─────────────────────────────────────────────────────────
+   days     : canonical Week 1 (from template; levers live on exercises)
+   cfg      : { shape, weeks, deload, overrides }
+   pinned   : { [week]: Session[] } — coach edits, passed to generateBlock as `existing`
+   ─────────────────────────────────────────────────────────────────── */
+const T = CH.WEEK_TEMPLATES
+const S = { tpl: T[0], days: null, cfg: null, ch: null, pinned: {}, week: 2, editing: null, block: [] }
+const CH_METRIC = { speed:'speed.meters', tempo:'tempo.meters', plyo:'plyo.contacts', strength:'strength.relLoad', conditioning:'conditioning.meters' }
+const ROLE_LABEL = { focus:'Key', support:'Support', maintain:'Maintain' }
+const ROLE_COLOR = { focus:'#5B21B6', support:'#F97316', maintain:'#B8B2C8' }
+/* Template -> sensible preset; the coach changes it in one tap. */
+function presetFor(t){
+  const tags = t.sportTags.join(' ')
+  if (/sprint|athletics/.test(tags)) return t.shape === 'accumulate' ? 'sprinter_gpp' : 'sprinter_speed'
+  if (/football|rugby|soccer|basketball|afl|netball/.test(tags)) return 'field_inseason'
+  if (/running|triathlon|distance/.test(tags)) return 'endurance'
+  if (/youth/.test(tags)) return 'field_offseason'
+  return 'lifter'
+}
+const $ = id => document.getElementById(id)
+const clone = o => JSON.parse(JSON.stringify(o))
+const LEVER_LABEL = { hold:'Nothing', load:'Load', volume:'Volume', reps:'Reps', distance:'Distance', ladder:'Custom ladder' }
+const DELOAD_LABEL = { none:'None', every_3:'Every 3rd', every_4:'Every 4th', final:'Final week' }
+
+function loadTemplate(t){
+  S.tpl = t; S.days = clone(t.days); S.pinned = {}; S.editing = null
+  S.cfg = { shape: t.shape, weeks: t.weeks, deload: t.deload, overrides: {} }
+  S.preset = presetFor(t); S.ch = { ...clone(CH.SPORT_PRESETS[S.preset]), focusTargets: [] }
+  S.week = 2; render()
+}
+
+function run(){ S.block = CH.generateChannelBlock(S.days, S.cfg, S.ch, S.pinned).map(w => ({ ...w, totals: CH.weekTotals(w.sessions) })) }
+
+/* ── Controls ── */
+function seg(el, items, current, onPick){
+  el.innerHTML = ''
+  items.forEach(([val,label]) => {
+    const b = document.createElement('button'); b.textContent = label
+    b.setAttribute('aria-pressed', String(val === current)); b.onclick = () => onPick(val); el.appendChild(b)
+  })
+}
+function renderControls(){
+  seg($('weeks'), [4,5,6,7,8].map(n => [n, n + ' wks']), S.cfg.weeks, n => { S.cfg.weeks = n; S.cfg.overrides = {}; S.ch.focusTargets = []; if (S.week > n) S.week = n; render() })
+  seg($('deload'), Object.entries(DELOAD_LABEL), S.cfg.deload, d => { S.cfg.deload = d; S.cfg.overrides = {}; render() })
+  const el = $('shapes'); el.innerHTML = ''
+  Object.entries(CH.SHAPES).forEach(([slug, def]) => {
+    const b = document.createElement('button'); b.className = 'shape'
+    b.setAttribute('aria-pressed', String(slug === S.cfg.shape))
+    b.innerHTML = `<strong>${def.name}</strong><span>${def.coachLine}</span>`
+    b.onclick = () => { S.cfg.shape = slug; S.cfg.deload = def.defaultDeload; S.cfg.overrides = {}; render() }
+    el.appendChild(b)
+  })
+}
+
+/* ── Levers: grouped by session; "Nothing" rows hidden unless asked ── */
+let showHold = false
+function renderLevers(){
+  const tb = $('levers'); tb.innerHTML = ''
+  const last = S.block[S.block.length - 1]
+  let hidden = 0
+  S.days.forEach((s, si) => {
+    const rows = []
+    s.exercises.forEach((ex, ei) => {
+      const lever = ex.progression?.lever ?? CH.defaultLever(ex)
+      if (lever === 'hold' && !showHold) { hidden++; return }
+      const opts = ['hold','load','volume','reps','distance'].concat(ex.progression?.ladder ? ['ladder'] : [])
+      const end = last.sessions[si].exercises[ei]
+      const tr = document.createElement('tr')
+      tr.innerHTML = `<td>${ex.name}<div class="arrow" style="font-size:.8rem">${CH.formatPrescription(ex)} → <b>${CH.formatPrescription(end)}</b> <span class="muted">(W${last.target.week})</span></div></td>
+        <td class="lv"><select aria-label="What progresses for ${ex.name}">${opts.map(o => `<option value="${o}" ${o===lever?'selected':''}>${LEVER_LABEL[o]}</option>`).join('')}</select></td>`
+      tr.querySelector('select').onchange = e => { ex.progression = { ...(ex.progression || {}), lever: e.target.value }; render() }
+      rows.push(tr)
+    })
+    if (!rows.length) return
+    const g = document.createElement('tr'); g.className = 'grp'
+    g.innerHTML = `<td colspan="2">${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][s.day_of_week]} — ${s.session_name}</td>`
+    tb.appendChild(g); rows.forEach(r => tb.appendChild(r))
+  })
+  const b = $('showhold')
+  b.textContent = showHold ? 'Hide exercises that stay the same' : `Show ${hidden} exercise${hidden===1?'':'s'} that stay the same`
+  b.style.display = (hidden || showHold) ? '' : 'none'
+  b.onclick = () => { showHold = !showHold; renderLevers() }
+}
+
+/* ── Chart (SVG, draggable volume bars) ── */
+function renderChart(){
+  const svg = $('chart'), W = 640, H = 240, P = { l: 36, r: 36, t: 14, b: 34 }
+  const n = S.block.length, cw = (W - P.l - P.r) / n
+  const vMax = 1.6, iVals = S.block.map(w => w.target.intensity)
+  const iMin = Math.min(-2, ...iVals), iMax = Math.max(4, ...iVals)
+  const y = v => P.t + (H - P.t - P.b) * (1 - v / vMax)
+  const yi = v => P.t + (H - P.t - P.b) * (1 - (v - iMin) / (iMax - iMin))
+  let g = ''
+  ;[0.5, 1, 1.5].forEach(v => g += `<line x1="${P.l}" x2="${W-P.r}" y1="${y(v)}" y2="${y(v)}" stroke="#E7E3F0" ${v===1?'':'stroke-dasharray="3 4"'}/><text x="${P.l-6}" y="${y(v)+4}" text-anchor="end" font-size="10" fill="#6B6480">${v*100}%</text>`)
+  S.block.forEach((w, i) => {
+    const t = w.target, x = P.l + i * cw, bw = cw * 0.56, bx = x + (cw - bw) / 2
+    if (t.isDeload || t.isTaper) g += `<rect x="${x+2}" y="${P.t}" width="${cw-4}" height="${H-P.t-P.b}" fill="#FEF5DC" rx="6"/>`
+    const fill = t.isDeload || t.isTaper ? '#FBBF24' : '#5B21B6'
+    g += `<rect data-w="${t.week}" class="vbar" x="${bx}" y="${y(t.volume)}" width="${bw}" height="${y(0)-y(t.volume)}" rx="5" fill="${fill}" ${t.pinned?'stroke="#18122B" stroke-width="2"':''} style="cursor:${t.week>1?'ns-resize':'default'}"/>`
+    g += `<text x="${x+cw/2}" y="${y(t.volume)-5}" text-anchor="middle" font-size="10" font-family="Space Grotesk, system-ui, sans-serif" fill="#18122B">${Math.round(t.volume*100)}</text>`
+    g += `<text x="${x+cw/2}" y="${H-12}" text-anchor="middle" font-size="11" font-family="Space Grotesk, system-ui, sans-serif" fill="${t.week===S.week?'#18122B':'#6B6480'}" font-weight="${t.week===S.week?700:500}">W${t.week}${t.isDeload?' ·D':t.isTaper?' ·T':''}</text>`
+  })
+  const pts = S.block.map((w, i) => [P.l + i * cw + cw / 2, yi(w.target.intensity)])
+  g += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="#F97316" stroke-width="3" stroke-linejoin="round"/>`
+  pts.forEach((p, i) => g += `<circle cx="${p[0]}" cy="${p[1]}" r="4.5" fill="#fff" stroke="#F97316" stroke-width="2.5"/><text x="${p[0]+7}" y="${p[1]-6}" font-size="10" fill="#C2410C" font-family="Space Grotesk, system-ui, sans-serif">${S.block[i].target.intensity>0?'+':''}${S.block[i].target.intensity}</text>`)
+  svg.innerHTML = g
+
+  // drag to override a week's volume → becomes a pinned week (cfg.overrides)
+  svg.querySelectorAll('.vbar').forEach(bar => {
+    const wk = +bar.dataset.w
+    bar.onclick = () => { S.week = wk; render() }
+    if (wk === 1) return
+    bar.onpointerdown = e => {
+      bar.setPointerCapture(e.pointerId)
+      const move = ev => {
+        const r = svg.getBoundingClientRect(), py = (ev.clientY - r.top) * (H / r.height)
+        const v = Math.max(0.3, Math.min(1.5, (1 - (py - P.t) / (H - P.t - P.b)) * vMax))
+        S.cfg.overrides[wk] = { ...(S.cfg.overrides[wk] || {}), volume: Math.round(v * 20) / 20 }
+        S.week = wk; render()
+      }
+      const up = () => { bar.removeEventListener('pointermove', move); svg.removeEventListener('pointermove', move) }
+      svg.addEventListener('pointermove', move); window.addEventListener('pointerup', up, { once: true })
+    }
+  })
+}
+
+function renderTotals(){
+  const w1 = S.block[0].totals, wk = S.block[S.week - 1].totals
+  const items = [
+    ['Sets', 'sets'], ['Meters', 'meters'], ['Loaded reps', 'loadedReps'], ['Rel. load', 'relativeLoad'],
+  ].filter(([, k]) => w1[k] || wk[k])
+  $('totals').innerHTML = items.map(([label, k]) => {
+    const d = w1[k] ? Math.round((wk[k] / w1[k] - 1) * 100) : 0
+    return `<div><div class="muted" style="font-size:.8rem">${label} · W${S.week}</div><div class="num">${wk[k].toLocaleString()}</div><div class="muted" style="font-size:.8rem">${d>0?'+':''}${d}% vs W1</div></div>`
+  }).join('')
+}
+
+/* ── Week view + inline edit (pins) ── */
+function renderWeek(){
+  const tabs = $('tabs'); tabs.innerHTML = ''
+  S.block.forEach(w => {
+    const b = document.createElement('button')
+    b.textContent = 'W' + w.target.week + (w.target.isDeload ? ' D' : w.target.isTaper ? ' T' : '')
+    if (w.target.isDeload || w.target.isTaper) b.className = 'd'
+    b.setAttribute('aria-pressed', String(w.target.week === S.week))
+    b.onclick = () => { S.week = w.target.week; S.editing = null; render() }
+    tabs.appendChild(b)
+  })
+  const wk = S.block[S.week - 1], el = $('week'); el.innerHTML = ''
+  wk.sessions.forEach((s, si) => {
+    const d = document.createElement('div'); d.className = 'sess'
+    d.innerHTML = `<h3>${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][s.day_of_week]} — ${s.session_name}</h3>`
+    s.exercises.forEach((ex, ei) => {
+      const base = S.days[si].exercises[ei], txt = CH.formatPrescription(ex)
+      const changed = S.week > 1 && txt !== CH.formatPrescription(base)
+      const row = document.createElement('div'); row.className = 'ex'
+      row.innerHTML = `<span>${ex.name}</span><button class="cell ${ex.pinned?'pin':changed?'chg':''}">${txt}${ex.pinned?'<span class="pinmark" aria-label="pinned">● pinned</span>':''}</button>`
+      const cell = row.querySelector('.cell')
+      if (S.week === 1) { cell.disabled = true; cell.title = 'Week 1 is the canonical week — edit it in the session builder' }
+      else cell.onclick = () => { S.editing = { si, ei }; render() }
+      d.appendChild(row)
+      if (S.editing && S.editing.si === si && S.editing.ei === ei) d.appendChild(editor(ex, si))
+    })
+    el.appendChild(d)
+  })
+}
+
+function editor(ex, si){
+  const f = document.createElement('div'); f.className = 'ed'
+  const fields = [['sets','Sets'],['reps','Reps'],['intensity_percent','%'],['distance_meters','m']].filter(([k]) => ex[k] !== undefined && ex[k] !== '')
+  f.innerHTML = fields.map(([k,l]) => `<label>${l} <input data-k="${k}" value="${ex[k] ?? ''}"></label>`).join('') +
+    `<button style="background:var(--ink);color:#fff">Pin this</button><button style="background:#fff">Cancel</button>`
+  const [pin, cancel] = f.querySelectorAll('button')
+  pin.onclick = () => {
+    const edited = { ...ex, pinned: true }
+    f.querySelectorAll('input').forEach(i => { edited[i.dataset.k] = i.value; if (i.dataset.k === 'intensity_percent' && ex.load_percent !== undefined) edited.load_percent = i.value })
+    const wk = S.week, cur = S.block[wk - 1].sessions
+    const sessions = S.pinned[wk] ? S.pinned[wk] : clone(cur.map(s => ({ ...s, exercises: [] })))
+    const target = sessions[si]
+    target.exercises = target.exercises.filter(e => e.canonical_ref !== edited.canonical_ref).concat(edited)
+    S.pinned[wk] = sessions; S.editing = null; render()
+  }
+  cancel.onclick = () => { S.editing = null; render() }
+  setTimeout(() => f.querySelector('input')?.focus(), 0)
+  return f
+}
+
+function renderBar(){
+  const pins = Object.values(S.pinned).reduce((n, ss) => n + ss.reduce((m, s) => m + s.exercises.length, 0), 0)
+  const ov = Object.keys(S.cfg.overrides).length
+  $('lastwk').textContent = S.cfg.weeks
+  const fm = S.ch.focusMetric ? CH.METRICS[S.ch.focusMetric].name.toLowerCase() : 'no key metric'
+  $('summary').textContent = `${CH.SHAPES[S.cfg.shape].name} on ${fm} · ${S.cfg.weeks} weeks · recovery ${DELOAD_LABEL[S.cfg.deload].toLowerCase()}` +
+    (pins ? ` · ${pins} pinned edit${pins>1?'s':''}` : '') + (ov ? ` · ${ov} adjusted week${ov>1?'s':''}` : '')
+}
+
+/* -- Channels: one row per training mode, native units, a role per mode -- */
+const fmt = v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : String(Math.round(v * 10) / 10)
+function metricFor(c){ const fm = S.ch.focusMetric; return fm && CH.METRICS[fm].channel === c ? fm : CH_METRIC[c] }
+function renderChannels(){
+  const sel = $('preset')
+  sel.innerHTML = Object.entries(CH.SPORT_PRESETS).map(([k,p]) => `<option value="${k}" ${k===S.preset?'selected':''}>${p.name}</option>`).join('')
+  sel.onchange = e => { S.preset = e.target.value; S.ch = { ...clone(CH.SPORT_PRESETS[S.preset]), focusTargets: [] }; render() }
+  const present = Object.keys(CH_METRIC).filter(c => CH.metricValue(S.block[0].channels, CH_METRIC[c]) > 0)
+  const rank = { focus: 0, support: 1, maintain: 2 }
+  present.sort((a, b) => rank[S.ch.roles[a] ?? 'support'] - rank[S.ch.roles[b] ?? 'support'])
+  const el = $('channels'); el.innerHTML = ''
+  const n = S.block.length, cols = `grid-template-columns:repeat(${n},minmax(0,1fr))`
+  present.forEach(c => {
+    const role = S.ch.roles[c] ?? 'support', key = metricFor(c)
+    const vals = S.block.map(w => CH.metricValue(w.channels, key)), max = Math.max(...vals, 1), v1 = vals[0] || 1
+    const row = document.createElement('div'); row.className = 'chrow' + (role === 'focus' ? ' focus' : '')
+    const metricSel = role === 'focus'
+      ? `<select aria-label="Key metric" style="font-size:.8rem;padding:3px 6px">${Object.entries(CH.METRICS).filter(([,m]) => m.channel === c).map(([k,m]) => `<option value="${k}" ${k===key?'selected':''}>${m.name}</option>`).join('')}</select>`
+      : `<span class="muted" style="font-size:.8rem">${CH.METRICS[key].name}</span>`
+    row.innerHTML = `<div class="chhead"><span><strong>${CH.CHANNELS[c].name}</strong> ${metricSel}</span><div class="seg sm"></div></div>
+      <div class="bars" style="${cols}">${vals.map((v, i) => {
+        const t = S.block[i].target, d = Math.round((v / v1 - 1) * 100)
+        return `<div class="b ${t.isDeload||t.isTaper?'dl':''}" title="W${t.week}: ${Math.round(v)} ${CH.CHANNELS[c].unit}"><b>${fmt(v)}</b><i style="height:${Math.max(3, v / max * 56)}px;background:${ROLE_COLOR[role]}"></i>${i ? (d>0?'+':'') + d + '%' : 'W1'}</div>` }).join('')}</div>
+      ${role === 'focus' ? `<div class="targets" style="${cols}">${S.block.map((w, i) => i === 0 ? `<span class="muted" style="font-size:.7rem;text-align:center;align-self:center">target</span>`
+        : `<input inputmode="numeric" aria-label="Week ${w.target.week} target" placeholder="${Math.round(vals[i])}" value="${S.ch.focusTargets[i] ?? ''}">`).join('')}</div>` : ''}`
+    seg(row.querySelector('.seg'), Object.entries(ROLE_LABEL), role, r => {
+      if (r === 'focus') { Object.keys(S.ch.roles).forEach(k => { if (S.ch.roles[k] === 'focus') S.ch.roles[k] = 'support' }); S.ch.focusMetric = CH_METRIC[c]; S.ch.focusTargets = [] }
+      S.ch.roles[c] = r; render()
+    })
+    row.querySelector('select')?.addEventListener('change', e => { S.ch.focusMetric = e.target.value; S.ch.focusTargets = []; render() })
+    row.querySelectorAll('.targets input').forEach((inp, j) => inp.onchange = e => { const v = parseFloat(e.target.value); S.ch.focusTargets[j + 1] = Number.isFinite(v) ? v : null; render() })
+    el.appendChild(row)
+  })
+  const w = [...new Set(S.block.flatMap(b => b.warnings))]
+  $('warns').innerHTML = w.length ? `<div class="warn">${w.length} sprint prescription${w.length>1?'s':''} in the 76-94% middle zone: ${w.slice(0,2).join('; ')}${w.length>2?'...':''}</div>` : ''
+}
+
+function render(){ run(); renderControls(); renderLevers(); renderChart(); renderTotals(); renderChannels(); renderWeek(); renderBar() }
+
+$('tpl').innerHTML = T.map((t, i) => `<option value="${i}">${t.name}</option>`).join('')
+$('tpl').onchange = e => loadTemplate(T[+e.target.value])
+$('reset').onclick = () => { S.pinned = {}; S.cfg.overrides = {}; render() }
+$('save').onclick = () => {
+  const b = $('save'); const t = b.innerHTML
+  b.textContent = `Generated ${S.cfg.weeks - 1} weeks`; setTimeout(() => b.innerHTML = t, 1600)
+  console.log('Would write to plan_sessions:', S.block.slice(1))
+}
+loadTemplate(T[0])
+</script>
+</body>
+</html>

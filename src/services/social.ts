@@ -5,6 +5,7 @@ import type { FollowStatus } from '@/types/database'
 // Likes
 // ============================================
 
+// posts.likes_count is kept in sync by the trg_likes_sync_post_count trigger on likes.
 export async function toggleLike(userId: string, postId: string): Promise<{ liked: boolean }> {
   // Check if already liked
   const { data: existing } = await supabase
@@ -17,44 +18,10 @@ export async function toggleLike(userId: string, postId: string): Promise<{ like
   if (existing) {
     // Unlike
     await supabase.from('likes').delete().eq('id', existing.id)
-    // Decrement count
-    await supabase.rpc('decrement_likes_count', { post_id_input: postId }).catch(() => {
-      // Fallback: manual decrement
-      supabase
-        .from('posts')
-        .select('likes_count')
-        .eq('id', postId)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            supabase
-              .from('posts')
-              .update({ likes_count: Math.max(0, (data.likes_count || 1) - 1) })
-              .eq('id', postId)
-          }
-        })
-    })
     return { liked: false }
   } else {
     // Like
     await supabase.from('likes').insert({ user_id: userId, post_id: postId })
-    // Increment count
-    await supabase.rpc('increment_likes_count', { post_id_input: postId }).catch(() => {
-      // Fallback: manual increment
-      supabase
-        .from('posts')
-        .select('likes_count')
-        .eq('id', postId)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            supabase
-              .from('posts')
-              .update({ likes_count: (data.likes_count || 0) + 1 })
-              .eq('id', postId)
-          }
-        })
-    })
     return { liked: true }
   }
 }
@@ -107,6 +74,7 @@ export async function getPostComments(postId: string, limit = 50) {
   })
 }
 
+// posts.comments_count is kept in sync by the trg_comments_sync_post_count trigger on comments.
 export async function addComment(postId: string, authorId: string, content: string, parentId?: string) {
   const { data, error } = await supabase
     .from('comments')
@@ -124,20 +92,6 @@ export async function addComment(postId: string, authorId: string, content: stri
     return null
   }
 
-  // Increment comment count on post
-  const { data: post } = await supabase
-    .from('posts')
-    .select('comments_count')
-    .eq('id', postId)
-    .single()
-
-  if (post) {
-    await supabase
-      .from('posts')
-      .update({ comments_count: (post.comments_count || 0) + 1 })
-      .eq('id', postId)
-  }
-
   // Normalize author
   if (data) {
     const normalized = { ...data } as any
@@ -148,26 +102,12 @@ export async function addComment(postId: string, authorId: string, content: stri
   return data
 }
 
-export async function deleteComment(commentId: string, postId: string) {
+export async function deleteComment(commentId: string, _postId: string) {
   const { error } = await supabase.from('comments').delete().eq('id', commentId)
 
   if (error) {
     console.error('Error deleting comment:', error)
     return false
-  }
-
-  // Decrement comment count
-  const { data: post } = await supabase
-    .from('posts')
-    .select('comments_count')
-    .eq('id', postId)
-    .single()
-
-  if (post) {
-    await supabase
-      .from('posts')
-      .update({ comments_count: Math.max(0, (post.comments_count || 1) - 1) })
-      .eq('id', postId)
   }
 
   return true
