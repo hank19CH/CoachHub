@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { reportError } from '@/utils/errorReporting'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -326,6 +327,24 @@ router.beforeEach(async (to, from, next) => {
   }
 
   next()
+})
+
+// After a deploy, tabs opened on the previous build can't load the old page chunks. Reload once
+// onto the new build instead of leaving the user stuck; anything else goes to the error toast.
+router.onError((err, to) => {
+  const msg = err instanceof Error ? err.message : String(err)
+  const staleChunk = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(msg)
+  const key = 'coachhub:chunk-reload'
+  let alreadyTried = true
+  try {
+    alreadyTried = sessionStorage.getItem(key) === to.fullPath
+    if (staleChunk && !alreadyTried) sessionStorage.setItem(key, to.fullPath)
+  } catch { /* storage unavailable: don't risk a reload loop */ }
+  if (staleChunk && !alreadyTried) {
+    window.location.assign(to.fullPath)
+    return
+  }
+  reportError(err, 'router')
 })
 
 export default router
