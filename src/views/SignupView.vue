@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { acceptInviteCode } from '@/services/athletes'
 import type { UserType } from '@/types/database'
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -76,6 +77,8 @@ onMounted(() => {
   const inviteQuery = route.query.invite as string | undefined
   if (inviteQuery && inviteQuery !== 'true' && !pendingInviteCode.value) {
     pendingInviteCode.value = inviteQuery
+    // Keep it for a Google sign-up too: onboarding picks it up after the redirect.
+    try { sessionStorage.setItem('pending_invite_code', inviteQuery) } catch { /* storage unavailable */ }
   }
 
   // Auto-select athlete type if coming from any invite flow
@@ -140,8 +143,10 @@ async function handleSubmit() {
       <h2 class="font-display text-2xl font-bold text-gray-900 mb-2 text-center">
         Join CoachHub
       </h2>
+      <GoogleSignInButton label="Sign up with Google" class="mb-6" />
+
       <p class="text-gray-600 text-center mb-6">
-        How do you want to use CoachHub?
+        Or sign up with email — how do you want to use CoachHub?
       </p>
 
       <div class="space-y-3">
@@ -213,6 +218,8 @@ async function handleSubmit() {
       <p class="text-gray-600 mb-6">
         Signing up as <span class="font-semibold text-summit-700">{{ userType }}</span>
       </p>
+
+      <GoogleSignInButton v-if="pendingInviteCode" label="Sign up with Google" class="mb-4" />
 
       <form @submit.prevent="handleSubmit" class="space-y-4">
         <!-- Error message -->

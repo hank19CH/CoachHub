@@ -88,6 +88,11 @@ onUnmounted(() => {
     </ErrorBoundary>
   </AuthLayout>
 
+  <!-- Full-screen pages without app chrome (onboarding) -->
+  <ErrorBoundary v-else-if="route.meta.bare">
+    <RouterView :key="route.fullPath" />
+  </ErrorBoundary>
+
   <!-- Main app layout (authenticated) -->
   <AppLayout v-else>
     <ErrorBoundary>

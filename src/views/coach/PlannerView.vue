@@ -48,6 +48,15 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
 // Mobile tab state (plan | week | session)
 const mobileTab = ref<'plan' | 'week' | 'session'>('plan')
 
+// ?model=1 (from onboarding): open the Block Modeler for the plan's first block.
+// Desktop and mobile each render a BlockModeler, so only the visible one auto-opens.
+const autoModel = route.query.model === '1'
+const isDesktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+if (autoModel) {
+  rightPanelTab.value = 'progression'
+  mobileTab.value = 'session'
+}
+
 // Load plan if planId is in route
 onMounted(async () => {
   const planId = route.params.planId as string
@@ -290,7 +299,7 @@ function goBackToList() {
         />
         <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" :auto-open="autoModel && isDesktop" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression
@@ -454,7 +463,7 @@ function goBackToList() {
         />
         <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" :auto-open="autoModel && !isDesktop" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression

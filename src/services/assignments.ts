@@ -202,7 +202,8 @@ async function updatePersonalBests(
             pb_type: pbType,
             value: value,
             achieved_at: new Date().toISOString(),
-            exercise_result_id: completionId
+            exercise_result_id: completionId,
+            source: 'logged',
           }, {
             onConflict: 'athlete_id,exercise_name,pb_type'
           })

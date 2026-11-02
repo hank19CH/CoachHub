@@ -19,6 +19,12 @@ const router = createRouter({
       meta: { requiresGuest: true }
     },
     {
+      path: '/onboarding',
+      name: 'onboarding',
+      component: () => import('@/views/OnboardingView.vue'),
+      meta: { requiresAuth: true, bare: true, title: 'Get started' }
+    },
+    {
       path: '/invite/:code',
       name: 'invite-acceptance',
       component: () => import('@/views/InviteAcceptanceView.vue'),
@@ -305,6 +311,13 @@ router.beforeEach(async (to, from, next) => {
   // Check if route requires authentication
   if (to.meta.requiresAuth && !isAuthenticated) {
     next({ name: 'login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  // Signed in but no profile yet, or a coach/athlete mid-onboarding → finish onboarding first.
+  // Invite links stay reachable so an invited athlete can still see who invited them.
+  if (isAuthenticated && authStore.needsOnboarding && to.name !== 'onboarding' && to.name !== 'invite-acceptance') {
+    next({ name: 'onboarding' })
     return
   }
 

@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import CoachChecklist from '@/components/onboarding/CoachChecklist.vue'
+import TourGuide, { type TourStep } from '@/components/onboarding/TourGuide.vue'
 
 const router = useRouter()
 
@@ -111,6 +113,14 @@ const tools: ToolSection[] = [
   }
 ]
 
+// First-visit tour (Sprint 14.5). Steps whose target isn't on the page are skipped.
+const tourSteps: TourStep[] = [
+  { target: '[data-tour="checklist"]', title: 'Your setup checklist', body: 'Each step ticks itself off as you go. Hide it whenever you like.' },
+  { target: '[data-tour="tool-/coach/planner"]', title: 'Plan a block', body: 'Build one great week, pick a block shape, and CoachHub writes the remaining weeks for you.' },
+  { target: '[data-tour="tool-/coach/athletes"]', title: 'Your athletes', body: 'Share your invite link here and see everyone on your roster.' },
+  { target: '[data-tour="tool-/coach/import"]', title: 'Bring in old programs', body: 'Upload a spreadsheet or PDF and Smart Import turns it into sessions.' },
+]
+
 function navigateTo(path: string) {
   router.push(path)
 }
@@ -123,6 +133,8 @@ function navigateTo(path: string) {
 
     <!-- Tools Grid -->
     <div class="max-w-lg mx-auto px-4 py-6 space-y-8">
+      <CoachChecklist />
+
       <div v-for="section in tools" :key="section.category">
         <!-- Category Header -->
         <h2 class="text-lg font-semibold text-gray-900 mb-3">
@@ -135,6 +147,7 @@ function navigateTo(path: string) {
             v-for="tool in section.items"
             :key="tool.name"
             @click="navigateTo(tool.path)"
+            :data-tour="`tool-${tool.path}`"
             class="relative bg-white rounded-xl border border-gray-200 p-4 text-left hover:shadow-md hover:border-summit-300 transition-all active:scale-95"
           >
 
@@ -205,5 +218,6 @@ function navigateTo(path: string) {
         </div>
       </div>
     </div>
+    <TourGuide tour-id="coach-hub" :steps="tourSteps" :delay="1200" />
   </div>
 </template>

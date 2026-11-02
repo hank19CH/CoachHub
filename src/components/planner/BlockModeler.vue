@@ -5,7 +5,7 @@
  * No AI here: every number comes from programEngine.generateBlock(), recomputed locally.
  * UX spec: prototype/block-modeler.html
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   SHAPES,
   generateBlock,
@@ -34,8 +34,9 @@ import BlockChart from './BlockChart.vue'
 import LeverList from './LeverList.vue'
 import WeekPreview from './WeekPreview.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import TourGuide, { type TourStep } from '@/components/onboarding/TourGuide.vue'
 
-const props = defineProps<{ blockId: string }>()
+const props = defineProps<{ blockId: string; autoOpen?: boolean }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
 
 const plansStore = usePlansStore()
@@ -88,6 +89,15 @@ async function openModeler() {
 }
 
 watch(() => props.blockId, () => { if (open.value) load() })
+// Arriving from onboarding ("Open Block Modeler") opens it straight away.
+onMounted(() => { if (props.autoOpen) openModeler() })
+
+// First-use tour (Sprint 14.5)
+const tourSteps: TourStep[] = [
+  { target: '[data-tour="bm-shape"]', title: 'Pick the block shape', body: 'Each shape sets how volume and intensity move week to week. The chart updates instantly — try a few.' },
+  { target: '[data-tour="bm-chart"]', title: 'See the whole block', body: 'Purple bars are training volume vs Week 1, gold are recovery weeks. Drag a bar to adjust one week.' },
+  { target: '[data-tour="bm-generate"]', title: 'Generate the rest', body: 'When it looks right, generate. Anything you edit by hand later stays put if you regenerate.' },
+]
 
 // ── Controls ──
 function setWeeks(n: number) {
@@ -293,6 +303,7 @@ const btnFocus = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amb
           <div v-else class="grid gap-5 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
             <div class="contents lg:flex lg:flex-col lg:gap-5 min-w-0">
               <ShapePicker
+                data-tour="bm-shape"
                 class="order-1"
                 :weeks="cfg.weeks" :shape="cfg.shape" :deload="cfg.deload"
                 @update:weeks="setWeeks" @update:shape="setShape" @update:deload="setDeload"
@@ -300,7 +311,7 @@ const btnFocus = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amb
               <LeverList class="order-3" :canonical="canonical" :last-week="block[block.length - 1]" @change="setLever" />
             </div>
             <div class="contents lg:flex lg:flex-col lg:gap-5 min-w-0">
-              <BlockChart class="order-2" :block="block" :selected-week="selectedWeek" @select="selectedWeek = $event" @set-volume="setVolume" />
+              <BlockChart data-tour="bm-chart" class="order-2" :block="block" :selected-week="selectedWeek" @select="selectedWeek = $event" @set-volume="setVolume" />
               <WeekPreview class="order-4" :block="block" :canonical="canonical" :selected-week="selectedWeek" @select="selectedWeek = $event" @pin="pinCell" />
             </div>
           </div>
@@ -317,6 +328,7 @@ const btnFocus = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amb
             <button
               type="button"
               :disabled="saving"
+              data-tour="bm-generate"
               :class="['px-4 py-2 rounded-lg text-sm font-semibold bg-peak-500 hover:bg-peak-600 disabled:opacity-60', btnFocus]"
               @click="requestSave"
             >
@@ -325,6 +337,7 @@ const btnFocus = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amb
           </span>
         </div>
       </footer>
+      <TourGuide v-if="canonical.length && !loading" tour-id="block-modeler" :steps="tourSteps" :delay="700" />
     </div>
   </Teleport>
 

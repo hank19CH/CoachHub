@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { acceptInviteCode } from '@/services/athletes'
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -56,6 +57,8 @@ async function handleSubmit() {
     <h2 class="font-display text-2xl font-bold text-gray-900 mb-6 text-center">
       Welcome back
     </h2>
+
+    <GoogleSignInButton class="mb-4" />
 
     <form @submit.prevent="handleSubmit" class="space-y-4">
       <!-- Error message -->

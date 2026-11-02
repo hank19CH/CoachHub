@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import { getStreak } from '@/utils/streaks'
+import TourGuide, { type TourStep } from '@/components/onboarding/TourGuide.vue'
 import type { UserStreak } from '@/types/database'
 
 const router = useRouter()
@@ -77,6 +78,13 @@ const tools: ToolSection[] = [
   }
 ]
 
+// First-visit tour (Sprint 14.5)
+const tourSteps: TourStep[] = [
+  { target: '[data-tour="tool-/athlete/dashboard"]', title: 'Your training', body: "Today's session from your coach is here. Tap Start and log your sets as you go." },
+  { target: '[data-tour="tool-/athlete/teams"]', title: 'Your teams', body: 'Your squads and groups — see who you train with.' },
+  { target: '[data-tour="tool-/create"]', title: 'Share your wins', body: 'Post a session or a PB to your feed. Your teammates and followers will see it.' },
+]
+
 function navigateTo(path: string) {
   router.push(path)
 }
@@ -115,6 +123,7 @@ function navigateTo(path: string) {
             v-for="tool in section.items"
             :key="tool.name"
             @click="navigateTo(tool.path)"
+            :data-tour="`tool-${tool.path}`"
             class="relative bg-white rounded-xl border border-gray-200 p-4 text-left hover:shadow-md hover:border-valencia-300 transition-all active:scale-95"
           >
 
@@ -159,5 +168,6 @@ function navigateTo(path: string) {
         </div>
       </div>
     </div>
+    <TourGuide tour-id="athlete-hub" :steps="tourSteps" />
   </div>
 </template>
