@@ -30,7 +30,8 @@ const showTemplateBrowser = ref(false)
 const showPublishModal = ref(false)
 
 // Right panel tabs (desktop)
-// Analytics and AI tabs removed (Mar 19 decision, done Nov 2026): planning is canonical week → Block Modeler.
+// Analytics and AI tabs hidden (Mar 19 decision, done Nov 2026): planning is canonical week → Block Modeler.
+// PARKED, not deprecated: AiAssistPanel.vue and PlanAnalytics.vue are kept to be refined and brought back.
 const rightPanelTab = ref<'details' | 'progression' | 'changelog'>('details')
 
 // Toast

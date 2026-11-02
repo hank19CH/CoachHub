@@ -412,7 +412,7 @@ Plan -> Training Blocks -> Block Weeks -> Workouts (Sessions) -> Exercises
 **Components:**
 - `src/components/planner/PublishWeekModal.vue` - Publish week: select athletes, preview, confirm
 - `src/components/planner/PlanChangelog.vue` - Version history viewer with diff snapshots
-- `src/components/planner/PlanAnalytics.vue` - Charts: volume over time, compliance rates, readiness trends (Chart.js)
+- `src/components/planner/PlanAnalytics.vue` - **PARKED Nov 2026 — keep, do not delete** (tab hidden from Planner; to be refined and reintroduced). Was: Charts: volume over time, compliance rates, readiness trends (Chart.js)
 
 ### Sprint 9.5 - AI Assist Layer
 **Three-tier AI architecture:**
@@ -431,7 +431,7 @@ Plan -> Training Blocks -> Block Weeks -> Workouts (Sessions) -> Exercises
 - `generate-session` (ACTIVE) - Claude Sonnet 4.5, exercise prescriptions, JWT-verified
 
 **Components:**
-- `src/components/planner/AiAssistPanel.vue` - Two-tab AI panel (Suggestions + Chat)
+- `src/components/planner/AiAssistPanel.vue` - **PARKED Nov 2026 — keep, do not delete** (tab hidden from Planner; to be refined and reintroduced). Was: Two-tab AI panel (Suggestions + Chat)
 - `src/components/planner/SessionApprovalModal.vue` - Coach review/approval for AI sessions (Sprint 9.6)
 
 ### Planner View Integration
