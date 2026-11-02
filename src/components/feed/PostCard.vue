@@ -7,6 +7,7 @@ import { deletePost } from '@/services/social'
 import type { PostWithAuthor } from '@/types/database'
 import MediaCarousel from './MediaCarousel.vue'
 import type { WorkoutCardData } from './MediaCarousel.vue'
+import { reportActionError } from '@/utils/errorReporting'
 
 const props = defineProps<{
   post: PostWithAuthor & {
@@ -166,25 +167,27 @@ async function toggleLike() {
   try {
     if (wasLiked) {
       // Unlike
-      await supabase
+      const { error } = await supabase
         .from('likes')
         .delete()
         .eq('user_id', authStore.user.id)
         .eq('post_id', props.post.id)
+      if (error) throw error
     } else {
       // Like
-      await supabase
+      const { error } = await supabase
         .from('likes')
         .insert({
           user_id: authStore.user.id,
           post_id: props.post.id
         })
+      if (error) throw error
     }
   } catch (e) {
     // Revert on error
     isLiked.value = wasLiked
     likesCount.value += wasLiked ? 1 : -1
-    console.error('Error toggling like:', e)
+    reportActionError(e, 'like')
   } finally {
     isLiking.value = false
   }

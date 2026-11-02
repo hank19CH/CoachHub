@@ -12,6 +12,21 @@ export function reportError(err: unknown, info?: string) {
   lastErrorMessage.value = 'Something went wrong. Please try again.'
 }
 
+/** Database rate limit (migration 20261102_social_rate_limits) rejected the write. */
+export function isRateLimited(err: unknown): boolean {
+  return /rate_limited/.test(String((err as { message?: string } | null)?.message ?? err))
+}
+
+/** Toast for a failed social action: friendly wording when it was the rate limit. */
+export function reportActionError(err: unknown, action: string) {
+  if (isRateLimited(err)) {
+    console.warn('[CoachHub] rate limited:', action)
+    lastErrorMessage.value = "You're going a bit fast. Wait a moment and try again."
+    return
+  }
+  reportError(err, action)
+}
+
 // Vue passes `info` as a readable string in dev ("render function", "mounted hook") and as an
 // error-reference URL ending in "#runtime-<code>" in production builds.
 // Only errors that stop a page from being built count. Errors in mounted/updated hooks (typically a
