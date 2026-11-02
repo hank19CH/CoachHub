@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// DEPRECATED Nov 2026 — Planner AI and Analytics tabs removed; no longer imported. Delete with the Sprint 14 deprecated components.
 import { ref, onMounted, watch, computed, shallowRef } from 'vue'
 import { usePlansStore } from '@/stores/plans'
 import { useAuthStore } from '@/stores/auth'
