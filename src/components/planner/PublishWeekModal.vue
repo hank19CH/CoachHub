@@ -19,6 +19,7 @@ const athletes = ref<{ id: string; display_name: string; avatar_url: string | nu
 const groups = ref<{ id: string; name: string }[]>([])
 const selectedGroupId = ref('')
 const publishMode = ref<'athletes' | 'group'>('athletes')
+const publishError = ref('')
 
 const selectedAthletes = computed(() => athletes.value.filter(a => a.selected))
 const hasSelection = computed(() => {
@@ -79,6 +80,7 @@ function toggleAll(selected: boolean) {
 async function handlePublish() {
   if (!authStore.user || !plansStore.activePlan || !plansStore.selectedWeekId) return
   publishing.value = true
+  publishError.value = ''
 
   try {
     const athleteList = publishMode.value === 'athletes'
@@ -96,12 +98,18 @@ async function handlePublish() {
       groupId: publishMode.value === 'group' ? selectedGroupId.value : undefined,
     })
 
+    // Nothing delivered → stay open and say why (this used to fail silently)
+    if (result.assignmentsCreated === 0) {
+      publishError.value = result.errors[0] ?? 'Nothing was published.'
+      return
+    }
     emit('published', {
       workoutsCreated: result.workoutsCreated,
       assignmentsCreated: result.assignmentsCreated,
     })
   } catch (e) {
     console.error('Error publishing:', e)
+    publishError.value = e instanceof Error ? e.message : 'Publishing failed'
   } finally {
     publishing.value = false
   }
@@ -232,6 +240,7 @@ async function handlePublish() {
 
         <!-- Footer -->
         <div class="p-4 border-t border-feed-border flex-shrink-0 space-y-2">
+          <p v-if="publishError" role="alert" class="text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2">{{ publishError }}</p>
           <button
             @click="handlePublish"
             :disabled="!hasSelection || publishing"

@@ -1,5 +1,14 @@
 import { supabase } from '@/lib/supabase'
 import type { Database, Json } from '@/types/database'
+import {
+  exerciseRowsFromSession,
+  isoDate,
+  orderedWeekIds,
+  sessionDate,
+  sortSessions,
+  type DeliveryBlock,
+  type DeliverySession,
+} from '../../supabase/functions/_shared/planDelivery'
 
 type WorkoutAssignment = Database['public']['Tables']['workout_assignments']['Row']
 
@@ -32,22 +41,7 @@ export const planPublishService = {
     }
 
     try {
-      // 1. Get all workouts for this block_week
-      const { data: weekWorkouts, error: wErr } = await supabase
-        .from('workouts')
-        .select('*')
-        .eq('block_week_id', options.blockWeekId)
-        .eq('coach_id', options.coachId)
-        .order('day_index', { ascending: true })
-
-      if (wErr) throw wErr
-
-      if (!weekWorkouts || weekWorkouts.length === 0) {
-        result.errors.push('No sessions found for this week')
-        return result
-      }
-
-      // 2. Resolve group members if groupId provided
+      // 1. Resolve athletes first (group members merged in) so nothing is created for nobody
       let athletes = [...options.athletes]
       if (options.groupId) {
         const { data: members, error: mErr } = await supabase
@@ -73,20 +67,81 @@ export const planPublishService = {
         return result
       }
 
+      // 2. The week's sessions live in plan_sessions (Block Modeler, week editor, Smart Import).
+      //    Each one is delivered as a workout: its linked workout_id, or a snapshot built from
+      //    session_data. Dates match the Planner: start + weekOffset × 7 + day_of_week (0 = Mon).
+      const [{ data: planRow, error: pErr }, { data: sessionRows, error: sErr }] = await Promise.all([
+        supabase.from('plans')
+          .select('start_date, training_blocks(id, order_index, block_weeks(id, week_number))')
+          .eq('id', options.planId)
+          .single(),
+        supabase.from('plan_sessions')
+          .select('id, block_week_id, day_of_week, order_index, session_name, session_data, workout_id')
+          .eq('block_week_id', options.blockWeekId),
+      ]) as [{ data: any; error: any }, { data: DeliverySession[] | null; error: any }]
+      if (pErr) throw pErr
+      if (sErr) throw sErr
+
+      const weekOffset = Math.max(0, orderedWeekIds((planRow?.training_blocks ?? []) as DeliveryBlock[]).indexOf(options.blockWeekId))
+      const start: string = planRow?.start_date ?? isoDate(new Date())
+
+      const weekWorkouts: { id: string; date: string }[] = []
+      for (const session of sortSessions(sessionRows ?? [])) {
+        const date = sessionDate(start, weekOffset, session.day_of_week)
+        if (session.workout_id) {
+          weekWorkouts.push({ id: session.workout_id, date })
+          continue
+        }
+        const { data: workout, error: wErr } = (await (supabase.from('workouts') as any)
+          .insert({
+            coach_id: options.coachId,
+            name: session.session_name || 'Session',
+            plan_id: options.planId,
+            block_week_id: options.blockWeekId,
+            day_index: session.day_of_week,
+            is_library: false,
+            is_template: false,
+          })
+          .select('id')
+          .single()) as { data: { id: string } | null; error: any }
+        if (wErr || !workout) {
+          result.errors.push(`Could not create "${session.session_name || 'Session'}": ${wErr?.message ?? 'unknown error'}`)
+          continue
+        }
+        const rows = exerciseRowsFromSession(workout.id, session.session_data)
+        if (rows.length) {
+          const { error: exErr } = await (supabase.from('exercises') as any).insert(rows)
+          if (exErr) result.errors.push(`Exercises for "${session.session_name || 'Session'}": ${exErr.message}`)
+        }
+        weekWorkouts.push({ id: workout.id, date })
+      }
+
+      // Older plans may have workouts tagged with the week directly (pre plan_sessions).
+      if (weekWorkouts.length === 0) {
+        const { data: legacy } = (await supabase
+          .from('workouts')
+          .select('id, day_index')
+          .eq('block_week_id', options.blockWeekId)
+          .eq('coach_id', options.coachId)
+          .order('day_index', { ascending: true })) as { data: { id: string; day_index: number | null }[] | null }
+        for (const w of legacy ?? []) weekWorkouts.push({ id: w.id, date: sessionDate(start, weekOffset, w.day_index ?? 0) })
+      }
+
+      if (weekWorkouts.length === 0) {
+        result.errors.push('This week has no sessions yet — add sessions before publishing.')
+        return result
+      }
+
       // 3. Create assignments for each workout × each athlete
       const assignments: any[] = []
 
       for (const workout of weekWorkouts) {
         for (const athlete of athletes) {
-          // Calculate assigned date from plan start + week offset + day_index
-          const assignedDate = (workout as any).assigned_date ||
-            new Date().toISOString().split('T')[0]
-
           assignments.push({
             workout_id: workout.id,
             athlete_id: athlete.athleteId,
             coach_id: options.coachId,
-            assigned_date: assignedDate,
+            assigned_date: workout.date,
             status: 'pending',
             load_modifier: athlete.loadModifier ?? 1.0,
             source: options.groupId ? 'group_publish' : 'plan_publish',
