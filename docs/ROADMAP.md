@@ -32,7 +32,11 @@ Remaining:
 - [ ] xlsx security patch (needs `cdn.sheetjs.com` allowed in the environment, or done locally)
 - [ ] PB notifications ("you hit a PB" / "your athlete hit a PB") — the one missing piece of the habit loop
 
-## Sprint 15 — Coach storefront v1 · ~2 sprints
+## Sprint 15 — Coach storefront v1 · ~2 sprints · ✅ built 2026-11-04 (needs deploy + Stripe setup)
+Built: Stripe Connect direct charges (coach = merchant of record, 10% application fee, Stripe fees paid by the coach), coach Store page (payouts onboarding, products, sales + monthly totals), public `/store/:username`, buyer `/purchases` with cancel-at-period-end, webhook fulfilment (roster + whole-program delivery from next Monday / plan link / squad group), revocation on cancel. Buyers must be athlete accounts and take a roster seat (seat-full → checkout blocked, coach notified).
+Also fixed on the way: Publish Week delivered nothing for plan_sessions-based plans.
+Not yet: refunds UI (coaches refund in Stripe), product images, coupons, reviews, retiring the older `programs` system.
+
 **Goal:** a coach sells a program and gets paid.
 
 - Stripe Connect (Express) onboarding for coaches; platform fee %

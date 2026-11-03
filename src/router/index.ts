@@ -240,6 +240,25 @@ const router = createRouter({
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
     { path: '/athlete/progress', redirect: '/athlete/dashboard' },
 
+    // Storefront (Sprint 15)
+    {
+      path: '/coach/store',
+      name: 'coach-store',
+      component: () => import('@/views/coach/StoreView.vue'),
+      meta: { requiresAuth: true, requiresCoach: true }
+    },
+    {
+      path: '/store/:username',
+      name: 'storefront',
+      component: () => import('@/views/StorefrontView.vue'),
+    },
+    {
+      path: '/purchases',
+      name: 'purchases',
+      component: () => import('@/views/PurchasesView.vue'),
+      meta: { requiresAuth: true }
+    },
+
     // Pricing page (public)
     {
       path: '/pricing',

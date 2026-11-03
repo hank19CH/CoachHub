@@ -336,6 +336,7 @@ onMounted(() => {
             <router-link to="/settings" class="btn-secondary">Edit Profile</router-link>
           </template>
           <template v-else>
+            <router-link v-if="profile.user_type === 'coach'" :to="`/store/${profile.username}`" class="btn-secondary">Shop</router-link>
             <button class="btn-primary">Follow</button>
             <button
               class="btn-secondary"

@@ -14,6 +14,7 @@ const coachNavItems = [
   { icon: 'groups', label: 'Groups', route: '/coach/groups' },
   { icon: 'import', label: 'Import', route: '/coach/import' },
   { icon: 'philosophy', label: 'Philosophy', route: '/coach/philosophy' },
+  { icon: 'store', label: 'Store', route: '/coach/store' },
 ]
 
 const secondaryNavItems = [
@@ -116,6 +117,9 @@ const avatarUrl = computed(() => authStore.avatarUrl)
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
         </svg>
         <!-- Billing -->
+        <svg v-else-if="item.icon === 'store'" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 9l1.5-5h15L21 9M3 9h18M3 9a3 3 0 006 0m0 0a3 3 0 006 0m0 0a3 3 0 006 0M5 12v8h14v-8M10 20v-5h4v5" />
+        </svg>
         <svg v-else-if="item.icon === 'billing'" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
         </svg>

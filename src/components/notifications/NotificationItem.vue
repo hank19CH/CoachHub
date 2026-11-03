@@ -28,6 +28,8 @@ const iconType = computed(() => {
     workout_assigned: 'clipboard',
     workout_completed: 'check-circle',
     personal_best: 'trophy',
+    store_sale: 'trophy',
+    store_purchase: 'check-circle',
   }
   return map[props.notification.type] || 'bell'
 })
@@ -40,6 +42,8 @@ const iconBgColor = computed(() => {
     workout_assigned: 'bg-summit-100',
     workout_completed: 'bg-emerald-100',
     personal_best: 'bg-yellow-100',
+    store_sale: 'bg-emerald-100',
+    store_purchase: 'bg-summit-100',
   }
   return map[props.notification.type] || 'bg-gray-100'
 })
@@ -52,6 +56,8 @@ const iconColor = computed(() => {
     workout_assigned: 'text-summit-700',
     workout_completed: 'text-emerald-600',
     personal_best: 'text-yellow-600',
+    store_sale: 'text-emerald-600',
+    store_purchase: 'text-summit-700',
   }
   return map[props.notification.type] || 'text-gray-600'
 })

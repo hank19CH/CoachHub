@@ -1336,7 +1336,19 @@ CREATE TABLE group_conversation_members (
 -- ALTER TABLE messages ADD COLUMN group_conversation_id uuid REFERENCES group_conversations;
 ```
 
-### Sprint 17+: Marketplace / Program Sharing
+### Sprint 15 (built): Coach storefront — see `supabase/migrations/20261104_storefront.sql`
+
+Built differently from the sketch below: coaches sell from their own Stripe connected account (direct charges, 10% application fee).
+
+| Table | Purpose | Writes |
+|---|---|---|
+| `coach_payout_accounts` | coach → Stripe connected account + `charges_enabled` / `payouts_enabled` / `details_submitted` | service role only (storefront function, webhook) |
+| `store_products` | `kind` program / coaching / squad, `price_cents`, `currency`, `billing_interval` (null for program), `plan_id` / `group_id`, `is_published` | coach (own rows; own plans/groups only). Published rows readable by anyone |
+| `store_orders` | purchase snapshot, `application_fee_cents`, `status` (pending → paid/active → past_due/canceled/refunded/expired), Stripe ids, `fulfilled_at` | service role only. Buyer and coach can read |
+
+`coach_store_open(coach_id) → boolean` (security definer, callable by anon) tells the public storefront whether the coach can take payments. Fulfilment lives in `supabase/functions/_shared/storeFulfilment.ts`.
+
+### (Superseded sketch) Sprint 17+: Marketplace / Program Sharing
 
 ```sql
 -- Published programs available for purchase/download

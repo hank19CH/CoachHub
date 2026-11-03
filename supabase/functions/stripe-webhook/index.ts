@@ -1,13 +1,18 @@
 // Supabase Edge Function: stripe-webhook
-// Handles Stripe webhook events for subscription lifecycle management
+// Handles Stripe webhook events for subscription lifecycle management, plus (Sprint 15)
+// storefront events from coaches' connected accounts (event.account is set).
+// Two Stripe endpoints point here: the platform endpoint (STRIPE_WEBHOOK_SECRET) and the
+// Connect endpoint "events on connected accounts" (STRIPE_CONNECT_WEBHOOK_SECRET).
 // NO JWT verification — Stripe calls this directly, verified via webhook signature
 // Uses SUPABASE_SERVICE_ROLE_KEY for admin-level DB access
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import Stripe from 'https://esm.sh/stripe@17.7.0?target=deno'
+import { fulfilOrder, revokeOrder } from '../_shared/storeFulfilment.ts'
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')
+const STRIPE_CONNECT_WEBHOOK_SECRET = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET')
 
 // Athlete limits by tier (must match billing.ts PRICING constants)
 const TIER_LIMITS: Record<string, number> = {
@@ -47,12 +52,19 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Verify webhook signature
-    let event: Stripe.Event
-    try {
-      event = stripe.webhooks.constructEvent(body, signature, STRIPE_WEBHOOK_SECRET)
-    } catch (err) {
-      console.error('Webhook signature verification failed:', err.message)
+    // Verify webhook signature (platform endpoint first, then the Connect endpoint)
+    let event: Stripe.Event | null = null
+    for (const secret of [STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_WEBHOOK_SECRET]) {
+      if (!secret) continue
+      try {
+        event = await stripe.webhooks.constructEventAsync(body, signature, secret)
+        break
+      } catch {
+        // try the next secret
+      }
+    }
+    if (!event) {
+      console.error('Webhook signature verification failed for all configured secrets')
       return new Response(JSON.stringify({ error: 'Invalid signature' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -65,7 +77,13 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
 
-    console.log(`Handling Stripe event: ${event.type}`)
+    console.log(`Handling Stripe event: ${event.type}${event.account ? ` (connected ${event.account})` : ''}`)
+
+    // Storefront: events from a coach's connected account
+    if (event.account) {
+      await handleConnectEvent(stripe, supabaseAdmin, event)
+      return new Response(JSON.stringify({ received: true }), { headers: { 'Content-Type': 'application/json' } })
+    }
 
     switch (event.type) {
       case 'customer.subscription.created':
@@ -191,8 +209,104 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('stripe-webhook error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Webhook error' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     )
   }
 })
+
+// ════════════════════════════════════════════════════════════════════
+// Storefront (Stripe Connect, direct charges on the coach's account)
+// ════════════════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleConnectEvent(stripe: Stripe, admin: any, event: Stripe.Event) {
+  const account = event.account as string
+  const now = new Date().toISOString()
+
+  switch (event.type) {
+    case 'account.updated': {
+      const acct = event.data.object as Stripe.Account
+      await admin.from('coach_payout_accounts').update({
+        charges_enabled: acct.charges_enabled,
+        payouts_enabled: acct.payouts_enabled,
+        details_submitted: acct.details_submitted,
+        country: acct.country,
+        default_currency: acct.default_currency,
+        updated_at: now,
+      }).eq('stripe_account_id', acct.id)
+      break
+    }
+
+    case 'checkout.session.completed':
+    case 'checkout.session.async_payment_succeeded': {
+      const session = event.data.object as Stripe.Checkout.Session
+      const orderId = session.metadata?.order_id
+      if (!orderId) break
+      const { data: order } = await admin.from('store_orders').select('id, stripe_account_id').eq('id', orderId).maybeSingle()
+      if (!order || order.stripe_account_id !== account) {
+        console.error(`checkout for unknown order ${orderId} on ${account}`)
+        break
+      }
+      if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') break // async payment pending
+
+      const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id ?? null
+      let periodEnd: string | null = null
+      if (subscriptionId) {
+        const sub = await stripe.subscriptions.retrieve(subscriptionId, {}, { stripeAccount: account })
+        periodEnd = new Date(sub.current_period_end * 1000).toISOString()
+      }
+      await admin.from('store_orders').update({
+        status: subscriptionId ? 'active' : 'paid',
+        stripe_payment_intent_id: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id ?? null,
+        stripe_subscription_id: subscriptionId,
+        current_period_end: periodEnd,
+        updated_at: now,
+      }).eq('id', orderId)
+      await fulfilOrder(admin, orderId)
+      break
+    }
+
+    case 'checkout.session.expired': {
+      const session = event.data.object as Stripe.Checkout.Session
+      if (session.metadata?.order_id) {
+        await admin.from('store_orders').update({ status: 'expired', updated_at: now })
+          .eq('id', session.metadata.order_id).eq('status', 'pending')
+      }
+      break
+    }
+
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const sub = event.data.object as Stripe.Subscription
+      const { data: order } = await admin.from('store_orders').select('id, status').eq('stripe_subscription_id', sub.id).maybeSingle()
+      if (!order) break
+      const status = event.type === 'customer.subscription.deleted' || sub.status === 'canceled' || sub.status === 'incomplete_expired'
+        ? 'canceled'
+        : sub.status === 'past_due' || sub.status === 'unpaid'
+          ? 'past_due'
+          : 'active'
+      await admin.from('store_orders').update({
+        status,
+        cancel_at_period_end: sub.cancel_at_period_end,
+        current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+        updated_at: now,
+      }).eq('id', order.id)
+      if (status === 'canceled' && order.status !== 'canceled') await revokeOrder(admin, order.id)
+      break
+    }
+
+    case 'charge.refunded': {
+      const charge = event.data.object as Stripe.Charge
+      if (!charge.refunded) break // partial refund: keep access
+      const pi = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
+      if (pi) {
+        await admin.from('store_orders').update({ status: 'refunded', updated_at: now })
+          .eq('stripe_payment_intent_id', pi).eq('stripe_account_id', account)
+      }
+      break
+    }
+
+    default:
+      console.log(`Unhandled connected-account event: ${event.type}`)
+  }
+}

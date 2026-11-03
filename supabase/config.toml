@@ -9,7 +9,7 @@
 # matches what happened in Sprint 13: the gateway returned 401 for every logged-in user.
 #
 # How each function is protected instead:
-#   - generate-plan, generate-session, smart-import, create-checkout-session, create-portal-session:
+#   - generate-plan, generate-session, smart-import, create-checkout-session, create-portal-session, storefront:
 #     supabase.auth.getUser() with the caller's Authorization header; 401 if missing or invalid.
 #   - analyze-philosophy: same, or the x-trigger-secret shared secret for the DB trigger (pg_net).
 #   - stripe-webhook: Stripe signature check (stripe.webhooks.constructEvent); Stripe can't send a JWT.
@@ -35,4 +35,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.create-portal-session]
+verify_jwt = false
+
+# Sprint 15 — storefront (Stripe Connect). Verifies the user token in code; webhook events
+# arrive via stripe-webhook (signature-verified).
+[functions.storefront]
 verify_jwt = false

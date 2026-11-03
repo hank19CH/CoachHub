@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { takeReturnTo } from '@/services/store'
 import { useAuthStore } from '@/stores/auth'
 import { followUser } from '@/services/social'
 import { getTeammates, type Teammate } from '@/services/onboarding'
@@ -38,7 +39,7 @@ async function finish() {
   } catch (e) {
     reportError(e, 'complete onboarding')
   }
-  router.push('/athlete/hub')
+  router.push(takeReturnTo() ?? '/athlete/hub')
 }
 </script>
 

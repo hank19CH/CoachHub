@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { acceptInviteCode } from '@/services/athletes'
 import { reportError } from '@/utils/errorReporting'
+import { takeReturnTo } from '@/services/store'
 import RoleStep from '@/components/onboarding/RoleStep.vue'
 import CoachProfileStep from '@/components/onboarding/CoachProfileStep.vue'
 import CoachInviteStep from '@/components/onboarding/CoachInviteStep.vue'
@@ -46,7 +47,7 @@ onMounted(async () => {
       try { await acceptInviteCode(code, authStore.profile.id) } catch (e) { reportError(e, 'accept invite') }
       try { sessionStorage.removeItem('pending_invite_code') } catch { /* storage unavailable */ }
     }
-    router.replace(homeFor(role.value))
+    router.replace(takeReturnTo() ?? homeFor(role.value))
     return
   }
   try {

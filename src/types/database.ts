@@ -22,7 +22,7 @@ export type AssignmentStatus = 'pending' | 'completed' | 'skipped'
 export type DifficultyLevel = 'beginner' | 'intermediate' | 'advanced'
 export type PbType = 'weight' | 'reps' | 'time' | 'distance'
 export type MediaType = 'image' | 'video' | 'workout_card'
-export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement' | 'message'
+export type NotificationType = 'like' | 'comment' | 'follow' | 'workout_assigned' | 'workout_completed' | 'personal_best' | 'system_announcement' | 'message' | 'store_sale' | 'store_purchase' | 'store_seats_full'
 export type AttachmentType = 'image' | 'video'
 
 // Sprint 13 — Pricing & Seat Management enums
@@ -1765,9 +1765,105 @@ export interface Database {
           updated_at?: string
         }
       }
+      // Sprint 15 — storefront (20261104_storefront.sql)
+      coach_payout_accounts: {
+        Row: {
+          coach_id: string
+          stripe_account_id: string
+          country: string | null
+          default_currency: string | null
+          charges_enabled: boolean
+          payouts_enabled: boolean
+          details_submitted: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+      }
+      store_products: {
+        Row: {
+          id: string
+          coach_id: string
+          kind: StoreProductKind
+          title: string
+          description: string | null
+          price_cents: number
+          currency: StoreCurrency
+          billing_interval: StoreInterval | null
+          plan_id: string | null
+          group_id: string | null
+          is_published: boolean
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          coach_id: string
+          kind: StoreProductKind
+          title: string
+          description?: string | null
+          price_cents: number
+          currency?: StoreCurrency
+          billing_interval?: StoreInterval | null
+          plan_id?: string | null
+          group_id?: string | null
+          is_published?: boolean
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          kind?: StoreProductKind
+          title?: string
+          description?: string | null
+          price_cents?: number
+          currency?: StoreCurrency
+          billing_interval?: StoreInterval | null
+          plan_id?: string | null
+          group_id?: string | null
+          is_published?: boolean
+          sort_order?: number
+          updated_at?: string
+        }
+      }
+      store_orders: {
+        Row: {
+          id: string
+          product_id: string | null
+          coach_id: string
+          buyer_id: string
+          kind: StoreProductKind
+          title: string
+          amount_cents: number
+          currency: string
+          billing_interval: string | null
+          application_fee_cents: number
+          status: StoreOrderStatus
+          stripe_account_id: string
+          stripe_checkout_session_id: string | null
+          stripe_payment_intent_id: string | null
+          stripe_subscription_id: string | null
+          current_period_end: string | null
+          cancel_at_period_end: boolean
+          fulfilled_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+      }
     }
   }
 }
+
+export type StoreProductKind = 'program' | 'coaching' | 'squad'
+export type StoreCurrency = 'aud' | 'usd' | 'nzd' | 'gbp' | 'eur' | 'cad'
+export type StoreInterval = 'week' | 'month'
+export type StoreOrderStatus = 'pending' | 'paid' | 'active' | 'past_due' | 'canceled' | 'refunded' | 'expired'
+export type StoreProduct = Database['public']['Tables']['store_products']['Row']
+export type StoreOrder = Database['public']['Tables']['store_orders']['Row']
+export type CoachPayoutAccount = Database['public']['Tables']['coach_payout_accounts']['Row']
 
 // Convenience types for common use cases
 export type Profile = Database['public']['Tables']['profiles']['Row']
