@@ -241,7 +241,7 @@ const btnFocus = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amb
 
   <!-- Full-screen modeler -->
   <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-40 flex flex-col bg-gray-50" role="dialog" aria-modal="true" aria-labelledby="bm-title" @keydown.esc="open = false">
+    <div v-if="open" class="fixed inset-0 z-[55] flex flex-col bg-gray-50" role="dialog" aria-modal="true" aria-labelledby="bm-title" @keydown.esc="open = false">
       <header class="bg-white border-b border-gray-200">
         <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-end justify-between gap-3">
           <div class="min-w-0">

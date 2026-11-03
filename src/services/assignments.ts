@@ -179,18 +179,21 @@ async function updatePersonalBests(
       let pbType: 'weight' | 'reps' | 'time' | 'distance' | null = null
       let value: number | null = null
 
+      // Same order as ExerciseLogger's PB check (weight → time → distance), so the PB we
+      // save is the one the athlete saw flagged. Reps only when nothing else was measured
+      // (otherwise a sprint logged as "1 rep" becomes a "1 reps" PB).
       if (result.weight_used_kg && result.weight_used_kg > 0) {
         pbType = 'weight'
         value = result.weight_used_kg
-      } else if (result.reps_completed) {
-        pbType = 'reps'
-        value = parseInt(result.reps_completed)
       } else if (result.duration_seconds && result.duration_seconds > 0) {
         pbType = 'time'
         value = result.duration_seconds
       } else if (result.distance_meters && result.distance_meters > 0) {
         pbType = 'distance'
         value = result.distance_meters
+      } else if (result.reps_completed) {
+        pbType = 'reps'
+        value = parseInt(result.reps_completed)
       }
 
       if (pbType && value && !isNaN(value)) {
@@ -210,11 +213,63 @@ async function updatePersonalBests(
 
         // Auto-post PR achievement
         await createPrPost(athleteId, exercise.name, pbType, value, completionId)
+        await notifyPersonalBest(athleteId, exercise.name, pbType, value)
       }
     }
   } catch (error) {
     console.error('Error updating personal bests:', error)
     // Don't throw - PB update failure shouldn't block completion
+  }
+}
+
+function formatPbValue(pbType: 'weight' | 'reps' | 'time' | 'distance', value: number): string {
+  if (pbType === 'weight') return `${value} kg`
+  if (pbType === 'reps') return `${value} reps`
+  if (pbType === 'distance') return `${value} m`
+  const m = Math.floor(value / 60)
+  const sec = Math.round((value % 60) * 100) / 100
+  return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : `${sec}s`
+}
+
+/**
+ * PB notifications: one for the athlete ("New PB"), one for each active coach
+ * ("Alex hit a PB"). Best-effort — never blocks a workout completion.
+ */
+async function notifyPersonalBest(
+  athleteId: string,
+  exerciseName: string,
+  pbType: 'weight' | 'reps' | 'time' | 'distance',
+  value: number
+): Promise<void> {
+  try {
+    const pretty = formatPbValue(pbType, value)
+    const [{ data: athlete }, { data: coaches }] = await Promise.all([
+      supabase.from('profiles').select('display_name, username').eq('id', athleteId).maybeSingle(),
+      supabase.from('coach_athletes').select('coach_id').eq('athlete_id', athleteId).eq('status', 'active'),
+    ]) as [{ data: { display_name: string; username: string } | null }, { data: { coach_id: string }[] | null }]
+
+    const name = athlete?.display_name || 'Your athlete'
+    const own = {
+      user_id: athleteId,
+      actor_id: athleteId,
+      type: 'personal_best',
+      title: `New PB: ${exerciseName}`,
+      message: `${pretty} — your best yet.`,
+      action_url: '/athlete/dashboard',
+    }
+    const forCoaches = (coaches ?? []).map(c => ({
+      user_id: c.coach_id,
+      actor_id: athleteId,
+      type: 'personal_best',
+      title: `${name} hit a PB`,
+      message: `${exerciseName}: ${pretty}`,
+      action_url: `/coach/athletes/${athleteId}`,
+    }))
+    // Separate inserts so a policy refusal on one never drops the other
+    await (supabase as any).from('notifications').insert(own)
+    if (forCoaches.length) await (supabase as any).from('notifications').insert(forCoaches)
+  } catch (error) {
+    console.error('Error sending PB notifications:', error)
   }
 }
 
@@ -234,7 +289,7 @@ export async function checkPersonalBest(
       .eq('athlete_id', athleteId)
       .eq('exercise_name', exerciseName)
       .eq('pb_type', pbType)
-      .single()
+      .maybeSingle()
 
     // No existing PB means this is a new PB
     if (!existingPb) return true

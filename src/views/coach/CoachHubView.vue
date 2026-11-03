@@ -53,8 +53,8 @@ const tools: ToolSection[] = [
         color: 'bg-valencia-600'
       },
 {
-        name: 'AI Planner',
-        description: 'Periodized training plans with AI',
+        name: 'Planner',
+        description: 'Build a week, model the block',
         path: '/coach/planner',
         icon: 'ai-brain',
         color: 'bg-gradient-to-br from-summit-600 to-valencia-600'

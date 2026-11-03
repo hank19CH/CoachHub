@@ -1,13 +1,13 @@
 # CoachHub — Build Plan (for approval)
 
-> Drafted 2026-11-03 after a full repo + live-database audit. Each sprint lists scope, what's already in the repo, and the decisions it needs. See `VISION.md` for the why.
+> Approved 2026-11-03 (storefront pulled ahead of testing). Drafted 2026-11-03 after a full repo + live-database audit. Each sprint lists scope, what's already in the repo, and the decisions it needs. See `VISION.md` for the why.
 > Sprint numbers continue from Notion's tracker; the old "Sprint 15: Key Metric" candidate moves to Sprint 20 (post-beta feedback, as its brief says).
 
 ## Guiding order
 
 1. **Ship the beta** (Layer 0) — real coaches using it is worth more than any feature.
-2. **Testing + leaderboards** (Layer 1) — the founding insight and the moat; cheap to start because coaches already test.
-3. **Coach business OS** (Layer 2) — coaches earning on the platform makes them stay.
+2. **Coach storefront** (Layer 2, pulled forward — approved 2026-11-03) — coaches earning on the platform makes them stay.
+3. **Testing + leaderboards** (Layer 1) — the founding insight and the moat; protocols researched first (`TESTING_PROTOCOLS.md`).
 4. **Multi-sport, devices, partners, centres** (Layers 3–4) — built on the same testing and session foundations.
 
 ---
@@ -28,33 +28,11 @@ Remaining:
   - Remove dead route `/coach/programs/new`
   - Block Modeler title truncation
   - `.single()` → `.maybeSingle()` where "no row yet" is normal (console noise)
-  - Trial length (currently 9 days — confirm)
+  - Trial length 9 → 14 days (approved)
 - [ ] xlsx security patch (needs `cdn.sheetjs.com` allowed in the environment, or done locally)
 - [ ] PB notifications ("you hit a PB" / "your athlete hit a PB") — the one missing piece of the habit loop
 
-## Sprint 15 — Testing & verified results · ~1.5 sprints
-**Goal:** a coach runs a testing day in CoachHub; results land on athlete profiles with a verification badge and post to the feed.
-
-Already there: `athlete_assessments` table (live, unused), `personal_bests.source`, PB feed posts.
-
-- Test catalogue with fixed protocols (`test_protocols`: name, category, unit, better = lower/higher, method/equipment, timing method, notes) — seeded with Henry's standard battery
-- Testing sessions: coach picks tests + athletes → fast grid entry on tablet (multiple attempts, best-of)
-- Results stored with **verification tier** (self_reported / coach_logged; lab_verified + pro_partner reserved)
-- Athlete profile "Testing" tab: latest, best, history chart per test, badge per tier
-- Auto feed post for PBs from testing ("New 20m best — coach-verified")
-- Athletes can self-report tests (shown as self-reported)
-- Migration + RLS (athlete owns visibility; coach writes for own athletes)
-
-## Sprint 16 — Leaderboards + Explore · ~1 sprint
-**Goal:** "How do I measure up?" — the Explore tab becomes the discovery home.
-
-- Leaderboards per test, filterable by sport/position, age band, sex, region, tier
-- Scopes: my squad → my club → region → everyone
-- Privacy: per-athlete leaderboard opt-in/out; under-18s hidden from public boards unless guardian consent; coach can restrict squad boards
-- Explore page: leaderboards, people/coaches to follow, teams
-- Profile fields needed: birth year, sex, region (collected in onboarding, editable in settings)
-
-## Sprint 17 — Coach storefront v1 · ~2 sprints
+## Sprint 15 — Coach storefront v1 · ~2 sprints
 **Goal:** a coach sells a program and gets paid.
 
 - Stripe Connect (Express) onboarding for coaches; platform fee %
@@ -63,6 +41,28 @@ Already there: `athlete_assessments` table (live, unused), `personal_bests.sourc
 - Purchase → athlete account auto-linked to coach + program auto-assigned
 - Coach sales dashboard (revenue, active clients)
 - Note: existing `programs` and `plans` overlap — storefront sells **plans** (Block Modeler output); the older `programs` system gets retired or folded in
+
+## Sprint 16 — Testing & verified results · ~1.5 sprints
+**Goal:** a coach runs a testing day in CoachHub; results land on athlete profiles with a verification badge and post to the feed.
+
+Already there: `athlete_assessments` table (live, unused), `personal_bests.source`, PB feed posts.
+
+- Test catalogue with fixed protocols (`test_protocols`) — seeded from the research in `TESTING_PROTOCOLS.md`: speed, jumps/power, strength, aerobic/conditioning, plus HYROX and CrossFit benchmarks
+- Testing sessions: coach picks tests + athletes → fast grid entry on tablet (multiple attempts, best-of)
+- Results stored with **verification tier** (self_reported / coach_logged; lab_verified + pro_partner reserved)
+- Athlete profile "Testing" tab: latest, best, history chart per test, badge per tier
+- Auto feed post for PBs from testing ("New 20m best — coach-verified")
+- Athletes can self-report tests (shown as self-reported)
+- Migration + RLS (athlete owns visibility; coach writes for own athletes)
+
+## Sprint 17 — Leaderboards + Explore · ~1 sprint
+**Goal:** "How do I measure up?" — the Explore tab becomes the discovery home.
+
+- Leaderboards per test, filterable by sport/position, age band, sex, region, tier
+- Scopes: my squad → my club → region → everyone
+- Privacy (approved): **opt-in public** — squad boards visible to teammates by default, public/regional boards only after the athlete opts in; under-18s hidden from public boards unless guardian consent; coach can restrict squad boards
+- Explore page: leaderboards, people/coaches to follow, teams
+- Profile fields needed: birth year, sex, region (collected in onboarding, editable in settings)
 
 ## Sprint 18 — Virtual coaching + squads · ~1.5 sprints
 - Weekly athlete check-in (readiness, notes, photos/video) → coach review queue
@@ -89,9 +89,10 @@ Already there: `athlete_assessments` table (live, unused), `personal_bests.sourc
 - **Phase 2 program engine migration** (held until beta feedback)
 - **AI Assist + Plan Analytics** (parked — refine and return)
 
-## Open decisions
-1. Final name (CoachHub vs Ascend vs other) — blocks the custom domain and store branding, not the build
-2. Trial length (9 days in code)
-3. Starter test battery for Sprint 15
-4. Leaderboard privacy defaults
-5. Platform fee % on coach sales (Sprint 17)
+## Decisions
+- ✅ Order: beta → storefront → testing → leaderboards → virtual coaching → multi-sport → key metric
+- ✅ Test battery: all four categories + HYROX + CrossFit, after protocol research
+- ✅ Leaderboards opt-in public; under-18s off public boards without guardian consent
+- ✅ Trial 14 days
+- ⏳ Final name (CoachHub vs Ascend vs other) — blocks the domain and storefront branding, not the build
+- ⏳ Platform fee % on coach sales (Sprint 15)

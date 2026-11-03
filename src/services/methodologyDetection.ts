@@ -36,7 +36,7 @@ export async function getMethodologyProfile(id: string): Promise<MethodologyProf
     .from('methodology_profiles')
     .select('*')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (error && error.code !== 'PGRST116') throw new Error(error.message)
   return data
@@ -73,7 +73,7 @@ export async function getCoachExtractedMetrics(
     .from('coach_extracted_metrics')
     .select('*')
     .eq('coach_id', coachId)
-    .single()
+    .maybeSingle()
 
   if (error && error.code !== 'PGRST116') throw new Error(error.message)
   return data

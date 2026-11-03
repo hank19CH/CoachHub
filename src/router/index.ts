@@ -107,12 +107,6 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
-      path: '/coach/programs/new',
-      name: 'new-program',
-      component: () => import('@/views/coach/ProgramEditorView.vue'),
-      meta: { requiresAuth: true, requiresCoach: true }
-    },
-    {
       path: '/coach/programs/:id',
       name: 'program-detail',
       component: () => import('@/views/coach/ProgramDetailView.vue'),
@@ -241,6 +235,7 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAthlete: true }
     },
     // Placeholder routes - redirect to dashboard until implemented
+    { path: '/coach/programs/new', redirect: '/coach/programs' },
     { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
     { path: '/athlete/progress', redirect: '/athlete/dashboard' },

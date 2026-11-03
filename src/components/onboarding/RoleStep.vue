@@ -102,7 +102,7 @@ async function submit() {
       <button type="submit" :disabled="!canSubmit" class="btn-primary min-h-[52px] px-7 text-base disabled:opacity-50">
         {{ saving ? 'Creating your account…' : `Continue as ${ROLES.find(r => r.type === role)?.title}` }}
       </button>
-      <span v-if="role === 'coach'" class="text-sm text-gray-600">9-day free trial · No card needed</span>
+      <span v-if="role === 'coach'" class="text-sm text-gray-600">14-day free trial · No card needed</span>
     </div>
   </form>
 </template>

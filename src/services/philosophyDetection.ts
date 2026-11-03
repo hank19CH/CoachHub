@@ -24,7 +24,7 @@ export async function getCoachPhilosophy(coachId: string): Promise<CoachPhilosop
     .from('coach_philosophy')
     .select('*')
     .eq('coach_id', coachId)
-    .single()
+    .maybeSingle()
 
   if (error && error.code !== 'PGRST116') { // PGRST116 = not found
     throw new Error(error.message)

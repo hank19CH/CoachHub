@@ -57,7 +57,7 @@ export const PRICING = {
   free: {
     athleteLimit: 3,
   },
-  trialDays: 9,
+  trialDays: 14,
   betaSpotsTotal: 50,
 } as const
 
