@@ -1140,6 +1140,7 @@ Tracks upgrade prompt interactions for analytics and deduplication.
 | `sync_post_likes_count()` | `trigger` | Keeps `posts.likes_count` in step with `likes` (bypasses posts RLS) |
 | `sync_post_comments_count()` | `trigger` | Keeps `posts.comments_count` in step with `comments` (bypasses posts RLS) |
 | `guard_post_counters()` | `trigger` | Ignores direct client writes to `posts.likes_count` / `comments_count` |
+| `enforce_social_rate_limit()` | `trigger` | Per-user limits: likes 30/min·300/h, comments 5/min·60/h, follows 20/min·200/h (raises `rate_limited`) |
 
 ### Triggers
 
@@ -1149,6 +1150,7 @@ Tracks upgrade prompt interactions for analytics and deduplication.
 | `trg_likes_sync_post_count` | `likes` | AFTER INSERT OR DELETE | `sync_post_likes_count()` |
 | `trg_comments_sync_post_count` | `comments` | AFTER INSERT OR DELETE | `sync_post_comments_count()` |
 | `trg_posts_guard_counters` | `posts` | BEFORE INSERT OR UPDATE OF likes_count, comments_count | `guard_post_counters()` |
+| `trg_likes_rate_limit` / `trg_comments_rate_limit` / `trg_follows_rate_limit` | `likes` / `comments` / `follows` | BEFORE INSERT | `enforce_social_rate_limit()` |
 
 ---
 

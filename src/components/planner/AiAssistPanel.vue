@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// PARKED Nov 2026 — DO NOT DELETE. Hidden from the Planner (AI and Analytics tabs removed) while planning
+// moves to canonical week -> Block Modeler. Planned to be refined and reintroduced later; to restore,
+// re-add the import and tab entries in PlannerView.vue (desktop right panel + mobile tabs).
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'

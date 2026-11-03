@@ -37,8 +37,9 @@ const needsFullWidth = computed(() => {
 // Detect coach routes for sidebar visibility
 const isCoachRoute = computed(() => route.meta.requiresCoach === true)
 
-// Show sidebar only for authenticated coaches on coach routes
-const showSidebar = computed(() => isCoachRoute.value && authStore.isCoach)
+// Coaches keep their sidebar everywhere (feed, messages, profile, …) so desktop never
+// flips into the phone layout. Below md the sidebar hides and the bottom nav takes over.
+const showSidebar = computed(() => authStore.isCoach)
 </script>
 
 <template>
@@ -59,15 +60,16 @@ const showSidebar = computed(() => isCoachRoute.value && authStore.isCoach)
         class="flex-1 w-full"
         :class="{
           'pt-14': !hideTopHeader,
-          'pb-20': !hideBottomNav && !showSidebar,
+          'pb-20': !hideBottomNav,
           'md:pb-0': showSidebar,
-          'max-w-lg mx-auto': !needsFullWidth && !showSidebar,
+          // Social pages stay a centred phone-width column, even beside the coach sidebar
+          'max-w-lg mx-auto': !needsFullWidth && !isCoachRoute,
         }"
       >
         <slot />
       </main>
 
-      <!-- Bottom Navigation — hidden on coach routes at md: when sidebar is visible -->
+      <!-- Bottom Navigation — hidden at md: when the coach sidebar is visible -->
       <BottomNav v-if="!hideBottomNav" :class="{ 'md:hidden': showSidebar }" />
     </div>
   </div>

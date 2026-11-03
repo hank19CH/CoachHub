@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
+import { reportActionError } from '@/utils/errorReporting'
 
 const props = defineProps<{
   postId: string
@@ -41,21 +42,24 @@ async function toggleLike() {
 
   try {
     if (wasLiked) {
-      await supabase
+      const { error } = await supabase
         .from('likes')
         .delete()
         .eq('user_id', authStore.user.id)
         .eq('post_id', props.postId)
+      if (error) throw error
     } else {
-      await supabase
+      const { error } = await supabase
         .from('likes')
         .insert({ user_id: authStore.user.id, post_id: props.postId })
+      if (error) throw error
     }
-  } catch {
+  } catch (e) {
     // Revert on error
     isLiked.value = wasLiked
     likesCount.value += wasLiked ? 1 : -1
     emit('update:count', likesCount.value)
+    reportActionError(e, 'like')
   } finally {
     isLiking.value = false
   }

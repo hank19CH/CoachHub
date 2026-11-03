@@ -69,6 +69,8 @@ export interface Database {
           user_type: UserType
           is_private: boolean
           sport_ids: string[]
+          onboarding_completed_at: string | null  // Sprint 14.5: null = still onboarding
+          onboarding_flags: string[]              // tours seen, checklist dismissed, …
           created_at: string
           updated_at: string
         }
@@ -81,6 +83,8 @@ export interface Database {
           user_type: UserType
           is_private?: boolean
           sport_ids?: string[]
+          onboarding_completed_at?: string | null
+          onboarding_flags?: string[]
           created_at?: string
           updated_at?: string
         }
@@ -93,6 +97,8 @@ export interface Database {
           user_type?: UserType
           is_private?: boolean
           sport_ids?: string[]
+          onboarding_completed_at?: string | null
+          onboarding_flags?: string[]
           updated_at?: string
         }
       }
@@ -178,6 +184,8 @@ export interface Database {
           primary_sport_id: string | null
           competition_level: string | null
           injury_notes: string | null
+          events: string[]   // Sprint 14.5 onboarding
+          goals: string[]
         }
         Insert: {
           id: string
@@ -187,6 +195,8 @@ export interface Database {
           primary_sport_id?: string | null
           competition_level?: string | null
           injury_notes?: string | null
+          events?: string[]
+          goals?: string[]
         }
         Update: {
           date_of_birth?: string | null
@@ -195,6 +205,8 @@ export interface Database {
           primary_sport_id?: string | null
           competition_level?: string | null
           injury_notes?: string | null
+          events?: string[]
+          goals?: string[]
         }
       }
       sports: {
@@ -712,6 +724,7 @@ export interface Database {
           value: number
           achieved_at: string
           exercise_result_id: string | null
+          source: 'logged' | 'self_reported'  // Sprint 14.5
         }
         Insert: {
           id?: string
@@ -721,6 +734,7 @@ export interface Database {
           value: number
           achieved_at: string
           exercise_result_id?: string | null
+          source?: 'logged' | 'self_reported'
         }
         Update: {
           exercise_name?: string
@@ -728,6 +742,7 @@ export interface Database {
           value?: number
           achieved_at?: string
           exercise_result_id?: string | null
+          source?: 'logged' | 'self_reported'
         }
       }
       user_streaks: {

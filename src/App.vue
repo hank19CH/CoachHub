@@ -6,6 +6,8 @@ import { useNotificationsStore } from '@/stores/notifications'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Toast from '@/components/ui/Toast.vue'
+import ErrorBoundary from '@/components/ui/ErrorBoundary.vue'
+import { lastErrorMessage } from '@/utils/errorReporting'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,12 +83,21 @@ onUnmounted(() => {
 
   <!-- Auth pages (login/signup) -->
   <AuthLayout v-else-if="!authStore.isAuthenticated">
-    <RouterView :key="route.fullPath" />
+    <ErrorBoundary>
+      <RouterView :key="route.fullPath" />
+    </ErrorBoundary>
   </AuthLayout>
+
+  <!-- Full-screen pages without app chrome (onboarding) -->
+  <ErrorBoundary v-else-if="route.meta.bare">
+    <RouterView :key="route.fullPath" />
+  </ErrorBoundary>
 
   <!-- Main app layout (authenticated) -->
   <AppLayout v-else>
-    <RouterView :key="route.fullPath" />
+    <ErrorBoundary>
+      <RouterView :key="route.fullPath" />
+    </ErrorBoundary>
   </AppLayout>
 
   <!-- Session expiry toast (shown globally) -->
@@ -96,5 +107,13 @@ onUnmounted(() => {
     :visible="sessionToastVisible"
     :duration="3000"
     @close="sessionToastVisible = false"
+  />
+
+  <!-- Unexpected error toast (app.config.errorHandler) -->
+  <Toast
+    :message="lastErrorMessage ?? ''"
+    type="error"
+    :visible="!!lastErrorMessage"
+    @close="lastErrorMessage = null"
   />
 </template>

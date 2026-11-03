@@ -7,7 +7,7 @@ export async function updateStreak(userId: string) {
       .from('user_streaks')
       .select('*')
       .eq('user_id', userId)
-      .single()) as { data: UserStreak | null; error: any }
+      .maybeSingle()) as { data: UserStreak | null; error: any }
 
     const today = new Date().toISOString().split('T')[0] as string
 
@@ -62,7 +62,7 @@ export async function getStreak(userId: string): Promise<UserStreak | null> {
       .from('user_streaks')
       .select('*')
       .eq('user_id', userId)
-      .single()) as { data: UserStreak | null; error: any }
+      .maybeSingle()) as { data: UserStreak | null; error: any }
 
     return data
   } catch {

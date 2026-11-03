@@ -32,6 +32,16 @@ export const useAuthStore = defineStore('auth', () => {
   const isBetaUser = computed(() => coachSubscription.value?.is_beta_user ?? false)
   const athleteLimit = computed(() => coachSubscription.value?.athlete_limit ?? 3)
 
+  // Sprint 14.5 — Onboarding. Signed in without a profile (e.g. first Google sign-in) or a
+  // coach/athlete who hasn't finished the flow → /onboarding.
+  const needsOnboarding = computed(() => {
+    if (!user.value) return false
+    if (!profile.value) return true
+    // null = still onboarding. undefined = migration 20261103 not applied yet → never trap existing users.
+    return profile.value.user_type !== 'follower' && profile.value.onboarding_completed_at === null
+  })
+  const onboardingFlags = computed(() => profile.value?.onboarding_flags ?? [])
+
   // Actions
   async function initialize() {
     try {
@@ -145,48 +155,7 @@ export const useAuthStore = defineStore('auth', () => {
       // Wait a moment for the session to be established
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      // Create profile
-      const profileData: ProfileInsert = {
-        id: authData.user.id,
-        username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
-        display_name: displayName,
-        user_type: userType,
-        is_private: false,
-        sport_ids: [],
-      }
-
-      const { error: profileError } = await (supabase
-        .from('profiles') as any)
-        .insert(profileData)
-
-      if (profileError) {
-        console.error('Profile creation error:', profileError)
-        throw profileError
-      }
-
-      // If coach, create coach_profile
-      if (userType === 'coach') {
-        const { error: coachError } = await (supabase
-          .from('coach_profiles') as any)
-          .insert({ id: authData.user.id })
-
-        if (coachError) {
-          console.error('Coach profile creation error:', coachError)
-          throw coachError
-        }
-      }
-
-      // If athlete, create athlete_profile
-      if (userType === 'athlete') {
-        const { error: athleteError } = await (supabase
-          .from('athlete_profiles') as any)
-          .insert({ id: authData.user.id })
-
-        if (athleteError) {
-          console.error('Athlete profile creation error:', athleteError)
-          throw athleteError
-        }
-      }
+      await insertProfileRows(authData.user.id, userType, displayName, username)
 
       // Fetch the created profile
       await fetchProfile()
@@ -200,6 +169,101 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  /** profiles row + the matching coach_profiles / athlete_profiles row. */
+  async function insertProfileRows(userId: string, userType: UserType, displayName: string, username: string) {
+    const profileData: ProfileInsert = {
+      id: userId,
+      username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+      display_name: displayName,
+      user_type: userType,
+      is_private: false,
+      sport_ids: [],
+      // Followers have nothing to set up; coaches and athletes go through /onboarding.
+      onboarding_completed_at: userType === 'follower' ? new Date().toISOString() : null,
+    }
+
+    const { error: profileError } = await (supabase
+      .from('profiles') as any)
+      .insert(profileData)
+
+    if (profileError) {
+      console.error('Profile creation error:', profileError)
+      throw profileError
+    }
+
+    if (userType === 'coach') {
+      const { error: coachError } = await (supabase
+        .from('coach_profiles') as any)
+        .insert({ id: userId })
+
+      if (coachError) {
+        console.error('Coach profile creation error:', coachError)
+        throw coachError
+      }
+    }
+
+    if (userType === 'athlete') {
+      const { error: athleteError } = await (supabase
+        .from('athlete_profiles') as any)
+        .insert({ id: userId })
+
+      if (athleteError) {
+        console.error('Athlete profile creation error:', athleteError)
+        throw athleteError
+      }
+    }
+  }
+
+  /** For a signed-in user without a profile yet (e.g. first Google sign-in). */
+  async function createProfile(userType: UserType, displayName: string, username: string) {
+    if (!user.value) return { success: false, error: 'Not authenticated' }
+    try {
+      error.value = null
+      await insertProfileRows(user.value.id, userType, displayName, username)
+      await fetchProfile()
+      return { success: true }
+    } catch (e) {
+      const message = (e as { message?: string })?.message ?? 'Could not create your profile'
+      error.value = /duplicate|unique/i.test(message) ? 'That username is taken — try another.' : message
+      return { success: false, error: error.value }
+    }
+  }
+
+  /** Google sign-in. Supabase redirects back to `redirectPath` (must be in the project's allowed redirect URLs). */
+  async function signInWithGoogle(redirectPath = '/onboarding') {
+    error.value = null
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}${redirectPath}` },
+    })
+    if (oauthError) {
+      error.value = oauthError.message
+      return { success: false, error: oauthError.message }
+    }
+    return { success: true }
+  }
+
+  async function addOnboardingFlag(flag: string) {
+    if (!user.value || !profile.value || profile.value.onboarding_flags?.includes(flag)) return
+    const flags = [...(profile.value.onboarding_flags ?? []), flag]
+    profile.value = { ...profile.value, onboarding_flags: flags }
+    const { error: flagError } = await (supabase.from('profiles') as any)
+      .update({ onboarding_flags: flags })
+      .eq('id', user.value.id)
+    if (flagError) console.error('Error saving onboarding flag:', flagError)
+  }
+
+  async function completeOnboarding() {
+    if (!user.value || !profile.value) return
+    const at = new Date().toISOString()
+    // Local first, so navigation away from the last step isn't bounced back by the router guard.
+    profile.value = { ...profile.value, onboarding_completed_at: at }
+    const { error: doneError } = await (supabase.from('profiles') as any)
+      .update({ onboarding_completed_at: at })
+      .eq('id', user.value.id)
+    if (doneError) throw doneError
   }
 
   async function signIn(email: string, password: string) {
@@ -292,11 +356,17 @@ export const useAuthStore = defineStore('auth', () => {
     isSubscribed,
     isBetaUser,
     athleteLimit,
+    needsOnboarding,
+    onboardingFlags,
     // Actions
     initialize,
     fetchProfile,
     refreshSubscription,
     signUp,
+    createProfile,
+    signInWithGoogle,
+    addOnboardingFlag,
+    completeOnboarding,
     signIn,
     signOut,
     updateProfile,

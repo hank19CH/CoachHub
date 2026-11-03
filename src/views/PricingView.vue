@@ -157,7 +157,7 @@ async function handleSelectPlan(tierKey: 'free' | 'coach' | 'team') {
           Simple, transparent pricing
         </h1>
         <p class="text-summit-100 text-lg max-w-xl mx-auto">
-          Start free, upgrade when you grow. 9-day trial on all paid plans.
+          Start free, upgrade when you grow. 14-day trial on all paid plans.
         </p>
 
         <!-- Billing Toggle -->
@@ -272,7 +272,7 @@ async function handleSelectPlan(tierKey: 'free' | 'coach' | 'team') {
     <!-- Trial Info -->
     <div class="max-w-4xl mx-auto px-4 mt-12 text-center">
       <p class="text-sm text-gray-500">
-        All paid plans include a 9-day free trial. Coach plan: no credit card required.
+        All paid plans include a 14-day free trial. Coach plan: no credit card required.
         Cancel anytime.
       </p>
     </div>
@@ -297,7 +297,7 @@ async function handleSelectPlan(tierKey: 'free' | 'coach' | 'team') {
         <div>
           <h3 class="font-semibold text-gray-900">What's included in the free trial?</h3>
           <p class="text-sm text-gray-600 mt-1">
-            Full access to every feature in your chosen plan for 9 days. The Coach plan trial doesn't even require a credit card.
+            Full access to every feature in your chosen plan for 14 days. The Coach plan trial doesn't even require a credit card.
           </p>
         </div>
         <div>

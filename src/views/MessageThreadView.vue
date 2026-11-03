@@ -203,7 +203,7 @@ function autoResize(event: Event) {
 <template>
   <div class="h-screen flex flex-col bg-feed-bg">
     <!-- Header -->
-    <div class="bg-white border-b border-feed-border px-4 py-3 flex items-center gap-3 fixed top-0 left-0 right-0 z-50">
+    <div :class="['bg-white border-b border-feed-border px-4 py-3 flex items-center gap-3 fixed top-0 left-0 right-0 z-50', authStore.isCoach && 'md:left-16 lg:left-56']">
       <button
         @click="router.push('/messages')"
         class="p-1.5 -ml-1.5 hover:bg-gray-100 rounded-lg transition-colors"

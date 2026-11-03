@@ -10,6 +10,7 @@ import CommentsList from '@/components/social/CommentsList.vue'
 import CommentInput from '@/components/social/CommentInput.vue'
 import type { CommentWithAuthor } from '@/components/social/CommentsList.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import { reportActionError } from '@/utils/errorReporting'
 
 const route = useRoute()
 const router = useRouter()
@@ -120,14 +121,17 @@ async function toggleLike() {
 
   try {
     if (wasLiked) {
-      await supabase.from('likes').delete()
+      const { error } = await supabase.from('likes').delete()
         .eq('user_id', authStore.user.id).eq('post_id', postId.value)
+      if (error) throw error
     } else {
-      await supabase.from('likes').insert({ user_id: authStore.user.id, post_id: postId.value })
+      const { error } = await supabase.from('likes').insert({ user_id: authStore.user.id, post_id: postId.value })
+      if (error) throw error
     }
-  } catch {
+  } catch (e) {
     isLiked.value = wasLiked
     likesCount.value += wasLiked ? 1 : -1
+    reportActionError(e, 'like')
   } finally {
     isLiking.value = false
   }

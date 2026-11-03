@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { reportError } from '@/utils/errorReporting'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -16,6 +17,12 @@ const router = createRouter({
       name: 'signup',
       component: () => import('@/views/SignupView.vue'),
       meta: { requiresGuest: true }
+    },
+    {
+      path: '/onboarding',
+      name: 'onboarding',
+      component: () => import('@/views/OnboardingView.vue'),
+      meta: { requiresAuth: true, bare: true, title: 'Get started' }
     },
     {
       path: '/invite/:code',
@@ -97,12 +104,6 @@ const router = createRouter({
       path: '/coach/programs',
       name: 'programs',
       component: () => import('@/views/coach/ProgramsView.vue'),
-      meta: { requiresAuth: true, requiresCoach: true }
-    },
-    {
-      path: '/coach/programs/new',
-      name: 'new-program',
-      component: () => import('@/views/coach/ProgramEditorView.vue'),
       meta: { requiresAuth: true, requiresCoach: true }
     },
     {
@@ -234,6 +235,7 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAthlete: true }
     },
     // Placeholder routes - redirect to dashboard until implemented
+    { path: '/coach/programs/new', redirect: '/coach/programs' },
     { path: '/athlete/workouts', redirect: '/athlete/dashboard' },
     { path: '/athlete/workouts/:id', redirect: '/athlete/dashboard' },
     { path: '/athlete/progress', redirect: '/athlete/dashboard' },
@@ -307,6 +309,13 @@ router.beforeEach(async (to, from, next) => {
     return
   }
 
+  // Signed in but no profile yet, or a coach/athlete mid-onboarding → finish onboarding first.
+  // Invite links stay reachable so an invited athlete can still see who invited them.
+  if (isAuthenticated && authStore.needsOnboarding && to.name !== 'onboarding' && to.name !== 'invite-acceptance') {
+    next({ name: 'onboarding' })
+    return
+  }
+
   // Check if route requires guest (not logged in)
   if (to.meta.requiresGuest && isAuthenticated) {
     next({ name: 'feed' })
@@ -326,6 +335,24 @@ router.beforeEach(async (to, from, next) => {
   }
 
   next()
+})
+
+// After a deploy, tabs opened on the previous build can't load the old page chunks. Reload once
+// onto the new build instead of leaving the user stuck; anything else goes to the error toast.
+router.onError((err, to) => {
+  const msg = err instanceof Error ? err.message : String(err)
+  const staleChunk = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(msg)
+  const key = 'coachhub:chunk-reload'
+  let alreadyTried = true
+  try {
+    alreadyTried = sessionStorage.getItem(key) === to.fullPath
+    if (staleChunk && !alreadyTried) sessionStorage.setItem(key, to.fullPath)
+  } catch { /* storage unavailable: don't risk a reload loop */ }
+  if (staleChunk && !alreadyTried) {
+    window.location.assign(to.fullPath)
+    return
+  }
+  reportError(err, 'router')
 })
 
 export default router

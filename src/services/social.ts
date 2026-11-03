@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type { FollowStatus } from '@/types/database'
+import { reportActionError } from '@/utils/errorReporting'
 
 // ============================================
 // Likes
@@ -88,7 +89,7 @@ export async function addComment(postId: string, authorId: string, content: stri
     .single()
 
   if (error) {
-    console.error('Error adding comment:', error)
+    reportActionError(error, 'comment')
     return null
   }
 
@@ -146,7 +147,7 @@ export async function followUser(followerId: string, followingId: string, isPriv
     .single()
 
   if (error) {
-    console.error('Error following user:', error)
+    reportActionError(error, 'follow')
     return null
   }
 

@@ -1,6 +1,19 @@
 # Supabase Edge Function configuration
-# JWT verification is handled inside the function code via supabase.auth.getUser()
-# so we disable the gateway-level check to avoid double verification issues
+#
+# verify_jwt = false is DELIBERATE on every function (reviewed 2026-11-02). Do not flip it back on
+# without testing a real user token against the deployed function first.
+#
+# Why: this project signs user access tokens with the new asymmetric JWT signing keys (ES256; see
+# /auth/v1/.well-known/jwks.json). Supabase's migration guide says the gateway verify_jwt check only
+# understands the legacy HS256 secret and recommends turning it off and verifying in code. That
+# matches what happened in Sprint 13: the gateway returned 401 for every logged-in user.
+#
+# How each function is protected instead:
+#   - generate-plan, generate-session, smart-import, create-checkout-session, create-portal-session:
+#     supabase.auth.getUser() with the caller's Authorization header; 401 if missing or invalid.
+#   - analyze-philosophy: same, or the x-trigger-secret shared secret for the DB trigger (pg_net).
+#   - stripe-webhook: Stripe signature check (stripe.webhooks.constructEvent); Stripe can't send a JWT.
+# Any new function must do the same before touching data.
 
 [functions.generate-plan]
 verify_jwt = false

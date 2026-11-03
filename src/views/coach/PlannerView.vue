@@ -12,8 +12,6 @@ import AddBlockModal from '@/components/planner/AddBlockModal.vue'
 import TemplateBrowser from '@/components/planner/TemplateBrowser.vue'
 import PublishWeekModal from '@/components/planner/PublishWeekModal.vue'
 import PlanChangelog from '@/components/planner/PlanChangelog.vue'
-import PlanAnalytics from '@/components/planner/PlanAnalytics.vue'
-import AiAssistPanel from '@/components/planner/AiAssistPanel.vue'
 import BlockModeler from '@/components/planner/BlockModeler.vue'
 import Toast from '@/components/ui/Toast.vue'
 
@@ -32,7 +30,9 @@ const showTemplateBrowser = ref(false)
 const showPublishModal = ref(false)
 
 // Right panel tabs (desktop)
-const rightPanelTab = ref<'details' | 'progression' | 'changelog' | 'analytics' | 'ai'>('details')
+// Analytics and AI tabs hidden (Mar 19 decision, done Nov 2026): planning is canonical week → Block Modeler.
+// PARKED, not deprecated: AiAssistPanel.vue and PlanAnalytics.vue are kept to be refined and brought back.
+const rightPanelTab = ref<'details' | 'progression' | 'changelog'>('details')
 
 // Toast
 const toastMessage = ref('')
@@ -45,8 +45,17 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
   toastVisible.value = true
 }
 
-// Mobile tab state (plan | week | analytics | session)
-const mobileTab = ref<'plan' | 'week' | 'analytics' | 'ai' | 'session'>('plan')
+// Mobile tab state (plan | week | session)
+const mobileTab = ref<'plan' | 'week' | 'session'>('plan')
+
+// ?model=1 (from onboarding): open the Block Modeler for the plan's first block.
+// Desktop and mobile each render a BlockModeler, so only the visible one auto-opens.
+const autoModel = route.query.model === '1'
+const isDesktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+if (autoModel) {
+  rightPanelTab.value = 'progression'
+  mobileTab.value = 'session'
+}
 
 // Load plan if planId is in route
 onMounted(async () => {
@@ -188,7 +197,7 @@ function goBackToList() {
       <!-- Mobile tab navigation -->
       <div class="flex border-t border-gray-100">
         <button
-          v-for="tab in (['plan', 'week', 'analytics', 'ai', 'session'] as const)"
+          v-for="tab in (['plan', 'week', 'session'] as const)"
           :key="tab"
           @click="mobileTab = tab"
           :class="[
@@ -198,7 +207,7 @@ function goBackToList() {
               : 'text-gray-400 border-transparent hover:text-gray-600'
           ]"
         >
-          {{ tab === 'plan' ? 'Plan' : tab === 'week' ? 'Week' : tab === 'analytics' ? 'Analytics' : tab === 'ai' ? 'AI' : 'Session' }}
+          {{ tab === 'plan' ? 'Plan' : tab === 'week' ? 'Week' : 'Session' }}
         </button>
       </div>
     </div>
@@ -259,7 +268,7 @@ function goBackToList() {
         <WeekEditor :key="weekEditorKey" @create-session="handleCreateSession" @open-session="handleOpenSession" />
       </div>
 
-      <!-- RIGHT: Block Details / Changelog / Analytics -->
+      <!-- RIGHT: Block Details / Progression / Changelog -->
       <div class="bg-white border-l border-gray-200 overflow-y-auto">
         <!-- Tabs -->
         <div class="flex border-b border-gray-100">
@@ -268,8 +277,6 @@ function goBackToList() {
               { key: 'details', label: 'Details' },
               { key: 'progression', label: 'Progression' },
               { key: 'changelog', label: 'History' },
-              { key: 'analytics', label: 'Analytics' },
-              { key: 'ai', label: 'AI' },
             ] as const)"
             :key="tab.key"
             @click="rightPanelTab = tab.key"
@@ -292,15 +299,13 @@ function goBackToList() {
         />
         <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" :auto-open="autoModel && isDesktop" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression
           </div>
         </div>
         <PlanChangelog v-if="rightPanelTab === 'changelog'" />
-        <PlanAnalytics v-if="rightPanelTab === 'analytics'" />
-        <AiAssistPanel v-if="rightPanelTab === 'ai'" />
       </div>
     </div>
 
@@ -413,16 +418,6 @@ function goBackToList() {
         </div>
       </div>
 
-      <!-- Analytics tab (mobile) -->
-      <div v-if="mobileTab === 'analytics'">
-        <PlanAnalytics />
-      </div>
-
-      <!-- AI tab (mobile) -->
-      <div v-if="mobileTab === 'ai'" class="h-full">
-        <AiAssistPanel />
-      </div>
-
       <!-- Session tab: block details + progression + changelog -->
       <div v-if="mobileTab === 'session'" class="flex flex-col">
         <!-- Sub-tabs for details / progression / history -->
@@ -468,7 +463,7 @@ function goBackToList() {
         />
         <div v-if="rightPanelTab === 'progression'" class="p-4">
           <template v-if="plansStore.selectedBlock">
-            <BlockModeler :block-id="plansStore.selectedBlock.id" @saved="handleBlockModeled" />
+            <BlockModeler :block-id="plansStore.selectedBlock.id" :auto-open="autoModel && !isDesktop" @saved="handleBlockModeled" />
           </template>
           <div v-else class="py-8 text-center text-sm text-gray-400">
             Select a block to view its progression
