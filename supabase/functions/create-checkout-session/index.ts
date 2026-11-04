@@ -6,26 +6,27 @@ import Stripe from 'https://esm.sh/stripe@17.7.0?target=deno'
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')
 
-// Price IDs — set in Supabase Dashboard > Edge Functions > Secrets
+// Price IDs — set in Supabase Dashboard > Edge Functions > Secrets.
+// Standard prices are stored as STRIPE_PRICE_<TIER>_<INTERVAL>_STANDARD (older name without _STANDARD still accepted).
 const PRICE_IDS: Record<string, Record<string, { beta: string; standard: string }>> = {
   coach: {
     monthly: {
       beta: Deno.env.get('STRIPE_PRICE_COACH_MONTHLY_BETA') ?? '',
-      standard: Deno.env.get('STRIPE_PRICE_COACH_MONTHLY') ?? '',
+      standard: Deno.env.get('STRIPE_PRICE_COACH_MONTHLY_STANDARD') ?? Deno.env.get('STRIPE_PRICE_COACH_MONTHLY') ?? '',
     },
     annual: {
       beta: Deno.env.get('STRIPE_PRICE_COACH_ANNUAL_BETA') ?? '',
-      standard: Deno.env.get('STRIPE_PRICE_COACH_ANNUAL') ?? '',
+      standard: Deno.env.get('STRIPE_PRICE_COACH_ANNUAL_STANDARD') ?? Deno.env.get('STRIPE_PRICE_COACH_ANNUAL') ?? '',
     },
   },
   team: {
     monthly: {
       beta: Deno.env.get('STRIPE_PRICE_TEAM_MONTHLY_BETA') ?? '',
-      standard: Deno.env.get('STRIPE_PRICE_TEAM_MONTHLY') ?? '',
+      standard: Deno.env.get('STRIPE_PRICE_TEAM_MONTHLY_STANDARD') ?? Deno.env.get('STRIPE_PRICE_TEAM_MONTHLY') ?? '',
     },
     annual: {
       beta: Deno.env.get('STRIPE_PRICE_TEAM_ANNUAL_BETA') ?? '',
-      standard: Deno.env.get('STRIPE_PRICE_TEAM_ANNUAL') ?? '',
+      standard: Deno.env.get('STRIPE_PRICE_TEAM_ANNUAL_STANDARD') ?? Deno.env.get('STRIPE_PRICE_TEAM_ANNUAL') ?? '',
     },
   },
 }

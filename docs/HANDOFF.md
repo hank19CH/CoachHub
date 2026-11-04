@@ -8,6 +8,13 @@ Work lives on branch `claude/relaxed-planck-ps3xp9` (2 commits ahead of `main`, 
   coach_payout_accounts reachable; `coach_store_open()` callable).
 - Supabase access token added to the cloud environment's **Network secrets** (needs a new session).
 
+## Deployed 2026-11-04 (this session)
+`storefront` v1, `stripe-webhook` v2, `create-checkout-session` v2 — all ACTIVE, verify_jwt=false,
+verified live (CORS 200; storefront rejects unauthenticated; webhook rejects unsigned/forged).
+Also fixed: standard-price secrets are named `STRIPE_PRICE_<TIER>_<INTERVAL>_STANDARD` but the code
+read the name without `_STANDARD`, so non-beta coach subscriptions failed. Both names now accepted.
+Steps 1–3 below are DONE; continue from step 4.
+
 ## Next steps
 1. Confirm the Supabase token works: `curl -sS https://api.supabase.com/v1/projects` should list
    project `mzrmivqwywinsffkaimw` (CoachHub, "hank19ch Development/Research" org).
