@@ -14,6 +14,23 @@ const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')
 const STRIPE_CONNECT_WEBHOOK_SECRET = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET')
 
+// ─── Stripe API-version tolerance ──────────────────────────────────
+// Webhook payloads use the ENDPOINT's API version (e.g. 2026-01-28.clover), not this SDK's.
+// From 2025-03-31.basil: subscription.current_period_end moved onto subscription items, and
+// invoice.subscription moved to invoice.parent.subscription_details.subscription.
+// deno-lint-ignore no-explicit-any
+function periodEndIso(sub: any): string | null {
+  const top = sub?.current_period_end
+  const fromItems = (sub?.items?.data ?? []).map((i: any) => i?.current_period_end).filter((n: unknown) => typeof n === 'number')
+  const secs = typeof top === 'number' ? top : fromItems.length ? Math.max(...fromItems) : null
+  return secs ? new Date(secs * 1000).toISOString() : null
+}
+// deno-lint-ignore no-explicit-any
+function invoiceSubscriptionId(inv: any): string | null {
+  const s = inv?.subscription ?? inv?.parent?.subscription_details?.subscription ?? null
+  return typeof s === 'string' ? s : s?.id ?? null
+}
+
 // Athlete limits by tier (must match billing.ts PRICING constants)
 const TIER_LIMITS: Record<string, number> = {
   coach: 20,
@@ -121,9 +138,7 @@ Deno.serve(async (req) => {
           subscription_started_at: subscription.start_date
             ? new Date(subscription.start_date * 1000).toISOString()
             : null,
-          subscription_ends_at: subscription.current_period_end
-            ? new Date(subscription.current_period_end * 1000).toISOString()
-            : null,
+          subscription_ends_at: periodEndIso(subscription),
         }
 
         // Only set trial_ends_at if there's a trial
@@ -175,9 +190,7 @@ Deno.serve(async (req) => {
 
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
-        const subscriptionId = typeof invoice.subscription === 'string'
-          ? invoice.subscription
-          : invoice.subscription?.id
+        const subscriptionId = invoiceSubscriptionId(invoice)
 
         if (!subscriptionId) break
 
@@ -253,7 +266,7 @@ async function handleConnectEvent(stripe: Stripe, admin: any, event: Stripe.Even
       let periodEnd: string | null = null
       if (subscriptionId) {
         const sub = await stripe.subscriptions.retrieve(subscriptionId, {}, { stripeAccount: account })
-        periodEnd = new Date(sub.current_period_end * 1000).toISOString()
+        periodEnd = periodEndIso(sub)
       }
       await admin.from('store_orders').update({
         status: subscriptionId ? 'active' : 'paid',
@@ -288,7 +301,7 @@ async function handleConnectEvent(stripe: Stripe, admin: any, event: Stripe.Even
       await admin.from('store_orders').update({
         status,
         cancel_at_period_end: sub.cancel_at_period_end,
-        current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+        current_period_end: periodEndIso(sub),
         updated_at: now,
       }).eq('id', order.id)
       if (status === 'canceled' && order.status !== 'canceled') await revokeOrder(admin, order.id)
